@@ -13,6 +13,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
+    "test": "bun test",
     "generate-key": "bun run scripts/generate-key.ts",
     "postinstall": "node scripts/fix-wasm-esm.mjs"
   },
