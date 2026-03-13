@@ -1,0 +1,21 @@
+{
+  "name": "@tinyboilerplate/example-backend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts"
+  },
+  "dependencies": {
+    "@tinyboilerplate/server": "workspace:*",
+    "@tinyboilerplate/core": "workspace:*",
+    "@tinycloud/node-sdk": "^0.1.0",
+    "express": "^4.21.0",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/cors": "^2.8.17",
+    "typescript": "^5.7.0"
+  }
+}

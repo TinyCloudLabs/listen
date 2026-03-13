@@ -1,0 +1,36 @@
+{
+  "name": "@tinyboilerplate/client",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@tinyboilerplate/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "@openkey/sdk": ">=0.1.0",
+    "@tinycloud/web-sdk": ">=0.1.0",
+    "ethers": ">=6.0.0"
+  },
+  "peerDependenciesMeta": {
+    "ethers": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@openkey/sdk": "^0.1.0",
+    "@tinycloud/web-sdk": "^0.1.0",
+    "ethers": "^6.0.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "tinyboilerplate",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "examples/react-express/frontend",
+    "examples/react-express/backend"
+  ],
+  "scripts": {
+    "build": "bun run build:core && bun run build:client && bun run build:server",
+    "build:core": "cd packages/core && bun run build",
+    "build:client": "cd packages/client && bun run build",
+    "build:server": "cd packages/server && bun run build",
+    "dev": "cd examples/react-express && bun run dev",
+    "generate-key": "cd packages/server && bun run generate-key"
+  }
+}
