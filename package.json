@@ -6,6 +6,11 @@
     "examples/react-express/frontend",
     "examples/react-express/backend"
   ],
+  "overrides": {
+    "@tinycloud/sdk-core": "1.5.0",
+    "@tinycloud/sdk-services": "1.5.0",
+    "@tinycloud/web-core": "1.1.0"
+  },
   "scripts": {
     "build": "bun run build:core && bun run build:client && bun run build:server",
     "build:core": "cd packages/core && bun run build",

@@ -4,15 +4,8 @@ import { TinyCloudWeb } from "@tinycloud/web-sdk";
 
 export interface TinyCloudWebConfig {
   tinycloudHosts?: string[];
-  signStrategy?: "wallet-popup";
   autoCreateSpace?: boolean;
 }
-
-const DEFAULTS: Required<TinyCloudWebConfig> = {
-  tinycloudHosts: ["https://node.tinycloud.xyz"],
-  signStrategy: "wallet-popup",
-  autoCreateSpace: true,
-};
 
 // ── TinyCloudWeb Instance ────────────────────────────────────────────
 
@@ -24,15 +17,12 @@ export function createTinyCloudWeb(
   eip1193Provider: unknown,
   config?: TinyCloudWebConfig,
 ): TinyCloudWeb {
-  const merged = { ...DEFAULTS, ...config };
-
   return new TinyCloudWeb({
     providers: {
       web3: { driver: eip1193Provider },
     },
-    signStrategy: merged.signStrategy,
-    tinycloudHosts: merged.tinycloudHosts,
-    autoCreateSpace: merged.autoCreateSpace,
+    tinycloudHosts: config?.tinycloudHosts ?? ["https://node.tinycloud.xyz"],
+    autoCreateSpace: config?.autoCreateSpace ?? true,
   });
 }
 
