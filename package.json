@@ -21,5 +21,8 @@
     "test": "bun run test:client && bun run test:server",
     "test:client": "cd packages/client && bun test",
     "test:server": "cd packages/server && bun test"
+  },
+  "devDependencies": {
+    "playwright": "^1.58.2"
   }
 }
