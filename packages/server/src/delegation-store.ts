@@ -40,7 +40,7 @@ export class DelegationStore {
     };
 
     await withSessionRefresh(this.node, () =>
-      this.node.kv.put(key, JSON.stringify(record)),
+      this.node.kv.put(key, record),
     );
   }
 
@@ -55,14 +55,17 @@ export class DelegationStore {
       this.node.kv.get(key),
     );
 
-    const raw = (result as any)?.data;
-    if (!raw) return null;
+    const response = (result as any)?.data;
+    if (!response) return null;
 
     try {
-      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-      return parsed as StoredDelegation;
+      // KV get returns { data: value } — unwrap it
+      let raw = response.data ?? response;
+      // Handle double-serialization (string) or direct object
+      if (typeof raw === "string") raw = JSON.parse(raw);
+      if (typeof raw === "string") raw = JSON.parse(raw); // double-encoded
+      return raw as StoredDelegation;
     } catch {
-      // Corrupted data — treat as missing
       return null;
     }
   }

@@ -84,10 +84,12 @@ export async function sendDelegation(
 export async function checkDelegationStatus(
   backendUrl: string,
   accessToken: string,
+  userAddress?: string,
 ): Promise<DelegationResponse> {
   const res = await fetch(`${backendUrl}/api/delegations/status`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
+      ...(userAddress ? { "X-User-Address": userAddress } : {}),
     },
   });
 
@@ -107,11 +109,13 @@ export async function checkDelegationStatus(
 export async function revokeDelegation(
   backendUrl: string,
   accessToken: string,
+  userAddress?: string,
 ): Promise<void> {
   const res = await fetch(`${backendUrl}/api/delegations`, {
     method: "DELETE",
     headers: {
       Authorization: `Bearer ${accessToken}`,
+      ...(userAddress ? { "X-User-Address": userAddress } : {}),
     },
   });
 

@@ -1,94 +1,96 @@
-import OpenKey, { OpenKeyEIP1193Provider } from "@openkey/sdk";
+import OpenKey from "@openkey/sdk";
+import { providers } from "ethers";
 
 // ── Configuration ────────────────────────────────────────────────────
 
 export interface OpenKeyConfig {
   host?: string;
   appName?: string;
-  mode?: "iframe" | "popup" | "redirect";
 }
 
-export interface OAuthConfig {
-  clientId: string;
-  redirectUri: string;
-}
-
-export interface OAuthTokens {
-  access_token: string;
-  id_token: string;
-  refresh_token: string;
-  expires_in: number;
-}
-
-export interface WalletConnection {
+export interface SignInResult {
   address: string;
-  provider: OpenKeyEIP1193Provider;
+  keyId: string;
   openkey: OpenKey;
+  web3Provider: providers.Web3Provider;
 }
 
-// ── OpenKey Instance ─────────────────────────────────────────────────
-
-const DEFAULTS: Required<OpenKeyConfig> = {
-  host: "https://openkey.so",
-  appName: "TinyBoilerplate",
-  mode: "popup",
-};
+// ── EIP-1193 Provider ────────────────────────────────────────────────
 
 /**
- * Create an OpenKey instance for authentication.
+ * EIP-1193 compatible provider that routes signing to OpenKey.
+ * TinyCloudWeb treats this like any browser wallet.
  */
-export function createOpenKey(config?: OpenKeyConfig): OpenKey {
-  const merged = { ...DEFAULTS, ...config };
-  return new OpenKey({
-    host: merged.host,
-    appName: merged.appName,
-    mode: merged.mode,
-  });
+class OpenKeyEIP1193Provider {
+  constructor(
+    private openkey: OpenKey,
+    private address: string,
+    private keyId: string,
+  ) {}
+
+  async request({ method, params }: { method: string; params?: any[] }): Promise<any> {
+    switch (method) {
+      case "eth_accounts":
+      case "eth_requestAccounts":
+        return [this.address];
+      case "eth_chainId":
+        return "0x1";
+      case "personal_sign": {
+        const hexMessage = params![0];
+        const message = hexToString(hexMessage);
+        const result = await this.openkey.signMessage({
+          message,
+          keyId: this.keyId,
+        });
+        return result.signature;
+      }
+      case "eth_getBalance":
+        return "0x0";
+      default:
+        throw new Error(`Unsupported method: ${method}`);
+    }
+  }
 }
 
-// ── OAuth PKCE Flow ──────────────────────────────────────────────────
-
-/**
- * Run the full OAuth PKCE flow: connect to get an authorization code,
- * then exchange it for tokens.
- */
-export async function startOAuthFlow(
-  openkey: OpenKey,
-  oauthConfig: OAuthConfig,
-): Promise<OAuthTokens> {
-  // Step 1: OAuth connect — opens popup/redirect, returns auth code
-  const { code } = await openkey.oauth.connect({
-    clientId: oauthConfig.clientId,
-    redirectUri: oauthConfig.redirectUri,
-  });
-
-  // Step 2: Exchange authorization code for tokens
-  const tokens = await openkey.oauth.exchangeCode(code, {
-    clientId: oauthConfig.clientId,
-    redirectUri: oauthConfig.redirectUri,
-  });
-
-  return tokens as OAuthTokens;
+function hexToString(hex: string): string {
+  const cleaned = hex.startsWith("0x") ? hex.slice(2) : hex;
+  const bytes = new Uint8Array(
+    cleaned.match(/.{1,2}/g)!.map((b) => parseInt(b, 16)),
+  );
+  return new TextDecoder().decode(bytes);
 }
 
-// ── Wallet Connection ────────────────────────────────────────────────
+// ── Sign In ──────────────────────────────────────────────────────────
 
 /**
- * Connect via OpenKey to get an EIP-1193 provider suitable for TinyCloudWeb.
- * Returns the wallet address and a provider that can be passed to createTinyCloudWeb.
+ * Single-step OpenKey sign-in: connect → get signing provider.
+ *
+ * Opens one popup for passkey authentication. Returns an ethers
+ * Web3Provider wired to OpenKey for signing, ready for TinyCloudWeb.
  */
-export async function connectWallet(
-  openkey: OpenKey,
-): Promise<WalletConnection> {
-  // Key selection flow — user picks a key, returns address + signing capability
+export async function openKeySignIn(config?: OpenKeyConfig): Promise<SignInResult> {
+  const openkey = new OpenKey({
+    host: config?.host ?? "https://openkey.so",
+    appName: config?.appName ?? "TinyBoilerplate",
+  });
+
+  // Single popup — user authenticates with passkey, selects key
   const authResult = await openkey.connect();
 
-  // Create an EIP-1193 compatible provider from the OpenKey session
-  const provider = new OpenKeyEIP1193Provider(openkey, authResult);
+  // Create EIP-1193 provider that routes signing through OpenKey
+  const eip1193 = new OpenKeyEIP1193Provider(
+    openkey,
+    authResult.address,
+    authResult.keyId,
+  );
+
+  // Wrap in ethers Web3Provider for TinyCloudWeb compatibility
+  const web3Provider = new providers.Web3Provider(eip1193 as any);
 
   return {
     address: authResult.address,
-    provider,
+    keyId: authResult.keyId,
     openkey,
+    web3Provider,
   };
 }

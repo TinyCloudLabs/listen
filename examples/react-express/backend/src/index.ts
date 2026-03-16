@@ -6,8 +6,6 @@ import {
   createBackendIdentity,
   DelegationStore,
   DelegationCache,
-  createJWTVerifier,
-  fetchUserInfo,
 } from "@tinyboilerplate/server";
 
 import { createAuthMiddleware } from "./middleware/auth.js";
@@ -20,7 +18,6 @@ import { createItemsRouter } from "./routes/items.js";
 
 const BACKEND_PRIVATE_KEY = process.env.BACKEND_PRIVATE_KEY;
 const TINYCLOUD_HOST = process.env.TINYCLOUD_HOST ?? "https://node.tinycloud.xyz";
-const OPENKEY_ISSUER_URL = process.env.OPENKEY_ISSUER_URL ?? "https://openkey.so";
 const PORT = parseInt(process.env.PORT ?? "3001", 10);
 
 if (!BACKEND_PRIVATE_KEY) {
@@ -42,15 +39,8 @@ async function main() {
   const delegationStore = new DelegationStore(node);
   const delegationCache = new DelegationCache();
 
-  // 3. Create JWT verifier
-  const verifyJWT = createJWTVerifier(OPENKEY_ISSUER_URL);
-
-  // 4. Create middleware
-  const authMiddleware = createAuthMiddleware({
-    verifyJWT,
-    fetchUserInfo,
-    openKeyUrl: OPENKEY_ISSUER_URL,
-  });
+  // 3. Create middleware
+  const authMiddleware = createAuthMiddleware();
 
   const delegationMiddleware = createDelegationMiddleware({
     node,
@@ -58,12 +48,12 @@ async function main() {
     cache: delegationCache,
   });
 
-  // 5. Set up Express
+  // 4. Set up Express
   const app = express();
   app.use(cors());
   app.use(express.json());
 
-  // 6. Mount routes
+  // 5. Mount routes
   app.use("/api/server-info", createServerInfoRouter(did));
 
   app.use(
@@ -84,7 +74,7 @@ async function main() {
     createItemsRouter(),
   );
 
-  // 7. Start server
+  // 6. Start server
   app.listen(PORT, () => {
     console.log(`Backend ready. DID: ${did}`);
     console.log(`Listening on http://localhost:${PORT}`);

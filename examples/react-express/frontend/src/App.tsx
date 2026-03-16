@@ -1,11 +1,8 @@
 import { useCallback, useRef, useState } from "react";
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
 import {
-  createOpenKey,
-  startOAuthFlow,
-  connectWallet,
-  createTinyCloudWeb,
-  signIn,
+  openKeySignIn,
+  createAndSignIn,
   TokenStore,
   createApiClient,
   type ApiClient,
@@ -19,7 +16,6 @@ import { ItemsCRUD } from "./components/ItemsCRUD";
 
 const OPENKEY_HOST =
   import.meta.env.VITE_OPENKEY_HOST || "https://openkey.so";
-const OPENKEY_CLIENT_ID = import.meta.env.VITE_OPENKEY_CLIENT_ID || "";
 const TINYCLOUD_HOST =
   import.meta.env.VITE_TINYCLOUD_HOST || "https://node.tinycloud.xyz";
 const BACKEND_URL =
@@ -28,7 +24,6 @@ const BACKEND_URL =
 // ── App ─────────────────────────────────────────────────────────────
 
 export function App() {
-  // Persistent refs (not re-created on render)
   const tokenStoreRef = useRef(new TokenStore());
 
   // Auth state
@@ -39,7 +34,7 @@ export function App() {
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  // Delegation state (lifted so Items panel can react to it)
+  // Delegation state
   const [delegationActive, setDelegationActive] = useState(false);
 
   // ── Sign In ───────────────────────────────────────────────────────
@@ -49,45 +44,24 @@ export function App() {
     setAuthError(null);
 
     try {
-      // 1. Create OpenKey instance
-      const openkey = createOpenKey({ host: OPENKEY_HOST });
-
-      // 2. OAuth flow to get tokens
-      const tokens = await startOAuthFlow(openkey, {
-        clientId: OPENKEY_CLIENT_ID,
-        redirectUri: window.location.origin,
+      // 1. OpenKey sign-in — single popup, passkey auth
+      const { address: addr, web3Provider } = await openKeySignIn({
+        host: OPENKEY_HOST,
       });
 
-      // 3. Store tokens
-      tokenStoreRef.current.setTokens(
-        tokens.access_token,
-        tokens.refresh_token,
-        tokens.expires_in,
-      );
-
-      // 4. Connect wallet to get EIP-1193 provider
-      const wallet = await connectWallet(openkey);
-
-      // 5. Create TinyCloudWeb with the provider
-      const tcwInstance = createTinyCloudWeb(wallet.provider, {
+      // 2. TinyCloud sign-in — SIWE signed via OpenKey
+      const tcwInstance = await createAndSignIn(web3Provider, {
         tinycloudHosts: [TINYCLOUD_HOST],
         autoCreateSpace: true,
       });
 
-      // 6. Sign in with TinyCloud
-      await signIn(tcwInstance);
-
-      // 7. Create API client
+      // 3. Create API client for backend calls
       const apiClient = createApiClient(BACKEND_URL, tokenStoreRef.current, {
-        refreshConfig: {
-          openKeyHost: OPENKEY_HOST,
-          clientId: OPENKEY_CLIENT_ID,
-        },
-        userAddress: wallet.address,
+        userAddress: addr,
       });
 
       // Update state
-      setAddress(wallet.address);
+      setAddress(addr);
       setDid(tcwInstance.did ?? null);
       setTcw(tcwInstance);
       setApi(apiClient);
@@ -101,6 +75,7 @@ export function App() {
   // ── Sign Out ──────────────────────────────────────────────────────
 
   const handleSignOut = useCallback(() => {
+    tcw?.signOut?.();
     tokenStoreRef.current.clear();
     setAddress(null);
     setDid(null);
@@ -108,11 +83,11 @@ export function App() {
     setApi(null);
     setDelegationActive(false);
     setAuthError(null);
-  }, []);
+  }, [tcw]);
 
   // ── Render ────────────────────────────────────────────────────────
 
-  const isSignedIn = address !== null && tcw !== null && api !== null;
+  const isSignedIn = address !== null && tcw !== null;
 
   return (
     <div style={styles.container}>

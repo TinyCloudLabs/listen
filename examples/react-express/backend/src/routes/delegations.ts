@@ -104,9 +104,11 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
   // ── GET /api/delegations/status — check delegation status ─────
   router.get("/status", async (req: Request, res: Response) => {
     const { address } = req.user!;
+    console.log(`[delegations/status] address=${address}`);
 
     try {
       const stored = await store.load(address);
+      console.log(`[delegations/status] stored=${stored ? "yes" : "no"} expiresAt=${stored?.expiresAt ?? "n/a"}`);
 
       if (!stored) {
         res.json({

@@ -1,18 +1,13 @@
 // ── Re-export everything ─────────────────────────────────────────────
 
 export {
-  createOpenKey,
-  startOAuthFlow,
-  connectWallet,
+  openKeySignIn,
   type OpenKeyConfig,
-  type OAuthConfig,
-  type OAuthTokens,
-  type WalletConnection,
+  type SignInResult,
 } from "./openkey.js";
 
 export {
-  createTinyCloudWeb,
-  signIn,
+  createAndSignIn,
   type TinyCloudWebConfig,
 } from "./tinycloud.js";
 

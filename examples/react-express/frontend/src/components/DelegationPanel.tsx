@@ -75,17 +75,15 @@ export const DelegationPanel: FC<DelegationPanelProps> = ({
 
     async function poll() {
       try {
-        const status = await checkDelegationStatus(backendUrl, token!);
+        const status = await checkDelegationStatus(backendUrl, token!, userAddress ?? undefined);
         if (!cancelled) {
           setDelegation(status);
           onStatusChange(status.status === "active");
         }
       } catch {
-        // Silently ignore status check failures — may not have delegated yet
-        if (!cancelled) {
-          setDelegation(null);
-          onStatusChange(false);
-        }
+        // Don't reset delegation state on poll failures — if the user
+        // already granted delegation, a transient error shouldn't revoke it.
+        // Only set to inactive if we've never had a successful delegation.
       }
     }
 
@@ -134,7 +132,7 @@ export const DelegationPanel: FC<DelegationPanelProps> = ({
       const token = tokenStore.getAccessToken();
       if (!token) throw new Error("No access token.");
 
-      await revokeDelegation(backendUrl, token);
+      await revokeDelegation(backendUrl, token, userAddress ?? undefined);
       setDelegation(null);
       onStatusChange(false);
     } catch (err) {

@@ -60,7 +60,8 @@ describe("DelegationStore", () => {
       const [key, value] = mockNode.kv.put.mock.calls[0];
       expect(key).toBe("delegations/0xabc123");
 
-      const parsed = JSON.parse(value as string);
+      // Value is passed as object (SDK handles serialization)
+      const parsed = typeof value === "string" ? JSON.parse(value) : value;
       expect(parsed.serialized).toBe("serialized-data");
       expect(parsed.grantedAt).toBe(metadata.grantedAt);
       expect(parsed.expiresAt).toBe(metadata.expiresAt);
@@ -77,7 +78,7 @@ describe("DelegationStore", () => {
       const after = new Date().toISOString();
 
       const [, value] = mockNode.kv.put.mock.calls[0];
-      const parsed = JSON.parse(value as string);
+      const parsed = typeof value === "string" ? JSON.parse(value) : value;
       expect(parsed.grantedAt >= before).toBe(true);
       expect(parsed.grantedAt <= after).toBe(true);
     });

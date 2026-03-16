@@ -21,25 +21,22 @@ export function createItemsRouter() {
         const items: Item[] = (result.data ?? []).map(rowToItem);
         res.json({ items });
       } else {
-        // KV list returns { keys: string[] }, then get each value
+        // KV list returns { keys: string[] }, then get each value in parallel
         const listResult = await access.kv.list({ prefix: "items/" });
         if (!listResult.ok) {
           res.json({ items: [] });
           return;
         }
         const keys = listResult.data.keys ?? [];
-        const items: Item[] = [];
-        for (const key of keys) {
-          const getResult = await access.kv.get(key);
-          if (getResult.ok && getResult.data?.data) {
-            try {
-              const val = typeof getResult.data.data === "string"
-                ? JSON.parse(getResult.data.data)
-                : getResult.data.data;
-              items.push(val as Item);
-            } catch { /* skip corrupt entries */ }
-          }
-        }
+        const results = await Promise.all(
+          keys.map((key) => access.kv.get(key))
+        );
+        const items: Item[] = results
+          .filter((r) => r.ok && (r.data as any)?.data)
+          .map((r) => {
+            const val = (r.data as any).data;
+            return (typeof val === "string" ? JSON.parse(val) : val) as Item;
+          });
         res.json({ items });
       }
     } catch (err) {

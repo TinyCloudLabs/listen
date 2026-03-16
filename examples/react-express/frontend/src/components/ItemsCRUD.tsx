@@ -83,7 +83,10 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api, delegationActive }) => {
         setLastResponse(res);
         setNewTitle("");
         setNewData("");
-        await fetchItems();
+        // Optimistic: add to list immediately
+        if (res.item) {
+          setItems((prev) => [res.item, ...prev]);
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -115,7 +118,10 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api, delegationActive }) => {
         setEditingId(null);
         setEditTitle("");
         setEditData("");
-        await fetchItems();
+        // Optimistic: update in list immediately
+        if (res.item) {
+          setItems((prev) => prev.map((i) => (i.id === id ? res.item : i)));
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -137,7 +143,8 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api, delegationActive }) => {
       try {
         await api.del(`/api/items/${id}?store=${storeType}`);
         setLastResponse({ deleted: id });
-        await fetchItems();
+        // Optimistic: remove from list immediately
+        setItems((prev) => prev.filter((i) => i.id !== id));
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -191,11 +198,13 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api, delegationActive }) => {
               KV
             </button>
             <button
-              onClick={() => setStoreType("sql")}
+              disabled
               style={{
                 ...styles.toggleButton,
-                ...(storeType === "sql" ? styles.toggleActive : {}),
+                opacity: 0.4,
+                cursor: "not-allowed",
               }}
+              title="SQL not available via delegation (KV only)"
             >
               SQL
             </button>

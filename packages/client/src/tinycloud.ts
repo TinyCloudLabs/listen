@@ -1,5 +1,5 @@
 import { TinyCloudWeb } from "@tinycloud/web-sdk";
-import { providers } from "ethers";
+import type { providers } from "ethers";
 
 // ── Configuration ────────────────────────────────────────────────────
 
@@ -11,38 +11,26 @@ export interface TinyCloudWebConfig {
 // ── TinyCloudWeb Instance ────────────────────────────────────────────
 
 /**
- * Create a TinyCloudWeb instance wired to the given EIP-1193 provider.
- * The provider typically comes from `connectWallet()` in openkey.ts.
+ * Create a TinyCloudWeb instance and sign in.
+ *
+ * Takes an ethers Web3Provider (from openKeySignIn) and returns
+ * a signed-in TinyCloudWeb instance ready for KV/delegation operations.
  */
-export function createTinyCloudWeb(
-  eip1193Provider: unknown,
+export async function createAndSignIn(
+  web3Provider: providers.Web3Provider,
   config?: TinyCloudWebConfig,
-): TinyCloudWeb {
+): Promise<TinyCloudWeb> {
   const tcw = new TinyCloudWeb({
     providers: {
-      web3: { driver: eip1193Provider },
+      web3: { driver: web3Provider },
     },
     tinycloudHosts: config?.tinycloudHosts ?? ["https://node.tinycloud.xyz"],
     autoCreateSpace: config?.autoCreateSpace ?? true,
   });
 
-  // WORKAROUND: The SDK's createDelegation() uses tcw.provider.getSigner()
-  // but the constructor never sets tcw.provider from the config.
-  // Manually set it so delegation signing works.
-  tcw.provider = new providers.Web3Provider(
-    eip1193Provider as providers.ExternalProvider,
-  );
+  // Set provider for createDelegation() signing (SDK bug workaround)
+  tcw.provider = web3Provider;
 
+  await tcw.signIn();
   return tcw;
-}
-
-// ── Sign In ──────────────────────────────────────────────────────────
-
-/**
- * Sign in with TinyCloudWeb and return the session.
- * After sign-in, `tcw.did` is the user's primary DID and `tcw.spaceId` is set.
- */
-export async function signIn(tcw: TinyCloudWeb) {
-  const session = await tcw.signIn();
-  return session;
 }
