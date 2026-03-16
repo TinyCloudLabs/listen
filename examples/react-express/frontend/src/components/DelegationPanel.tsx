@@ -1,6 +1,5 @@
 import { type FC, useCallback, useEffect, useState } from "react";
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
-import type { TokenStore } from "@tinyboilerplate/client";
 import type { DelegationResponse, ServerInfo } from "@tinyboilerplate/core";
 import {
   createDelegation,
@@ -12,7 +11,6 @@ import {
 interface DelegationPanelProps {
   isSignedIn: boolean;
   tcw: TinyCloudWeb | null;
-  tokenStore: TokenStore;
   backendUrl: string;
   userAddress: string | null;
   onStatusChange: (active: boolean) => void;
@@ -21,7 +19,6 @@ interface DelegationPanelProps {
 export const DelegationPanel: FC<DelegationPanelProps> = ({
   isSignedIn,
   tcw,
-  tokenStore,
   backendUrl,
   userAddress,
   onStatusChange,
@@ -66,24 +63,19 @@ export const DelegationPanel: FC<DelegationPanelProps> = ({
   // ── Poll delegation status ────────────────────────────────────────
 
   useEffect(() => {
-    if (!isSignedIn) return;
-
-    const token = tokenStore.getAccessToken();
-    if (!token) return;
+    if (!isSignedIn || !userAddress) return;
 
     let cancelled = false;
 
     async function poll() {
       try {
-        const status = await checkDelegationStatus(backendUrl, token!, userAddress ?? undefined);
+        const status = await checkDelegationStatus(backendUrl, userAddress!);
         if (!cancelled) {
           setDelegation(status);
           onStatusChange(status.status === "active");
         }
       } catch {
-        // Don't reset delegation state on poll failures — if the user
-        // already granted delegation, a transient error shouldn't revoke it.
-        // Only set to inactive if we've never had a successful delegation.
+        // Don't reset on poll failures — transient errors shouldn't revoke
       }
     }
 
@@ -93,7 +85,7 @@ export const DelegationPanel: FC<DelegationPanelProps> = ({
       cancelled = true;
       clearInterval(interval);
     };
-  }, [isSignedIn, tokenStore, backendUrl, onStatusChange]);
+  }, [isSignedIn, userAddress, backendUrl, onStatusChange]);
 
   // ── Grant delegation ──────────────────────────────────────────────
 
@@ -104,14 +96,13 @@ export const DelegationPanel: FC<DelegationPanelProps> = ({
     setError(null);
 
     try {
-      const token = tokenStore.getAccessToken();
-      if (!token) throw new Error("No access token. Sign in first.");
+      if (!userAddress) throw new Error("No address. Sign in first.");
 
       // Create delegation from user to backend
       const serialized = await createDelegation(tcw, backendDID);
 
       // Send it to the backend
-      const result = await sendDelegation(backendUrl, serialized, token, userAddress ?? undefined);
+      const result = await sendDelegation(backendUrl, serialized, userAddress);
 
       setDelegation(result);
       onStatusChange(result.status === "active");
@@ -120,7 +111,7 @@ export const DelegationPanel: FC<DelegationPanelProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [tcw, backendDID, tokenStore, backendUrl, onStatusChange]);
+  }, [tcw, backendDID, backendUrl, onStatusChange]);
 
   // ── Revoke delegation ─────────────────────────────────────────────
 
@@ -129,10 +120,9 @@ export const DelegationPanel: FC<DelegationPanelProps> = ({
     setError(null);
 
     try {
-      const token = tokenStore.getAccessToken();
-      if (!token) throw new Error("No access token.");
+      if (!userAddress) throw new Error("No address.");
 
-      await revokeDelegation(backendUrl, token, userAddress ?? undefined);
+      await revokeDelegation(backendUrl, userAddress);
       setDelegation(null);
       onStatusChange(false);
     } catch (err) {
@@ -140,7 +130,7 @@ export const DelegationPanel: FC<DelegationPanelProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [tokenStore, backendUrl, onStatusChange]);
+  }, [userAddress, backendUrl, onStatusChange]);
 
   // ── Render ────────────────────────────────────────────────────────
 

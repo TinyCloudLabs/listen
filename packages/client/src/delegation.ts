@@ -9,23 +9,13 @@ import {
 // ── Configuration ────────────────────────────────────────────────────
 
 export interface DelegationOptions {
-  /** KV/SQL actions to grant. Defaults to DEFAULT_DELEGATION_ACTIONS. */
   actions?: string[];
-  /** Path scope for the delegation. Defaults to DEFAULT_DELEGATION_PATH. */
   path?: string;
-  /** Expiry in milliseconds from now. Defaults to DEFAULT_DELEGATION_EXPIRY_MS (7 days). */
   expiryMs?: number;
 }
 
 // ── Create Delegation ────────────────────────────────────────────────
 
-/**
- * Create a portable delegation from the signed-in user to the backend DID.
- * Returns the serialized delegation string ready to send to the backend.
- *
- * IMPORTANT: `tcw.did` must be the primary DID (user is signed in).
- * `backendDID` is the server's DID obtained from GET /api/server-info.
- */
 export async function createDelegation(
   tcw: TinyCloudWeb,
   backendDID: string,
@@ -49,21 +39,16 @@ export async function createDelegation(
 
 // ── Send Delegation to Backend ───────────────────────────────────────
 
-/**
- * POST the serialized delegation to the backend so it can act on the user's behalf.
- */
 export async function sendDelegation(
   backendUrl: string,
   serialized: string,
-  accessToken: string,
-  userAddress?: string,
+  userAddress: string,
 ): Promise<DelegationResponse> {
   const res = await fetch(`${backendUrl}/api/delegations`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
-      ...(userAddress ? { "X-User-Address": userAddress } : {}),
+      "X-User-Address": userAddress,
     },
     body: JSON.stringify({ serialized }),
   });
@@ -78,18 +63,13 @@ export async function sendDelegation(
 
 // ── Check Delegation Status ──────────────────────────────────────────
 
-/**
- * Check whether the backend already has an active delegation for the current user.
- */
 export async function checkDelegationStatus(
   backendUrl: string,
-  accessToken: string,
-  userAddress?: string,
+  userAddress: string,
 ): Promise<DelegationResponse> {
   const res = await fetch(`${backendUrl}/api/delegations/status`, {
     headers: {
-      Authorization: `Bearer ${accessToken}`,
-      ...(userAddress ? { "X-User-Address": userAddress } : {}),
+      "X-User-Address": userAddress,
     },
   });
 
@@ -103,19 +83,14 @@ export async function checkDelegationStatus(
 
 // ── Revoke Delegation ────────────────────────────────────────────────
 
-/**
- * Revoke the backend's delegation for the current user.
- */
 export async function revokeDelegation(
   backendUrl: string,
-  accessToken: string,
-  userAddress?: string,
+  userAddress: string,
 ): Promise<void> {
   const res = await fetch(`${backendUrl}/api/delegations`, {
     method: "DELETE",
     headers: {
-      Authorization: `Bearer ${accessToken}`,
-      ...(userAddress ? { "X-User-Address": userAddress } : {}),
+      "X-User-Address": userAddress,
     },
   });
 

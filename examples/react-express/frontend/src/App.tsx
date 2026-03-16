@@ -3,7 +3,6 @@ import type { TinyCloudWeb } from "@tinycloud/web-sdk";
 import {
   openKeySignIn,
   createAndSignIn,
-  TokenStore,
   createApiClient,
   type ApiClient,
 } from "@tinyboilerplate/client";
@@ -24,7 +23,6 @@ const BACKEND_URL =
 // ── App ─────────────────────────────────────────────────────────────
 
 export function App() {
-  const tokenStoreRef = useRef(new TokenStore());
 
   // Auth state
   const [address, setAddress] = useState<string | null>(null);
@@ -56,9 +54,7 @@ export function App() {
       });
 
       // 3. Create API client for backend calls
-      const apiClient = createApiClient(BACKEND_URL, tokenStoreRef.current, {
-        userAddress: addr,
-      });
+      const apiClient = createApiClient(BACKEND_URL, { userAddress: addr });
 
       // Update state
       setAddress(addr);
@@ -76,7 +72,6 @@ export function App() {
 
   const handleSignOut = useCallback(() => {
     tcw?.signOut?.();
-    tokenStoreRef.current.clear();
     setAddress(null);
     setDid(null);
     setTcw(null);
@@ -110,7 +105,6 @@ export function App() {
         <DelegationPanel
           isSignedIn={isSignedIn}
           tcw={tcw}
-          tokenStore={tokenStoreRef.current}
           backendUrl={BACKEND_URL}
           userAddress={address}
           onStatusChange={setDelegationActive}
