@@ -74,12 +74,10 @@ export const DEFAULT_DELEGATION_ACTIONS = [
   "tinycloud.kv/put",
   "tinycloud.kv/del",
   "tinycloud.kv/list",
-  "tinycloud.sql/read",
-  "tinycloud.sql/write",
 ] as const;
 
-/** Default delegation path scope */
-export const DEFAULT_DELEGATION_PATH = "items/";
+/** Default delegation path scope (empty = full space access) */
+export const DEFAULT_DELEGATION_PATH = "";
 
 /** Default delegation expiry: 7 days */
 export const DEFAULT_DELEGATION_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;

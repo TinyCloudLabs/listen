@@ -46,20 +46,30 @@ export function createAuthMiddleware(config: AuthMiddlewareConfig) {
       const { claims } = await verifyJWT(token);
       const sub = claims.sub;
 
-      // Resolve address: check cache first, then fetch from OpenKey
+      // Resolve address: cache → header → userinfo
       let address = subToAddress.get(sub);
 
       if (!address) {
-        const userInfo = await fetchInfo(openKeyUrl, token);
+        // Try X-User-Address header (set by frontend from connectWallet result)
+        const headerAddress = req.headers["x-user-address"] as string | undefined;
 
-        // OpenKey userinfo returns keys: [{ address, keyId }]
-        const keys = (userInfo as any).keys;
-        address = keys?.[0]?.address ?? userInfo.address;
+        if (headerAddress) {
+          address = headerAddress;
+        } else {
+          // Fall back to userinfo endpoint
+          try {
+            const userInfo = await fetchInfo(openKeyUrl, token);
+            const keys = (userInfo as any).keys;
+            address = keys?.[0]?.address ?? userInfo.address;
+          } catch {
+            // userinfo failed — address not available
+          }
+        }
 
         if (!address) {
           res.status(401).json({
             error: "no_address",
-            message: "User has no blockchain address associated",
+            message: "User has no blockchain address associated. Ensure the frontend sends X-User-Address header.",
           });
           return;
         }

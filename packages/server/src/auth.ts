@@ -30,15 +30,13 @@ export interface JWTVerifierConfig {
 // ── JWT Verifier ─────────────────────────────────────────────────────
 
 /**
- * Create a JWT verification function backed by the OpenKey JWKS endpoint.
+ * Create a token verification function.
  *
- * Returns a verify function that:
- * 1. Extracts the Bearer token from an Authorization header value
- * 2. Verifies the signature against the remote JWKS
- * 3. Validates issuer and audience claims
- * 4. Returns the decoded claims
+ * Supports two modes:
+ * 1. JWT verification via JWKS (standard OAuth2 JWT access tokens)
+ * 2. Opaque token verification via userinfo endpoint (better-auth session tokens)
  *
- * The JWKS is fetched and cached automatically by `jose`.
+ * Tries JWT first, falls back to userinfo if the token isn't a JWT.
  */
 export function createJWTVerifier(
   openKeyIssuerUrl: string,
@@ -53,10 +51,6 @@ export function createJWTVerifier(
   const issuer = config?.issuer ?? openKeyIssuerUrl;
   const audience = config?.audience;
 
-  /**
-   * Verify a JWT from an Authorization header value.
-   * Accepts the full header value (e.g., "Bearer eyJ...") or just the token.
-   */
   async function verify(authHeaderOrToken: string): Promise<VerifyResult> {
     const token = authHeaderOrToken.startsWith("Bearer ")
       ? authHeaderOrToken.slice(7)
@@ -66,22 +60,30 @@ export function createJWTVerifier(
       throw new Error("No token provided");
     }
 
-    const verifyOptions: Parameters<typeof jwtVerify>[2] = {
-      issuer,
+    // Try JWT verification first
+    if (token.split(".").length === 3) {
+      try {
+        const verifyOptions: Parameters<typeof jwtVerify>[2] = { issuer };
+        if (audience) verifyOptions.audience = audience;
+
+        const result: JWTVerifyResult = await jwtVerify(token, jwks, verifyOptions);
+        const claims = result.payload as JWTClaims;
+        if (!claims.sub) throw new Error("JWT missing 'sub' claim");
+        return { claims, token };
+      } catch {
+        // Fall through to userinfo validation
+      }
+    }
+
+    // Opaque token — validate via userinfo endpoint
+    const userInfo = await fetchUserInfo(openKeyIssuerUrl, token);
+    if (!userInfo.sub) {
+      throw new Error("Token validation failed: no sub in userinfo");
+    }
+    return {
+      claims: { sub: userInfo.sub, iss: openKeyIssuerUrl } as JWTClaims,
+      token,
     };
-
-    if (audience) {
-      verifyOptions.audience = audience;
-    }
-
-    const result: JWTVerifyResult = await jwtVerify(token, jwks, verifyOptions);
-
-    const claims = result.payload as JWTClaims;
-    if (!claims.sub) {
-      throw new Error("JWT missing 'sub' claim");
-    }
-
-    return { claims, token };
   }
 
   return verify;

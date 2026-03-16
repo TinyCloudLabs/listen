@@ -5,7 +5,7 @@ import OpenKey, { OpenKeyEIP1193Provider } from "@openkey/sdk";
 export interface OpenKeyConfig {
   host?: string;
   appName?: string;
-  mode?: "popup" | "redirect";
+  mode?: "iframe" | "popup" | "redirect";
 }
 
 export interface OAuthConfig {

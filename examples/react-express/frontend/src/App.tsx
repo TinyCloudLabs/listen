@@ -83,6 +83,7 @@ export function App() {
           openKeyHost: OPENKEY_HOST,
           clientId: OPENKEY_CLIENT_ID,
         },
+        userAddress: wallet.address,
       });
 
       // Update state
@@ -136,6 +137,7 @@ export function App() {
           tcw={tcw}
           tokenStore={tokenStoreRef.current}
           backendUrl={BACKEND_URL}
+          userAddress={address}
           onStatusChange={setDelegationActive}
         />
 

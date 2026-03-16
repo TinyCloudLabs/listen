@@ -6,6 +6,8 @@ import type { ApiError } from "@tinyboilerplate/core";
 export interface ApiClientConfig {
   /** Token refresh configuration. If omitted, auto-refresh is disabled. */
   refreshConfig?: TokenRefreshConfig;
+  /** User's blockchain address (from connectWallet). Sent as X-User-Address header. */
+  userAddress?: string;
 }
 
 export interface ApiClient {
@@ -53,6 +55,7 @@ export function createApiClient(
       headers: {
         ...init.headers,
         Authorization: `Bearer ${token}`,
+        ...(config?.userAddress ? { "X-User-Address": config.userAddress } : {}),
       },
     });
 
@@ -67,6 +70,7 @@ export function createApiClient(
           headers: {
             ...init.headers,
             Authorization: `Bearer ${token}`,
+            ...(config?.userAddress ? { "X-User-Address": config.userAddress } : {}),
           },
         });
       } catch {

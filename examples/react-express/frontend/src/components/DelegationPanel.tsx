@@ -14,6 +14,7 @@ interface DelegationPanelProps {
   tcw: TinyCloudWeb | null;
   tokenStore: TokenStore;
   backendUrl: string;
+  userAddress: string | null;
   onStatusChange: (active: boolean) => void;
 }
 
@@ -22,6 +23,7 @@ export const DelegationPanel: FC<DelegationPanelProps> = ({
   tcw,
   tokenStore,
   backendUrl,
+  userAddress,
   onStatusChange,
 }) => {
   const [backendDID, setBackendDID] = useState<string | null>(null);
@@ -111,7 +113,7 @@ export const DelegationPanel: FC<DelegationPanelProps> = ({
       const serialized = await createDelegation(tcw, backendDID);
 
       // Send it to the backend
-      const result = await sendDelegation(backendUrl, serialized, token);
+      const result = await sendDelegation(backendUrl, serialized, token, userAddress ?? undefined);
 
       setDelegation(result);
       onStatusChange(result.status === "active");

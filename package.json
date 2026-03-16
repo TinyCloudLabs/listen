@@ -23,6 +23,7 @@
     "test:server": "cd packages/server && bun test"
   },
   "devDependencies": {
+    "@tinycloud/node-sdk": "1.5.0",
     "playwright": "^1.58.2"
   }
 }

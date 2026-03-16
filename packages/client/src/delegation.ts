@@ -56,12 +56,14 @@ export async function sendDelegation(
   backendUrl: string,
   serialized: string,
   accessToken: string,
+  userAddress?: string,
 ): Promise<DelegationResponse> {
   const res = await fetch(`${backendUrl}/api/delegations`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${accessToken}`,
+      ...(userAddress ? { "X-User-Address": userAddress } : {}),
     },
     body: JSON.stringify({ serialized }),
   });

@@ -21,15 +21,25 @@ export function createItemsRouter() {
         const items: Item[] = (result.data ?? []).map(rowToItem);
         res.json({ items });
       } else {
-        const result = await access.kv.list("items/");
-        const entries = result.data ?? [];
-        const items: Item[] = entries.map((entry: any) => {
-          try {
-            return JSON.parse(entry.value) as Item;
-          } catch {
-            return null;
+        // KV list returns { keys: string[] }, then get each value
+        const listResult = await access.kv.list({ prefix: "items/" });
+        if (!listResult.ok) {
+          res.json({ items: [] });
+          return;
+        }
+        const keys = listResult.data.keys ?? [];
+        const items: Item[] = [];
+        for (const key of keys) {
+          const getResult = await access.kv.get(key);
+          if (getResult.ok && getResult.data?.data) {
+            try {
+              const val = typeof getResult.data.data === "string"
+                ? JSON.parse(getResult.data.data)
+                : getResult.data.data;
+              items.push(val as Item);
+            } catch { /* skip corrupt entries */ }
           }
-        }).filter(Boolean) as Item[];
+        }
         res.json({ items });
       }
     } catch (err) {
@@ -67,7 +77,8 @@ export function createItemsRouter() {
           `INSERT INTO items (id, title, data, created_at, updated_at) VALUES ('${escape(item.id)}', '${escape(item.title)}', '${escape(item.data ?? "")}', '${escape(item.createdAt)}', '${escape(item.updatedAt)}')`,
         );
       } else {
-        await access.kv.put(`items/${item.id}`, JSON.stringify(item));
+        const putResult = await access.kv.put(`items/${item.id}`, item);
+        if (!putResult.ok) throw new Error(`KV put failed: ${(putResult as any).error?.message}`);
       }
 
       res.status(201).json({ item });
@@ -99,14 +110,15 @@ export function createItemsRouter() {
         res.json({ item: rowToItem(rows[0]) });
       } else {
         const result = await access.kv.get(`items/${id}`);
-        if (!result.data) {
+        if (!result.ok || !result.data?.data) {
           res.status(404).json({
             error: "not_found",
             message: `Item '${id}' not found`,
           });
           return;
         }
-        const item: Item = JSON.parse(result.data);
+        const raw = result.data.data;
+        const item: Item = typeof raw === "string" ? JSON.parse(raw) : raw;
         res.json({ item });
       }
     } catch (err) {
@@ -164,7 +176,7 @@ export function createItemsRouter() {
       } else {
         // KV: read-modify-write
         const result = await access.kv.get(`items/${id}`);
-        if (!result.data) {
+        if (!result.ok || !result.data?.data) {
           res.status(404).json({
             error: "not_found",
             message: `Item '${id}' not found`,
@@ -172,7 +184,8 @@ export function createItemsRouter() {
           return;
         }
 
-        const existing: Item = JSON.parse(result.data);
+        const raw = result.data.data;
+        const existing: Item = typeof raw === "string" ? JSON.parse(raw) : raw;
         const updated: Item = {
           ...existing,
           title: input.title ?? existing.title,
@@ -180,7 +193,7 @@ export function createItemsRouter() {
           updatedAt: now,
         };
 
-        await access.kv.put(`items/${id}`, JSON.stringify(updated));
+        await access.kv.put(`items/${id}`, updated);
         res.json({ item: updated });
       }
     } catch (err) {
@@ -216,7 +229,7 @@ export function createItemsRouter() {
       } else {
         // KV: check existence, then delete
         const result = await access.kv.get(`items/${id}`);
-        if (!result.data) {
+        if (!result.ok || !result.data?.data) {
           res.status(404).json({
             error: "not_found",
             message: `Item '${id}' not found`,
