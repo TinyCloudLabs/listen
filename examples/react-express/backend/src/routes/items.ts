@@ -15,11 +15,28 @@ export function createItemsRouter() {
     try {
       if (storeType === "sql") {
         await ensureTable(access);
-        const result = await access.sql.query(
-          "SELECT id, title, data, created_at, updated_at FROM items ORDER BY created_at DESC",
-        );
-        const items: Item[] = (result.data ?? []).map(rowToItem);
-        res.json({ items });
+
+        // SQL supports search + sort via query params
+        const search = (req.query.search as string) ?? "";
+        const sortBy = (req.query.sort as string) ?? "created_at";
+        const sortDir = (req.query.dir as string) === "asc" ? "ASC" : "DESC";
+        const validSort = ["title", "created_at", "updated_at"].includes(sortBy) ? sortBy : "created_at";
+
+        let sql = "SELECT id, title, data, created_at, updated_at FROM items";
+        const params: (string | number | null)[] = [];
+        if (search) {
+          sql += ` WHERE title LIKE ? OR data LIKE ?`;
+          params.push(`%${search}%`, `%${search}%`);
+        }
+        sql += ` ORDER BY ${validSort} ${sortDir}`;
+
+        const result = await access.sql.query(sql, params);
+        if (!result.ok) throw new Error(`SQL query failed: ${(result as any).error?.message ?? "unknown"}`);
+        const rows = (result.data as any)?.rows ?? [];
+        const columns: string[] = (result.data as any)?.columns ?? [];
+        const rowCount = (result.data as any)?.rowCount ?? rows.length;
+        const items: Item[] = rows.map((row: any[]) => rowToItem(row, columns));
+        res.json({ items, sql, rowCount });
       } else {
         // KV list returns { keys: string[] }, then get each value in parallel
         const listResult = await access.kv.list({ prefix: "items/" });
@@ -70,9 +87,11 @@ export function createItemsRouter() {
     try {
       if (storeType === "sql") {
         await ensureTable(access);
-        await access.sql.execute(
-          `INSERT INTO items (id, title, data, created_at, updated_at) VALUES ('${escape(item.id)}', '${escape(item.title)}', '${escape(item.data ?? "")}', '${escape(item.createdAt)}', '${escape(item.updatedAt)}')`,
+        const insertResult = await access.sql.execute(
+          `INSERT INTO items (id, title, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+          [item.id, item.title, item.data ?? "", item.createdAt, item.updatedAt],
         );
+        if (!insertResult.ok) throw new Error(`SQL insert failed: ${(insertResult as any).error?.message ?? "unknown"}`);
       } else {
         const putResult = await access.kv.put(`items/${item.id}`, item);
         if (!putResult.ok) throw new Error(`KV put failed: ${(putResult as any).error?.message}`);
@@ -94,9 +113,12 @@ export function createItemsRouter() {
       if (storeType === "sql") {
         await ensureTable(access);
         const result = await access.sql.query(
-          `SELECT id, title, data, created_at, updated_at FROM items WHERE id = '${escape(id)}'`,
+          `SELECT id, title, data, created_at, updated_at FROM items WHERE id = ?`,
+          [id],
         );
-        const rows = result.data ?? [];
+        if (!result.ok) throw new Error(`SQL query failed: ${(result as any).error?.message ?? "unknown"}`);
+        const rows = (result.data as any)?.rows ?? [];
+        const cols: string[] = (result.data as any)?.columns ?? [];
         if (rows.length === 0) {
           res.status(404).json({
             error: "not_found",
@@ -104,7 +126,7 @@ export function createItemsRouter() {
           });
           return;
         }
-        res.json({ item: rowToItem(rows[0]) });
+        res.json({ item: rowToItem(rows[0], cols) });
       } else {
         const result = await access.kv.get(`items/${id}`);
         if (!result.ok || !result.data?.data) {
@@ -146,9 +168,10 @@ export function createItemsRouter() {
 
         // Check if exists
         const existing = await access.sql.query(
-          `SELECT id FROM items WHERE id = '${escape(id)}'`,
+          `SELECT id FROM items WHERE id = ?`,
+          [id],
         );
-        if ((existing.data ?? []).length === 0) {
+        if (((existing.ok ? (existing.data as any)?.rows : null) ?? []).length === 0) {
           res.status(404).json({
             error: "not_found",
             message: `Item '${id}' not found`,
@@ -157,19 +180,28 @@ export function createItemsRouter() {
         }
 
         const setClauses: string[] = [];
-        if (input.title !== undefined) setClauses.push(`title = '${escape(input.title)}'`);
-        if (input.data !== undefined) setClauses.push(`data = '${escape(input.data)}'`);
-        setClauses.push(`updated_at = '${escape(now)}'`);
+        const updateParams: (string | number | null)[] = [];
+        if (input.title !== undefined) { setClauses.push("title = ?"); updateParams.push(input.title); }
+        if (input.data !== undefined) { setClauses.push("data = ?"); updateParams.push(input.data); }
+        setClauses.push("updated_at = ?");
+        updateParams.push(now);
+        updateParams.push(id);
 
-        await access.sql.execute(
-          `UPDATE items SET ${setClauses.join(", ")} WHERE id = '${escape(id)}'`,
+        const updateResult = await access.sql.execute(
+          `UPDATE items SET ${setClauses.join(", ")} WHERE id = ?`,
+          updateParams,
         );
+        if (!updateResult.ok) throw new Error(`SQL update failed: ${(updateResult as any).error?.message ?? "unknown"}`);
 
         // Fetch the updated item
         const result = await access.sql.query(
-          `SELECT id, title, data, created_at, updated_at FROM items WHERE id = '${escape(id)}'`,
+          `SELECT id, title, data, created_at, updated_at FROM items WHERE id = ?`,
+          [id],
         );
-        res.json({ item: rowToItem(result.data![0]) });
+        if (!result.ok) throw new Error(`SQL query failed: ${(result as any).error?.message ?? "unknown"}`);
+        const rows = (result.data as any)?.rows ?? [];
+        if (rows.length === 0) throw new Error("Item disappeared after update");
+        res.json({ item: rowToItem(rows[0], (result.data as any)?.columns ?? []) });
       } else {
         // KV: read-modify-write
         const result = await access.kv.get(`items/${id}`);
@@ -190,7 +222,8 @@ export function createItemsRouter() {
           updatedAt: now,
         };
 
-        await access.kv.put(`items/${id}`, updated);
+        const putResult = await access.kv.put(`items/${id}`, updated);
+        if (!putResult.ok) throw new Error(`KV put failed: ${(putResult as any).error?.message}`);
         res.json({ item: updated });
       }
     } catch (err) {
@@ -210,9 +243,10 @@ export function createItemsRouter() {
 
         // Check if exists
         const existing = await access.sql.query(
-          `SELECT id FROM items WHERE id = '${escape(id)}'`,
+          `SELECT id FROM items WHERE id = ?`,
+          [id],
         );
-        if ((existing.data ?? []).length === 0) {
+        if (((existing.ok ? (existing.data as any)?.rows : null) ?? []).length === 0) {
           res.status(404).json({
             error: "not_found",
             message: `Item '${id}' not found`,
@@ -220,9 +254,11 @@ export function createItemsRouter() {
           return;
         }
 
-        await access.sql.execute(
-          `DELETE FROM items WHERE id = '${escape(id)}'`,
+        const deleteResult = await access.sql.execute(
+          `DELETE FROM items WHERE id = ?`,
+          [id],
         );
+        if (!deleteResult.ok) throw new Error(`SQL delete failed: ${(deleteResult as any).error?.message ?? "unknown"}`);
       } else {
         // KV: check existence, then delete
         const result = await access.kv.get(`items/${id}`);
@@ -253,21 +289,12 @@ function getStoreType(req: Request): StoreType {
   return store === "sql" ? "sql" : "kv";
 }
 
-/** Minimal SQL string escaping (single quotes) */
-function escape(value: string): string {
-  return value.replace(/'/g, "''");
-}
-
 /**
- * SQL table initialization flag — ensures CREATE TABLE runs at most
- * once per process per DelegatedAccess.
+ * Ensure the items table exists. Runs CREATE TABLE IF NOT EXISTS
+ * on every call — idempotent and cheap over the network.
  */
-const initializedTables = new WeakSet<object>();
-
 async function ensureTable(access: any): Promise<void> {
-  if (initializedTables.has(access)) return;
-
-  await access.sql.execute(`
+  const result = await access.sql.execute(`
     CREATE TABLE IF NOT EXISTS items (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -276,11 +303,28 @@ async function ensureTable(access: any): Promise<void> {
       updated_at TEXT NOT NULL
     )
   `);
-
-  initializedTables.add(access);
+  if (!result.ok) {
+    throw new Error(`Failed to create items table: ${(result as any).error?.message ?? "unknown"}`);
+  }
 }
 
-function rowToItem(row: any): Item {
+/**
+ * Convert a SQL row to an Item.
+ * QueryResponse rows are arrays (not objects), so we map by column index.
+ * If columns are provided, use them; otherwise assume named object.
+ */
+function rowToItem(row: any, columns?: string[]): Item {
+  if (columns && Array.isArray(row)) {
+    const obj: Record<string, any> = {};
+    columns.forEach((col, i) => { obj[col] = row[i]; });
+    return {
+      id: obj.id,
+      title: obj.title,
+      data: obj.data ?? undefined,
+      createdAt: obj.created_at,
+      updatedAt: obj.updated_at,
+    };
+  }
   return {
     id: row.id,
     title: row.title,
@@ -291,12 +335,11 @@ function rowToItem(row: any): Item {
 }
 
 function handleStoreError(res: Response, err: unknown, operation: string): void {
-  const message = err instanceof Error ? err.message : String(err);
-
-  console.error(`[items] Failed to ${operation}:`, message);
+  const detail = err instanceof Error ? err.message : String(err);
+  console.error(`[items] ${operation} failed:`, err);
 
   res.status(500).json({
     error: "store_error",
-    message: `Failed to ${operation}: ${message}`,
+    message: `Failed to ${operation}: ${detail}`,
   });
 }

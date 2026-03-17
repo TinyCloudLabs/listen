@@ -1,27 +1,40 @@
 import type { Request, Response, NextFunction } from "express";
+import { createJWTVerifier } from "@tinyboilerplate/server";
 
 // ── Auth Middleware ──────────────────────────────────────────────────
 
 /**
- * Simple address-based auth middleware.
+ * JWT-based auth middleware.
  *
- * The frontend authenticates via OpenKey passkey + TinyCloud SIWE.
- * The delegation itself is cryptographic proof of authorization.
- * This middleware extracts the user's address from the X-User-Address header.
+ * Verifies the OpenKey access token via JWKS (or userinfo fallback).
+ * Sets req.user with the verified `sub` claim.
+ *
+ * The wallet address is NOT resolved here — it comes from the delegation
+ * itself (delegation.ownerAddress) when a delegation is first submitted.
  */
-export function createAuthMiddleware() {
-  return async (req: Request, res: Response, next: NextFunction) => {
-    const address = req.headers["x-user-address"] as string | undefined;
+export function createAuthMiddleware(openKeyIssuerUrl: string) {
+  const verify = createJWTVerifier(openKeyIssuerUrl);
 
-    if (!address) {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader) {
       res.status(401).json({
-        error: "missing_address",
-        message: "X-User-Address header is required",
+        error: "missing_token",
+        message: "Authorization header is required",
       });
       return;
     }
 
-    req.user = { sub: address, address };
-    next();
+    try {
+      const { claims } = await verify(authHeader);
+      req.user = { sub: claims.sub };
+      next();
+    } catch (err) {
+      res.status(401).json({
+        error: "invalid_token",
+        message: err instanceof Error ? err.message : "Token verification failed",
+      });
+    }
   };
 }

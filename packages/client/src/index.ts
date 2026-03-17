@@ -4,6 +4,7 @@ export {
   openKeySignIn,
   type OpenKeyConfig,
   type SignInResult,
+  type OAuthTokens,
 } from "./openkey.js";
 
 export {
@@ -21,6 +22,7 @@ export {
 
 export {
   TokenStore,
+  deriveApiHost,
   type StoredTokens,
   type TokenRefreshConfig,
 } from "./tokens.js";

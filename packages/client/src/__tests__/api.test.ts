@@ -50,7 +50,7 @@ describe("createApiClient", () => {
     }) as typeof fetch;
 
     const tokenStore = createMockTokenStore();
-    const client = createApiClient(backendUrl, tokenStore);
+    const client = createApiClient(backendUrl, { tokenStore });
 
     await client.get("/users/1");
 
@@ -78,7 +78,7 @@ describe("createApiClient", () => {
     }) as typeof fetch;
 
     const tokenStore = createMockTokenStore();
-    const client = createApiClient(backendUrl, tokenStore);
+    const client = createApiClient(backendUrl, { tokenStore });
 
     await client.post("/users", { name: "Alice" });
 
@@ -109,7 +109,7 @@ describe("createApiClient", () => {
     }) as typeof fetch;
 
     const tokenStore = createMockTokenStore();
-    const client = createApiClient(backendUrl, tokenStore);
+    const client = createApiClient(backendUrl, { tokenStore });
 
     await client.put("/users/1", { name: "Bob" });
 
@@ -134,7 +134,7 @@ describe("createApiClient", () => {
     }) as typeof fetch;
 
     const tokenStore = createMockTokenStore();
-    const client = createApiClient(backendUrl, tokenStore);
+    const client = createApiClient(backendUrl, { tokenStore });
 
     await client.del("/users/1");
 
@@ -157,7 +157,7 @@ describe("createApiClient", () => {
     }) as typeof fetch;
 
     const tokenStore = createMockTokenStore();
-    const client = createApiClient(backendUrl, tokenStore);
+    const client = createApiClient(backendUrl, { tokenStore });
 
     const result = await client.get<{ id: number; name: string; active: boolean }>(
       "/users/1",
@@ -176,7 +176,7 @@ describe("createApiClient", () => {
     }) as typeof fetch;
 
     const tokenStore = createMockTokenStore();
-    const client = createApiClient(backendUrl, tokenStore);
+    const client = createApiClient(backendUrl, { tokenStore });
 
     await expect(client.get("/users/999")).rejects.toThrow(
       "API error (404): User not found",
@@ -217,7 +217,7 @@ describe("createApiClient", () => {
       getAccessToken: () => "refreshed-token",
     });
 
-    const client = createApiClient(backendUrl, tokenStore, { refreshConfig });
+    const client = createApiClient(backendUrl, { tokenStore, refreshConfig });
     const result = await client.get<{ ok: boolean }>("/protected");
 
     expect(refreshCalled).toBe(true);
@@ -233,7 +233,7 @@ describe("createApiClient", () => {
     }) as typeof fetch;
 
     const tokenStore = createMockTokenStore();
-    const client = createApiClient(backendUrl, tokenStore);
+    const client = createApiClient(backendUrl, { tokenStore });
 
     const result = await client.del("/users/1");
     expect(result).toBeUndefined();
@@ -247,10 +247,10 @@ describe("createApiClient", () => {
       isExpired: () => true,
     });
 
-    const client = createApiClient(backendUrl, tokenStore);
+    const client = createApiClient(backendUrl, { tokenStore });
 
     await expect(client.get("/anything")).rejects.toThrow(
-      "No access token available. Sign in first.",
+      "Not authenticated. Please sign in.",
     );
   });
 });

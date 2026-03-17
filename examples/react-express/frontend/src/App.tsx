@@ -1,20 +1,25 @@
 import { useCallback, useRef, useState } from "react";
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
+import type { ServerInfo } from "@tinyboilerplate/core";
 import {
   openKeySignIn,
   createAndSignIn,
   createApiClient,
+  createDelegation,
+  sendDelegation,
+  TokenStore,
   type ApiClient,
 } from "@tinyboilerplate/client";
 
 import { AuthPanel } from "./components/AuthPanel";
-import { DelegationPanel } from "./components/DelegationPanel";
 import { ItemsCRUD } from "./components/ItemsCRUD";
 
 // ── Environment ─────────────────────────────────────────────────────
 
 const OPENKEY_HOST =
   import.meta.env.VITE_OPENKEY_HOST || "https://openkey.so";
+const OPENKEY_CLIENT_ID =
+  import.meta.env.VITE_OPENKEY_CLIENT_ID;
 const TINYCLOUD_HOST =
   import.meta.env.VITE_TINYCLOUD_HOST || "https://node.tinycloud.xyz";
 const BACKEND_URL =
@@ -32,8 +37,8 @@ export function App() {
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  // Delegation state
-  const [delegationActive, setDelegationActive] = useState(false);
+  // Token store (persists across re-renders)
+  const tokenStoreRef = useRef(new TokenStore());
 
   // ── Sign In ───────────────────────────────────────────────────────
 
@@ -42,21 +47,51 @@ export function App() {
     setAuthError(null);
 
     try {
-      // 1. OpenKey sign-in — single popup, passkey auth
-      const { address: addr, web3Provider } = await openKeySignIn({
+      // 1. OpenKey sign-in — passkey auth + OAuth PKCE token exchange
+      const { address: addr, web3Provider, tokens } = await openKeySignIn({
         host: OPENKEY_HOST,
+        clientId: OPENKEY_CLIENT_ID,
+        redirectUri: window.location.origin,
       });
 
-      // 2. TinyCloud sign-in — SIWE signed via OpenKey
+      // 2. Store tokens for backend auth
+      tokenStoreRef.current.setTokens(
+        tokens.accessToken,
+        tokens.refreshToken ?? "",
+        tokens.expiresIn,
+      );
+
+      // 3. TinyCloud sign-in — SIWE signed via OpenKey
       const tcwInstance = await createAndSignIn(web3Provider, {
         tinycloudHosts: [TINYCLOUD_HOST],
         autoCreateSpace: true,
       });
 
-      // 3. Create API client for backend calls
-      const apiClient = createApiClient(BACKEND_URL, { userAddress: addr });
+      // 4. Create API client with token-based auth
+      const apiClient = createApiClient(BACKEND_URL, {
+        tokenStore: tokenStoreRef.current,
+        refreshConfig: {
+          openKeyHost: OPENKEY_HOST,
+          clientId: OPENKEY_CLIENT_ID,
+        },
+      });
 
-      // Update state
+      // 5. Auto-delegate to backend
+      const infoRes = await fetch(`${BACKEND_URL}/api/server-info`);
+      if (!infoRes.ok) throw new Error(`Server info: ${infoRes.statusText}`);
+      const info: ServerInfo = await infoRes.json();
+      const backendDID = info.did;
+
+      const token = tokenStoreRef.current.getAccessToken();
+      if (!token) throw new Error("No access token after sign-in");
+
+      // Always create a fresh delegation on sign-in to pick up any
+      // config changes (path, actions, expiry). Sending a new delegation
+      // overwrites the previous one on the backend.
+      const serialized = await createDelegation(tcwInstance, backendDID);
+      await sendDelegation(BACKEND_URL, serialized, token);
+
+      // Update state — api being non-null signals delegation is ready
       setAddress(addr);
       setDid(tcwInstance.did ?? null);
       setTcw(tcwInstance);
@@ -70,13 +105,13 @@ export function App() {
 
   // ── Sign Out ──────────────────────────────────────────────────────
 
-  const handleSignOut = useCallback(() => {
-    tcw?.signOut?.();
+  const handleSignOut = useCallback(async () => {
+    await tcw?.signOut?.();
+    tokenStoreRef.current.clear();
     setAddress(null);
     setDid(null);
     setTcw(null);
     setApi(null);
-    setDelegationActive(false);
     setAuthError(null);
   }, [tcw]);
 
@@ -102,18 +137,7 @@ export function App() {
           onSignOut={handleSignOut}
         />
 
-        <DelegationPanel
-          isSignedIn={isSignedIn}
-          tcw={tcw}
-          backendUrl={BACKEND_URL}
-          userAddress={address}
-          onStatusChange={setDelegationActive}
-        />
-
-        <ItemsCRUD
-          api={api}
-          delegationActive={delegationActive}
-        />
+        <ItemsCRUD api={api} />
       </main>
 
       <footer style={styles.footer}>

@@ -14,8 +14,9 @@ export {
 
 export {
   DelegationCache,
-  type DelegatedAccess,
 } from "./delegation-cache.js";
+
+export type { DelegatedAccess } from "@tinycloud/node-sdk";
 
 export {
   createJWTVerifier,

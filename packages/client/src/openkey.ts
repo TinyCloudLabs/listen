@@ -6,6 +6,19 @@ import { providers } from "ethers";
 export interface OpenKeyConfig {
   host?: string;
   appName?: string;
+  /** OAuth client ID — required for token-based auth */
+  clientId: string;
+  /** OAuth redirect URI — must match your OpenKey app settings */
+  redirectUri: string;
+  /** EIP-155 chain ID in hex, defaults to "0x1" (Ethereum mainnet) */
+  chainId?: string;
+}
+
+export interface OAuthTokens {
+  accessToken: string;
+  refreshToken: string | undefined;
+  expiresIn: number;
+  idToken: string;
 }
 
 export interface SignInResult {
@@ -13,6 +26,7 @@ export interface SignInResult {
   keyId: string;
   openkey: OpenKey;
   web3Provider: providers.Web3Provider;
+  tokens: OAuthTokens;
 }
 
 // ── EIP-1193 Provider ────────────────────────────────────────────────
@@ -26,6 +40,7 @@ class OpenKeyEIP1193Provider {
     private openkey: OpenKey,
     private address: string,
     private keyId: string,
+    private chainId: string,
   ) {}
 
   async request({ method, params }: { method: string; params?: any[] }): Promise<any> {
@@ -34,7 +49,7 @@ class OpenKeyEIP1193Provider {
       case "eth_requestAccounts":
         return [this.address];
       case "eth_chainId":
-        return "0x1";
+        return this.chainId;
       case "personal_sign": {
         const hexMessage = params![0];
         const message = hexToString(hexMessage);
@@ -63,25 +78,39 @@ function hexToString(hex: string): string {
 // ── Sign In ──────────────────────────────────────────────────────────
 
 /**
- * Single-step OpenKey sign-in: connect → get signing provider.
+ * Full OpenKey sign-in: passkey authentication + OAuth PKCE token exchange.
  *
- * Opens one popup for passkey authentication. Returns an ethers
- * Web3Provider wired to OpenKey for signing, ready for TinyCloudWeb.
+ * 1. Opens a popup for passkey authentication (connect)
+ * 2. Runs OAuth PKCE flow to get verifiable tokens (oauth.connect + exchangeCode)
+ * 3. Returns an ethers Web3Provider for TinyCloud signing + JWT tokens for backend auth
  */
-export async function openKeySignIn(config?: OpenKeyConfig): Promise<SignInResult> {
+export async function openKeySignIn(config: OpenKeyConfig): Promise<SignInResult> {
   const openkey = new OpenKey({
-    host: config?.host ?? "https://openkey.so",
-    appName: config?.appName ?? "TinyBoilerplate",
+    host: config.host ?? "https://openkey.so",
+    appName: config.appName ?? "TinyBoilerplate",
   });
 
-  // Single popup — user authenticates with passkey, selects key
+  // 1. Passkey authentication via iframe — user authenticates, we get signing capability
   const authResult = await openkey.connect();
 
-  // Create EIP-1193 provider that routes signing through OpenKey
+  // 2. OAuth PKCE — exchange session for verifiable tokens
+  //    Passkey session persists, so the OAuth popup auto-approves instantly
+  const oauthConfig = {
+    clientId: config.clientId,
+    redirectUri: config.redirectUri,
+  };
+  const oauthResult = await openkey.oauth.connect(oauthConfig);
+  const tokenResponse = await openkey.oauth.exchangeCode(
+    oauthResult.code,
+    oauthConfig,
+  );
+
+  // 3. Create EIP-1193 provider for TinyCloud SIWE signing
   const eip1193 = new OpenKeyEIP1193Provider(
     openkey,
     authResult.address,
     authResult.keyId,
+    config.chainId ?? "0x1",
   );
 
   // Wrap in ethers Web3Provider for TinyCloudWeb compatibility
@@ -92,5 +121,11 @@ export async function openKeySignIn(config?: OpenKeyConfig): Promise<SignInResul
     keyId: authResult.keyId,
     openkey,
     web3Provider,
+    tokens: {
+      accessToken: tokenResponse.access_token,
+      refreshToken: tokenResponse.refresh_token,
+      expiresIn: tokenResponse.expires_in,
+      idToken: tokenResponse.id_token,
+    },
   };
 }

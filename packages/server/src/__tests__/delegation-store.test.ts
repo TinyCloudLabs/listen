@@ -58,7 +58,7 @@ describe("DelegationStore", () => {
 
       expect(mockNode.kv.put).toHaveBeenCalledTimes(1);
       const [key, value] = mockNode.kv.put.mock.calls[0];
-      expect(key).toBe("delegations/0xabc123");
+      expect(key).toBe("delegations/0xAbC123");
 
       // Value is passed as object (SDK handles serialization)
       const parsed = typeof value === "string" ? JSON.parse(value) : value;
@@ -95,7 +95,7 @@ describe("DelegationStore", () => {
 
       expect(mockNode.kv.get).toHaveBeenCalledTimes(1);
       const [key] = mockNode.kv.get.mock.calls[0];
-      expect(key).toBe("delegations/0xabc123");
+      expect(key).toBe("delegations/0xAbC123");
 
       expect(result).toEqual(delegation);
     });
@@ -130,7 +130,7 @@ describe("DelegationStore", () => {
 
       expect(mockNode.kv.delete).toHaveBeenCalledTimes(1);
       const [key] = mockNode.kv.delete.mock.calls[0];
-      expect(key).toBe("delegations/0xabc123");
+      expect(key).toBe("delegations/0xAbC123");
     });
   });
 
@@ -162,23 +162,17 @@ describe("DelegationStore", () => {
     });
   });
 
-  describe("key normalization", () => {
-    test("keys are lowercased for store", async () => {
-      await store.store("0xABCDEF", "data", makeMetadata());
+  describe("key format", () => {
+    test("keys preserve case (sub values are case-sensitive)", async () => {
+      await store.store("UserABC123", "data", makeMetadata());
       const [key] = mockNode.kv.put.mock.calls[0];
-      expect(key).toBe("delegations/0xabcdef");
+      expect(key).toBe("delegations/UserABC123");
     });
 
-    test("keys are lowercased for load", async () => {
-      await store.load("0xABCDEF");
+    test("keys are prefixed with delegations/", async () => {
+      await store.load("my-sub-id");
       const [key] = mockNode.kv.get.mock.calls[0];
-      expect(key).toBe("delegations/0xabcdef");
-    });
-
-    test("keys are lowercased for remove", async () => {
-      await store.remove("0xABCDEF");
-      const [key] = mockNode.kv.delete.mock.calls[0];
-      expect(key).toBe("delegations/0xabcdef");
+      expect(key).toBe("delegations/my-sub-id");
     });
   });
 });

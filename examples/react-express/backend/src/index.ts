@@ -18,6 +18,8 @@ import { createItemsRouter } from "./routes/items.js";
 
 const BACKEND_PRIVATE_KEY = process.env.BACKEND_PRIVATE_KEY;
 const TINYCLOUD_HOST = process.env.TINYCLOUD_HOST ?? "https://node.tinycloud.xyz";
+const OPENKEY_ISSUER_URL = process.env.OPENKEY_ISSUER_URL ?? "https://openkey.so";
+const FRONTEND_URL = process.env.FRONTEND_URL ?? "http://localhost:5173";
 const PORT = parseInt(process.env.PORT ?? "3001", 10);
 
 if (!BACKEND_PRIVATE_KEY) {
@@ -40,7 +42,7 @@ async function main() {
   const delegationCache = new DelegationCache();
 
   // 3. Create middleware
-  const authMiddleware = createAuthMiddleware();
+  const authMiddleware = createAuthMiddleware(OPENKEY_ISSUER_URL);
 
   const delegationMiddleware = createDelegationMiddleware({
     node,
@@ -50,7 +52,7 @@ async function main() {
 
   // 4. Set up Express
   const app = express();
-  app.use(cors());
+  app.use(cors({ origin: FRONTEND_URL }));
   app.use(express.json());
 
   // 5. Mount routes

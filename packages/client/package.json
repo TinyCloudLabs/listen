@@ -19,9 +19,9 @@
     "@tinyboilerplate/core": "workspace:*"
   },
   "peerDependencies": {
-    "@openkey/sdk": ">=0.7.0",
-    "@tinycloud/web-sdk": ">=1.5.0",
-    "ethers": ">=5.7.0"
+    "@openkey/sdk": ">=0.8.0",
+    "@tinycloud/web-sdk": ">=2.0.0",
+    "ethers": "^5.7.0"
   },
   "peerDependenciesMeta": {
     "ethers": {
@@ -29,8 +29,8 @@
     }
   },
   "devDependencies": {
-    "@openkey/sdk": "^0.7.2",
-    "@tinycloud/web-sdk": "~1.5.0",
+    "@openkey/sdk": "^0.8.4",
+    "@tinycloud/web-sdk": "~2.0.0",
     "ethers": "^5.7.2",
     "typescript": "^5.7.0"
   }

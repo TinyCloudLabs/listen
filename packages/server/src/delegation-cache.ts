@@ -1,15 +1,7 @@
 import { DELEGATION_CACHE_TTL_MS } from "@tinyboilerplate/core";
+import type { DelegatedAccess } from "@tinycloud/node-sdk";
 
 // ── Types ────────────────────────────────────────────────────────────
-
-/**
- * DelegatedAccess from TinyCloud SDK — provides scoped kv/sql
- * operating under the user's delegation.
- */
-export interface DelegatedAccess {
-  kv: unknown;   // IKVService from @tinycloud/node-sdk
-  sql: unknown;  // ISQLService from @tinycloud/node-sdk
-}
 
 interface CacheEntry {
   delegatedAccess: DelegatedAccess;
@@ -31,7 +23,7 @@ export class DelegationCache {
   private readonly cache = new Map<string, CacheEntry>();
   private readonly ttlMs: number;
 
-  constructor(ttlMs?: number) {
+  constructor(ttlMs?: number, private readonly maxSize: number = 10_000) {
     this.ttlMs = ttlMs ?? DELEGATION_CACHE_TTL_MS;
   }
 
@@ -40,14 +32,13 @@ export class DelegationCache {
    * Returns null if not cached or if the entry has expired.
    */
   get(address: string): DelegatedAccess | null {
-    const key = address.toLowerCase();
-    const entry = this.cache.get(key);
+    const entry = this.cache.get(address);
 
     if (!entry) return null;
 
     if (Date.now() - entry.cachedAt > this.ttlMs) {
       // TTL expired — remove stale entry
-      this.cache.delete(key);
+      this.cache.delete(address);
       return null;
     }
 
@@ -58,8 +49,11 @@ export class DelegationCache {
    * Cache a DelegatedAccess for the given address.
    */
   set(address: string, delegatedAccess: DelegatedAccess): void {
-    const key = address.toLowerCase();
-    this.cache.set(key, {
+    if (this.cache.size >= this.maxSize) {
+      const oldest = this.cache.keys().next().value;
+      if (oldest) this.cache.delete(oldest);
+    }
+    this.cache.set(address, {
       delegatedAccess,
       cachedAt: Date.now(),
     });
@@ -70,7 +64,7 @@ export class DelegationCache {
    * Use this when a delegation is revoked or a 401 is received.
    */
   evict(address: string): void {
-    this.cache.delete(address.toLowerCase());
+    this.cache.delete(address);
   }
 
   /**

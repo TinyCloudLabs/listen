@@ -17,20 +17,20 @@ export interface DelegationMetadata {
  * Persists and retrieves user delegations using the backend's own
  * TinyCloud KV store.
  *
- * Key format: `delegations/{address}` in the backend's KV space.
+ * Key format: `delegations/{identifier}` in the backend's KV space.
  */
 export class DelegationStore {
   constructor(private readonly node: TinyCloudNode) {}
 
   /**
-   * Store a serialized delegation for a user address.
+   * Store a serialized delegation for a user identifier.
    */
   async store(
-    address: string,
+    identifier: string,
     serialized: string,
     metadata: DelegationMetadata,
   ): Promise<void> {
-    const key = this.keyFor(address);
+    const key = this.keyFor(identifier);
     const record: StoredDelegation = {
       serialized,
       grantedAt: metadata.grantedAt ?? new Date().toISOString(),
@@ -45,11 +45,11 @@ export class DelegationStore {
   }
 
   /**
-   * Load the stored delegation for a user address.
+   * Load the stored delegation for a user identifier.
    * Returns null if no delegation exists.
    */
-  async load(address: string): Promise<StoredDelegation | null> {
-    const key = this.keyFor(address);
+  async load(identifier: string): Promise<StoredDelegation | null> {
+    const key = this.keyFor(identifier);
 
     const result = await withSessionRefresh(this.node, () =>
       this.node.kv.get(key),
@@ -65,16 +65,20 @@ export class DelegationStore {
       if (typeof raw === "string") raw = JSON.parse(raw);
       if (typeof raw === "string") raw = JSON.parse(raw); // double-encoded
       return raw as StoredDelegation;
-    } catch {
+    } catch (err) {
+      console.warn(
+        `[DelegationStore] Failed to parse stored delegation for ${identifier}:`,
+        err instanceof Error ? err.message : err,
+      );
       return null;
     }
   }
 
   /**
-   * Remove the stored delegation for a user address.
+   * Remove the stored delegation for a user identifier.
    */
-  async remove(address: string): Promise<void> {
-    const key = this.keyFor(address);
+  async remove(identifier: string): Promise<void> {
+    const key = this.keyFor(identifier);
 
     await withSessionRefresh(this.node, () =>
       this.node.kv.delete(key),
@@ -84,13 +88,16 @@ export class DelegationStore {
   /**
    * Check whether a stored delegation exists and is not expired.
    */
-  async isActive(address: string): Promise<boolean> {
-    const stored = await this.load(address);
+  async isActive(identifier: string): Promise<boolean> {
+    const stored = await this.load(identifier);
     if (!stored) return false;
     return new Date(stored.expiresAt).getTime() > Date.now();
   }
 
-  private keyFor(address: string): string {
-    return `delegations/${address.toLowerCase()}`;
+  private keyFor(identifier: string): string {
+    if (!identifier || identifier.includes("/") || identifier.includes("\\") || identifier.includes("..")) {
+      throw new Error("Invalid delegation identifier");
+    }
+    return `delegations/${identifier}`;
   }
 }

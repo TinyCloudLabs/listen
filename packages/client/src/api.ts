@@ -1,10 +1,13 @@
 import type { ApiError } from "@tinyboilerplate/core";
+import type { TokenStore, TokenRefreshConfig } from "./tokens.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
 export interface ApiClientConfig {
-  /** User's blockchain address. Sent as X-User-Address header for auth. */
-  userAddress: string;
+  /** Token store for JWT-based auth. Sends Authorization: Bearer header. */
+  tokenStore: TokenStore;
+  /** If provided, auto-refreshes expired tokens before requests. */
+  refreshConfig?: TokenRefreshConfig;
 }
 
 export interface ApiClient {
@@ -17,22 +20,43 @@ export interface ApiClient {
 // ── API Client ───────────────────────────────────────────────────────
 
 /**
- * Create a fetch wrapper that auto-attaches the X-User-Address header.
+ * Create a fetch wrapper that auto-attaches a Bearer token from the TokenStore.
+ * Handles token refresh transparently.
  */
 export function createApiClient(
   backendUrl: string,
   config: ApiClientConfig,
 ): ApiClient {
-  const { userAddress } = config;
+  const { tokenStore, refreshConfig } = config;
 
-  async function request<T>(path: string, init: RequestInit): Promise<T> {
+  async function request<T>(path: string, init: RequestInit, isRetry = false): Promise<T> {
+    // Auto-refresh expired tokens before the request
+    if (tokenStore.isExpired() && refreshConfig) {
+      await tokenStore.refresh(refreshConfig);
+    }
+
+    const accessToken = tokenStore.getAccessToken();
+    if (!accessToken) {
+      throw new Error("Not authenticated. Please sign in.");
+    }
+
     const res = await fetch(`${backendUrl}${path}`, {
       ...init,
       headers: {
         ...init.headers,
-        "X-User-Address": userAddress,
+        Authorization: `Bearer ${accessToken}`,
       },
     });
+
+    // On 401, try refreshing the token once and retry
+    if (res.status === 401 && !isRetry && refreshConfig) {
+      try {
+        await tokenStore.refresh(refreshConfig);
+        return request<T>(path, init, true);
+      } catch {
+        throw new Error("Session expired. Please sign in again.");
+      }
+    }
 
     if (!res.ok) {
       const err: ApiError = await res.json().catch(() => ({

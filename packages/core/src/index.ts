@@ -22,11 +22,6 @@ export interface UpdateItemInput {
 
 export type DelegationStatus = "active" | "expired" | "none";
 
-export interface DelegationInfo {
-  status: DelegationStatus;
-  expiresAt: string | null;
-}
-
 export interface StoredDelegation {
   serialized: string;
   grantedAt: string;
@@ -54,7 +49,7 @@ export interface ItemListResponse {
 
 export interface DelegationResponse {
   status: DelegationStatus;
-  expiresAt: string;
+  expiresAt: string | null;
 }
 
 export interface ApiError {
@@ -68,15 +63,17 @@ export type StoreType = "kv" | "sql";
 
 // ── Constants ────────────────────────────────────────────────────────
 
-/** Default TinyCloud KV actions for item CRUD */
+/** Default TinyCloud actions for item CRUD (KV + SQL) */
 export const DEFAULT_DELEGATION_ACTIONS = [
   "tinycloud.kv/get",
   "tinycloud.kv/put",
   "tinycloud.kv/del",
   "tinycloud.kv/list",
+  "tinycloud.sql/read",
+  "tinycloud.sql/write",
 ] as const;
 
-/** Default delegation path scope (empty = full space access) */
+/** Default delegation path scope — empty for broadest scope (SQL operations don't use path prefixes) */
 export const DEFAULT_DELEGATION_PATH = "";
 
 /** Default delegation expiry: 7 days */

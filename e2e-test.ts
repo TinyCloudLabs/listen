@@ -1,42 +1,63 @@
 /**
- * E2E test — simulates the complete frontend flow against the running backend.
+ * E2E test — tests delegation + KV CRUD directly against TinyCloud.
+ *
+ * This test does NOT go through the Express API (which requires real OpenKey tokens).
+ * Instead, it simulates what the backend does when it receives a delegation:
+ * deserialize → useDelegation → operate on the user's space.
+ *
+ * To run: BACKEND_PRIVATE_KEY=0x... bun run e2e-test.ts
+ * Or:     source examples/react-express/backend/.env && bun run e2e-test.ts
  */
-import { TinyCloudNode, serializeDelegation } from "@tinycloud/node-sdk";
+import { TinyCloudNode, serializeDelegation, deserializeDelegation } from "@tinycloud/node-sdk";
 import { randomBytes } from "crypto";
+import { readFileSync } from "fs";
+import { resolve } from "path";
+
+// Load backend .env if BACKEND_PRIVATE_KEY isn't set
+if (!process.env.BACKEND_PRIVATE_KEY) {
+  try {
+    const envPath = resolve(import.meta.dir, "examples/react-express/backend/.env");
+    const envContent = readFileSync(envPath, "utf-8");
+    for (const line of envContent.split("\n")) {
+      if (line.startsWith("#") || !line.includes("=")) continue;
+      const [key, ...rest] = line.split("=");
+      process.env[key.trim()] = rest.join("=").trim();
+    }
+  } catch {
+    console.error("BACKEND_PRIVATE_KEY not set. Run: source examples/react-express/backend/.env && bun run e2e-test.ts");
+    process.exit(1);
+  }
+}
 
 const BACKEND_URL = "http://localhost:3001";
-const TINYCLOUD_HOST = "https://node.tinycloud.xyz";
+const TINYCLOUD_HOST = process.env.TINYCLOUD_HOST ?? "https://node.tinycloud.xyz";
+const BACKEND_PRIVATE_KEY = process.env.BACKEND_PRIVATE_KEY!;
 const TEST_USER_KEY = `0x${randomBytes(32).toString("hex")}`;
 
-// Simulate what the frontend does
-async function api(method: string, path: string, token: string, address: string, body?: unknown) {
-  const res = await fetch(`${BACKEND_URL}${path}`, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      "X-User-Address": address,
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-
-  const text = await res.text();
-  let data;
-  try { data = JSON.parse(text); } catch { data = text; }
-
-  console.log(`  ${method} ${path} → ${res.status} ${typeof data === 'object' ? JSON.stringify(data).slice(0, 150) : data}`);
-  return { status: res.status, data, ok: res.ok };
+// Simple API helper for unauthenticated endpoints
+async function apiGet(path: string) {
+  const res = await fetch(`${BACKEND_URL}${path}`);
+  const data = await res.json();
+  console.log(`  GET ${path} → ${res.status}`);
+  return data;
 }
 
 async function main() {
-  console.log("=== TinyBoilerplate Full E2E ===\n");
+  console.log("=== TinyBoilerplate E2E Test ===\n");
 
-  // 1. Get backend DID
+  // 1. Check backend is up
   console.log("1. Backend info");
-  const { data: info } = await api("GET", "/api/server-info", "", "");
-  console.log(`   DID: ${info.did}\n`);
+  let backendDID: string;
+  try {
+    const info = await apiGet("/api/server-info");
+    backendDID = info.did;
+    console.log(`   DID: ${backendDID}\n`);
+  } catch {
+    console.error("   Backend not running. Start it with: cd examples/react-express/backend && bun run dev");
+    process.exit(1);
+  }
 
-  // 2. Create test user
+  // 2. Create test user (simulates the frontend user)
   console.log("2. Creating test user...");
   const user = new TinyCloudNode({
     privateKey: TEST_USER_KEY,
@@ -47,119 +68,128 @@ async function main() {
   await user.signIn();
   const address = user.address!;
   console.log(`   Address: ${address}`);
+  console.log(`   DID: ${user.did}\n`);
 
-  // We use a fake token — the backend validates it via userinfo (will fail)
-  // but accepts X-User-Address as fallback. For a proper test, we need
-  // a real OpenKey token. Let's use userinfo that returns the sub.
-  // Actually, the verifier falls back to userinfo which will fail for a fake token.
-  // We need the auth to pass. Let's check what happens.
-
-  // 3. Create delegation
-  console.log("\n3. Creating delegation to backend...");
+  // 3. Create delegation from user to backend
+  console.log("3. Creating delegation to backend...");
   const delegation = await user.createDelegation({
-    delegateDID: info.did,
+    delegateDID: backendDID,
     path: "",
-    actions: ["tinycloud.kv/get", "tinycloud.kv/put", "tinycloud.kv/del", "tinycloud.kv/list"],
-    expiryMs: 60 * 60 * 1000,
+    actions: [
+      "tinycloud.kv/get", "tinycloud.kv/put", "tinycloud.kv/del", "tinycloud.kv/list",
+      "tinycloud.sql/read", "tinycloud.sql/write",
+    ],
+    expiryMs: 60 * 60 * 1000, // 1 hour
   });
   const serialized = serializeDelegation(delegation);
-  console.log(`   Delegation: ${serialized.length} chars`);
+  console.log(`   Serialized: ${serialized.length} chars`);
 
-  // 4. Send delegation to backend
-  // The auth middleware needs a valid token. Let's see if we can get one.
-  // For now, use a fake token and see what error we get.
-  const fakeToken = "test-token-" + randomBytes(16).toString("hex");
-  console.log("\n4. Sending delegation to backend...");
-  const delegRes = await api("POST", "/api/delegations", fakeToken, address, { serialized });
+  // Check delegation properties
+  console.log(`   Actions: ${delegation.actions?.join(", ") ?? "none"}`);
+  console.log(`   Path: "${delegation.path ?? ""}"`);
+  console.log(`   Expiry type: ${typeof delegation.expiry} (${delegation.expiry})`);
 
-  if (!delegRes.ok) {
-    console.log("\n   Auth failed with fake token (expected).");
-    console.log("   Testing delegation activation directly instead...\n");
+  // 4. Test serialization roundtrip
+  console.log("\n4. Testing serialization roundtrip...");
+  const deserialized = deserializeDelegation(serialized);
+  console.log(`   Deserialized actions: ${deserialized.actions?.join(", ") ?? "none"}`);
+  console.log(`   Deserialized path: "${deserialized.path ?? ""}"`);
+  console.log(`   Deserialized expiry: ${deserialized.expiry} (type: ${typeof deserialized.expiry})`);
 
-    // Direct test — activate delegation as the backend would
-    const backendNode = new TinyCloudNode({
-      privateKey: process.env.BACKEND_PRIVATE_KEY!,
-      host: TINYCLOUD_HOST,
-      prefix: "boilerplate-be",
-      autoCreateSpace: true,
-    });
-    await backendNode.signIn();
-    const access = await backendNode.useDelegation(delegation);
+  // 5. Backend activates the delegation (simulates what the middleware does)
+  console.log("\n5. Activating delegation as backend...");
+  const backendNode = new TinyCloudNode({
+    privateKey: BACKEND_PRIVATE_KEY,
+    host: TINYCLOUD_HOST,
+    prefix: "boilerplate-be",
+    autoCreateSpace: true,
+  });
+  await backendNode.signIn();
+  const access = await backendNode.useDelegation(delegation);
+  console.log("   Delegation activated successfully");
 
-    // Test KV operations
-    console.log("5. Testing KV CRUD via delegation...");
+  // 6. KV CRUD operations
+  console.log("\n6. Testing KV CRUD via delegation...");
 
-    // CREATE
-    const item1 = { id: "e2e-1", title: "Test Item 1", data: "hello", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-    const putRes = await access.kv.put("items/e2e-1", item1);
-    console.log(`   PUT items/e2e-1: ok=${putRes.ok}`);
+  // CREATE
+  const item1 = { id: "e2e-1", title: "Test Item 1", data: "hello", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  const putRes = await access.kv.put("items/e2e-1", item1);
+  console.log(`   PUT items/e2e-1: ok=${putRes.ok}`);
 
-    const item2 = { id: "e2e-2", title: "Test Item 2", data: "world", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-    const putRes2 = await access.kv.put("items/e2e-2", item2);
-    console.log(`   PUT items/e2e-2: ok=${putRes2.ok}`);
+  const item2 = { id: "e2e-2", title: "Test Item 2", data: "world", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  const putRes2 = await access.kv.put("items/e2e-2", item2);
+  console.log(`   PUT items/e2e-2: ok=${putRes2.ok}`);
 
-    // READ
-    const getRes = await access.kv.get("items/e2e-1");
-    console.log(`   GET items/e2e-1: ok=${getRes.ok} data=${getRes.ok ? JSON.stringify((getRes.data as any).data).slice(0, 80) : (getRes as any).error?.message}`);
+  // READ
+  const getRes = await access.kv.get("items/e2e-1");
+  console.log(`   GET items/e2e-1: ok=${getRes.ok} data=${getRes.ok ? JSON.stringify((getRes.data as any).data).slice(0, 80) : (getRes as any).error?.message}`);
 
-    // LIST
-    const listRes = await access.kv.list({ prefix: "items/" });
-    console.log(`   LIST items/: ok=${listRes.ok} keys=${listRes.ok ? JSON.stringify(listRes.data.keys) : (listRes as any).error?.message}`);
+  // LIST
+  const listRes = await access.kv.list({ prefix: "items/" });
+  console.log(`   LIST items/: ok=${listRes.ok} keys=${listRes.ok ? JSON.stringify(listRes.data.keys) : (listRes as any).error?.message}`);
 
-    // UPDATE
-    const updated = { ...item1, title: "Updated Item 1", updatedAt: new Date().toISOString() };
-    const updateRes = await access.kv.put("items/e2e-1", updated);
-    console.log(`   PUT items/e2e-1 (update): ok=${updateRes.ok}`);
+  // UPDATE
+  const updated = { ...item1, title: "Updated Item 1", updatedAt: new Date().toISOString() };
+  const updateRes = await access.kv.put("items/e2e-1", updated);
+  console.log(`   PUT items/e2e-1 (update): ok=${updateRes.ok}`);
 
-    const getUpdated = await access.kv.get("items/e2e-1");
-    const updatedTitle = getUpdated.ok ? (getUpdated.data as any).data?.title : "?";
-    console.log(`   GET items/e2e-1 (after update): title="${updatedTitle}"`);
+  const getUpdated = await access.kv.get("items/e2e-1");
+  const updatedTitle = getUpdated.ok ? (getUpdated.data as any).data?.title : "?";
+  console.log(`   GET items/e2e-1 (after update): title="${updatedTitle}"`);
 
-    // DELETE
-    const delRes = await access.kv.delete("items/e2e-1");
-    console.log(`   DEL items/e2e-1: ok=${delRes.ok}`);
+  // DELETE
+  const delRes = await access.kv.delete("items/e2e-1");
+  console.log(`   DEL items/e2e-1: ok=${delRes.ok}`);
 
-    const listAfterDel = await access.kv.list({ prefix: "items/" });
-    console.log(`   LIST items/ (after delete): keys=${listAfterDel.ok ? JSON.stringify(listAfterDel.data.keys) : "?"}`);
+  const listAfterDel = await access.kv.list({ prefix: "items/" });
+  console.log(`   LIST items/ (after delete): keys=${listAfterDel.ok ? JSON.stringify(listAfterDel.data.keys) : "?"}`);
 
-    // CLEANUP
-    await access.kv.delete("items/e2e-2");
-    console.log(`   Cleanup done`);
+  // CLEANUP
+  await access.kv.delete("items/e2e-2");
+  console.log("   Cleanup done");
 
-    // Test delegation persistence — simulate what happens when the middleware
-    // reloads from store
-    console.log("\n6. Testing delegation re-activation (simulates cache expiry)...");
-    const access2 = await backendNode.useDelegation(delegation);
-    const reList = await access2.kv.list({ prefix: "items/" });
-    console.log(`   Re-activated access, LIST: ok=${reList.ok}`);
+  // 7. Test delegation re-activation (simulates cache expiry in middleware)
+  console.log("\n7. Testing delegation re-activation (simulates cache expiry)...");
+  const access2 = await backendNode.useDelegation(delegation);
+  const reList = await access2.kv.list({ prefix: "items/" });
+  console.log(`   Re-activated access, LIST: ok=${reList.ok}`);
 
-    // Test rapid sequential operations (simulates user clicking fast)
-    console.log("\n7. Testing rapid operations...");
-    for (let i = 0; i < 5; i++) {
-      const item = { id: `rapid-${i}`, title: `Rapid ${i}`, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-      const r = await access2.kv.put(`items/rapid-${i}`, item);
-      process.stdout.write(r.ok ? "." : "X");
-    }
-    console.log("");
-    const rapidList = await access2.kv.list({ prefix: "items/" });
-    console.log(`   LIST after rapid puts: ${rapidList.ok ? rapidList.data.keys.length + " keys" : "FAILED"}`);
+  // 8. Test rapid sequential operations
+  console.log("\n8. Testing rapid operations...");
+  for (let i = 0; i < 5; i++) {
+    const item = { id: `rapid-${i}`, title: `Rapid ${i}`, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    const r = await access2.kv.put(`items/rapid-${i}`, item);
+    process.stdout.write(r.ok ? "." : "X");
+  }
+  console.log("");
+  const rapidList = await access2.kv.list({ prefix: "items/" });
+  console.log(`   LIST after rapid puts: ${rapidList.ok ? rapidList.data.keys.length + " keys" : "FAILED"}`);
 
-    // Cleanup rapid items
-    for (let i = 0; i < 5; i++) await access2.kv.delete(`items/rapid-${i}`);
+  // Cleanup rapid items
+  for (let i = 0; i < 5; i++) await access2.kv.delete(`items/rapid-${i}`);
 
-    console.log("\n=== All tests passed ===");
-    process.exit(0);
+  // 9. Verify auth rejects fake tokens
+  console.log("\n9. Verifying JWT auth rejects fake tokens...");
+  const fakeRes = await fetch(`${BACKEND_URL}/api/delegations/status`, {
+    headers: { Authorization: "Bearer fake-token-123" },
+  });
+  console.log(`   GET /api/delegations/status with fake token: ${fakeRes.status} (expected 401)`);
+  if (fakeRes.status !== 401) {
+    console.error("   FAIL: Fake token was not rejected!");
+    process.exit(1);
   }
 
-  // If auth passed (real token), continue with API-level tests
-  console.log("\n5. Check delegation status...");
-  await api("GET", "/api/delegations/status", fakeToken, address);
+  // 10. Verify unauthenticated requests are rejected
+  console.log("\n10. Verifying unauthenticated requests are rejected...");
+  const noAuthRes = await fetch(`${BACKEND_URL}/api/items`);
+  console.log(`   GET /api/items without auth: ${noAuthRes.status} (expected 401)`);
+  if (noAuthRes.status !== 401) {
+    console.error("   FAIL: Unauthenticated request was not rejected!");
+    process.exit(1);
+  }
 
-  console.log("\n6. CRUD items via backend API...");
-  await api("POST", "/api/items", fakeToken, address, { title: "Test Item", data: "hello" });
-  await api("GET", "/api/items", fakeToken, address);
-
-  console.log("\n=== Done ===");
+  console.log("\n=== All tests passed ===");
+  process.exit(0);
 }
 
 main().catch((err) => {

@@ -10,8 +10,8 @@
   "dependencies": {
     "@tinyboilerplate/client": "workspace:*",
     "@tinyboilerplate/core": "workspace:*",
-    "@openkey/sdk": "^0.7.2",
-    "@tinycloud/web-sdk": "~1.5.0",
+    "@openkey/sdk": "^0.8.4",
+    "@tinycloud/web-sdk": "~2.0.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },

@@ -25,7 +25,7 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
 
   // ── POST /api/delegations — receive + store delegation ─────────
   router.post("/", async (req: Request, res: Response) => {
-    const { address } = req.user!;
+    const { sub } = req.user!;
     const { serialized } = req.body;
 
     if (!serialized || typeof serialized !== "string") {
@@ -43,27 +43,20 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
       // Activate the delegation to verify it works
       const access = await node.useDelegation(delegation);
 
-      // Extract expiry from the delegation if available
-      const expiresAt = (delegation as any).expiry
-        ? new Date((delegation as any).expiry * 1000).toISOString()
+      // Extract metadata from the delegation itself
+      const expiresAt = delegation.expiry
+        ? (delegation.expiry instanceof Date ? delegation.expiry : new Date(delegation.expiry)).toISOString()
         : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
-      // Store the delegation persistently
-      await store.store(address, serialized, {
+      // Store the delegation keyed by JWT sub (not client-supplied address)
+      await store.store(sub, serialized, {
         expiresAt,
-        actions: [
-          "tinycloud.kv/get",
-          "tinycloud.kv/put",
-          "tinycloud.kv/del",
-          "tinycloud.kv/list",
-          "tinycloud.sql/read",
-          "tinycloud.sql/write",
-        ],
-        path: "items/",
+        actions: delegation.actions ?? [],
+        path: delegation.path ?? "",
       });
 
-      // Cache the active DelegatedAccess
-      cache.set(address, access);
+      // Cache the active DelegatedAccess keyed by sub
+      cache.set(sub, access);
 
       res.json({
         status: "active",
@@ -81,11 +74,11 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
 
   // ── DELETE /api/delegations — revoke delegation ────────────────
   router.delete("/", async (req: Request, res: Response) => {
-    const { address } = req.user!;
+    const { sub } = req.user!;
 
     try {
-      await store.remove(address);
-      cache.evict(address);
+      await store.remove(sub);
+      cache.evict(sub);
 
       res.json({
         status: "none",
@@ -103,12 +96,10 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
 
   // ── GET /api/delegations/status — check delegation status ─────
   router.get("/status", async (req: Request, res: Response) => {
-    const { address } = req.user!;
-    console.log(`[delegations/status] address=${address}`);
+    const { sub } = req.user!;
 
     try {
-      const stored = await store.load(address);
-      console.log(`[delegations/status] stored=${stored ? "yes" : "no"} expiresAt=${stored?.expiresAt ?? "n/a"}`);
+      const stored = await store.load(sub);
 
       if (!stored) {
         res.json({
@@ -122,8 +113,8 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
 
       if (isExpired) {
         // Clean up expired delegation
-        await store.remove(address);
-        cache.evict(address);
+        await store.remove(sub);
+        cache.evict(sub);
 
         res.json({
           status: "expired",

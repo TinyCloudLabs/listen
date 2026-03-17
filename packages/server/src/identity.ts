@@ -45,6 +45,15 @@ export async function createBackendIdentity(
   };
 }
 
+// ── Session Error Detection ──────────────────────────────────────────
+
+const SESSION_ERROR_PATTERN = /\b(401|session|expired|unauthorized|unauthenticated|sign.?in\s*required)\b/i;
+
+function isSessionError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return SESSION_ERROR_PATTERN.test(message);
+}
+
 // ── Session Refresh Wrapper ──────────────────────────────────────────
 
 /**
@@ -61,17 +70,7 @@ export async function withSessionRefresh<T>(
   try {
     return await fn();
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-
-    // Check for session expiry / authorization errors
-    const isSessionError =
-      message.includes("session") ||
-      message.includes("expired") ||
-      message.includes("unauthorized") ||
-      message.includes("401") ||
-      message.includes("Unauthorized");
-
-    if (isSessionError) {
+    if (isSessionError(err)) {
       // Re-authenticate and retry once
       await node.signIn();
       return fn();

@@ -3,7 +3,10 @@ import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
 // ── Mock @tinycloud/node-sdk BEFORE importing the route ───────────────
 
 const mockDeserializeDelegation = mock((serialized: string) => ({
-  expiry: Date.now() / 1000 + 86400,
+  expiry: new Date(Date.now() + 86400_000),
+  actions: ["tinycloud.kv/get", "tinycloud.kv/put"],
+  path: "",
+  ownerAddress: "0xTEST",
   _serialized: serialized,
 }));
 
@@ -36,8 +39,8 @@ function createMockDelegationStore() {
 
   return {
     _data: data,
-    store: async (address: string, serialized: string, metadata: any) => {
-      data.set(address.toLowerCase(), {
+    store: async (identifier: string, serialized: string, metadata: any) => {
+      data.set(identifier, {
         serialized,
         grantedAt: metadata.grantedAt ?? new Date().toISOString(),
         expiresAt: metadata.expiresAt,
@@ -45,14 +48,14 @@ function createMockDelegationStore() {
         path: metadata.path,
       });
     },
-    load: async (address: string) => {
-      return data.get(address.toLowerCase()) ?? null;
+    load: async (identifier: string) => {
+      return data.get(identifier) ?? null;
     },
-    remove: async (address: string) => {
-      data.delete(address.toLowerCase());
+    remove: async (identifier: string) => {
+      data.delete(identifier);
     },
-    isActive: async (address: string) => {
-      const entry = data.get(address.toLowerCase());
+    isActive: async (identifier: string) => {
+      const entry = data.get(identifier);
       if (!entry) return false;
       return new Date(entry.expiresAt).getTime() > Date.now();
     },
@@ -66,28 +69,22 @@ function createMockDelegationCache() {
 
   return {
     _cache: cache,
-    get: (address: string) => cache.get(address.toLowerCase()) ?? null,
-    set: (address: string, access: any) => {
-      cache.set(address.toLowerCase(), access);
-    },
-    evict: (address: string) => {
-      cache.delete(address.toLowerCase());
-    },
-    has: (address: string) => cache.has(address.toLowerCase()),
+    get: (key: string) => cache.get(key) ?? null,
+    set: (key: string, access: any) => { cache.set(key, access); },
+    evict: (key: string) => { cache.delete(key); },
+    has: (key: string) => cache.has(key),
     clear: () => cache.clear(),
-    get size() {
-      return cache.size;
-    },
+    get size() { return cache.size; },
   };
 }
 
 // ── Test Helpers ──────────────────────────────────────────────────────
 
-const TEST_ADDRESS = "0xTEST";
+const TEST_SUB = "test-sub";
 const TEST_DID = "did:pkh:eip155:1:0xTEST";
 
 function mockAuthMiddleware(req: Request, _res: Response, next: NextFunction) {
-  req.user = { sub: "test-sub", address: TEST_ADDRESS };
+  req.user = { sub: TEST_SUB };
   next();
 }
 
@@ -183,7 +180,7 @@ describe("Delegation Routes", () => {
 
     it("returns 'expired' for expired delegations", async () => {
       // Manually store an expired delegation
-      await store.store(TEST_ADDRESS, "old-delegation", {
+      await store.store(TEST_SUB, "old-delegation", {
         expiresAt: new Date(Date.now() - 1000).toISOString(),
         actions: [],
         path: "items/",
@@ -197,20 +194,20 @@ describe("Delegation Routes", () => {
 
     it("cleans up expired delegation from store and cache", async () => {
       // Store expired delegation and cache entry
-      await store.store(TEST_ADDRESS, "old-delegation", {
+      await store.store(TEST_SUB, "old-delegation", {
         expiresAt: new Date(Date.now() - 1000).toISOString(),
         actions: [],
         path: "items/",
       });
-      cache.set(TEST_ADDRESS, { kv: {}, sql: {} });
+      cache.set(TEST_SUB, { kv: {}, sql: {} });
 
       await fetch(`${baseUrl}/api/delegations/status`);
 
       // Store should be cleaned
-      const stored = await store.load(TEST_ADDRESS);
+      const stored = await store.load(TEST_SUB);
       expect(stored).toBeNull();
       // Cache should be evicted
-      expect(cache.has(TEST_ADDRESS)).toBe(false);
+      expect(cache.has(TEST_SUB)).toBe(false);
     });
 
     it("returns 'none' after DELETE", async () => {
@@ -280,11 +277,11 @@ describe("Delegation Routes", () => {
         body: JSON.stringify({ serialized: "persistent-delegation" }),
       });
 
-      const stored = await store.load(TEST_ADDRESS);
+      const stored = await store.load(TEST_SUB);
       expect(stored).not.toBeNull();
       expect(stored!.serialized).toBe("persistent-delegation");
       expect(stored!.actions).toContain("tinycloud.kv/get");
-      expect(stored!.path).toBe("items/");
+      expect(stored!.path).toBe("");
     });
 
     it("caches the DelegatedAccess", async () => {
@@ -294,7 +291,7 @@ describe("Delegation Routes", () => {
         body: JSON.stringify({ serialized: "cacheable" }),
       });
 
-      expect(cache.has(TEST_ADDRESS)).toBe(true);
+      expect(cache.has(TEST_SUB)).toBe(true);
     });
 
     it("returns 400 without serialized field", async () => {
@@ -366,7 +363,7 @@ describe("Delegation Routes", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ serialized: "to-delete" }),
       });
-      expect(await store.load(TEST_ADDRESS)).not.toBeNull();
+      expect(await store.load(TEST_SUB)).not.toBeNull();
 
       // Delete
       const res = await fetch(`${baseUrl}/api/delegations`, {
@@ -379,7 +376,7 @@ describe("Delegation Routes", () => {
       expect(body.expiresAt).toBeNull();
 
       // Verify removed
-      expect(await store.load(TEST_ADDRESS)).toBeNull();
+      expect(await store.load(TEST_SUB)).toBeNull();
     });
 
     it("evicts cached DelegatedAccess", async () => {
@@ -389,14 +386,14 @@ describe("Delegation Routes", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ serialized: "cached-to-delete" }),
       });
-      expect(cache.has(TEST_ADDRESS)).toBe(true);
+      expect(cache.has(TEST_SUB)).toBe(true);
 
       // Delete
       await fetch(`${baseUrl}/api/delegations`, {
         method: "DELETE",
       });
 
-      expect(cache.has(TEST_ADDRESS)).toBe(false);
+      expect(cache.has(TEST_SUB)).toBe(false);
     });
 
     it("succeeds even when no delegation exists", async () => {

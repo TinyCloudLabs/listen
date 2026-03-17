@@ -1,4 +1,4 @@
-import { type FC, useCallback, useEffect, useState } from "react";
+import { type FC, useCallback, useEffect, useRef, useState } from "react";
 import type { ApiClient } from "@tinyboilerplate/client";
 import type {
   Item,
@@ -9,11 +9,12 @@ import type {
 
 interface ItemsCRUDProps {
   api: ApiClient | null;
-  delegationActive: boolean;
 }
 
-export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api, delegationActive }) => {
-  const [storeType, setStoreType] = useState<StoreType>("kv");
+export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api }) => {
+  const [storeType, setStoreType] = useState<StoreType>(
+    () => (localStorage.getItem("tinyboilerplate:storeType") as StoreType) || "kv",
+  );
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,28 +29,50 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api, delegationActive }) => {
   const [editTitle, setEditTitle] = useState("");
   const [editData, setEditData] = useState("");
 
-  const enabled = delegationActive && api !== null;
+  // SQL-specific state
+  const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState("created_at");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [sqlQuery, setSqlQuery] = useState<string | null>(null);
+  const [rowCount, setRowCount] = useState<number | null>(null);
+
+  const enabled = api !== null;
 
   // ── Fetch items ───────────────────────────────────────────────────
+
+  // Track the latest fetch to prevent stale responses from overwriting
+  const fetchIdRef = useRef(0);
 
   const fetchItems = useCallback(async () => {
     if (!api) return;
 
+    const id = ++fetchIdRef.current;
+    setItems([]);
     setLoading(true);
     setError(null);
+    setSqlQuery(null);
+    setRowCount(null);
 
     try {
-      const res = await api.get<ItemListResponse>(
-        `/api/items?store=${storeType}`,
-      );
+      let path = `/api/items?store=${storeType}`;
+      if (storeType === "sql") {
+        if (search) path += `&search=${encodeURIComponent(search)}`;
+        path += `&sort=${sortBy}&dir=${sortDir}`;
+      }
+      const res = await api.get<ItemListResponse & { sql?: string; rowCount?: number }>(path);
+      // Only apply if this is still the latest fetch
+      if (id !== fetchIdRef.current) return;
       setItems(res.items);
       setLastResponse(res);
+      if (res.sql) setSqlQuery(res.sql);
+      if (res.rowCount != null) setRowCount(res.rowCount);
     } catch (err) {
+      if (id !== fetchIdRef.current) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (id === fetchIdRef.current) setLoading(false);
     }
-  }, [api, storeType]);
+  }, [api, storeType, search, sortBy, sortDir]);
 
   useEffect(() => {
     if (enabled) {
@@ -57,6 +80,7 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api, delegationActive }) => {
     } else {
       setItems([]);
       setLastResponse(null);
+      setLoading(false);
     }
   }, [enabled, fetchItems]);
 
@@ -93,7 +117,7 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api, delegationActive }) => {
         setLoading(false);
       }
     },
-    [api, newTitle, newData, storeType, fetchItems],
+    [api, newTitle, newData, storeType],
   );
 
   // ── Update item ───────────────────────────────────────────────────
@@ -128,7 +152,7 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api, delegationActive }) => {
         setLoading(false);
       }
     },
-    [api, editTitle, editData, storeType, fetchItems],
+    [api, editTitle, editData, storeType],
   );
 
   // ── Delete item ───────────────────────────────────────────────────
@@ -151,7 +175,7 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api, delegationActive }) => {
         setLoading(false);
       }
     },
-    [api, storeType, fetchItems],
+    [api, storeType],
   );
 
   // ── Start editing ─────────────────────────────────────────────────
@@ -177,11 +201,11 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api, delegationActive }) => {
         ...(enabled ? {} : styles.panelDisabled),
       }}
     >
-      <h2 style={styles.heading}>3. Items (CRUD)</h2>
+      <h2 style={styles.heading}>2. Items (CRUD)</h2>
 
       {!enabled ? (
         <p style={styles.description}>
-          Grant a delegation to the backend to manage items.
+          Sign in to manage items.
         </p>
       ) : (
         <>
@@ -189,7 +213,7 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api, delegationActive }) => {
           <div style={styles.toggleRow}>
             <span style={styles.toggleLabel}>Store:</span>
             <button
-              onClick={() => setStoreType("kv")}
+              onClick={() => { setStoreType("kv"); localStorage.setItem("tinyboilerplate:storeType", "kv"); setSqlQuery(null); setRowCount(null); setLastResponse(null); }}
               style={{
                 ...styles.toggleButton,
                 ...(storeType === "kv" ? styles.toggleActive : {}),
@@ -198,13 +222,11 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api, delegationActive }) => {
               KV
             </button>
             <button
-              disabled
+              onClick={() => { setStoreType("sql"); localStorage.setItem("tinyboilerplate:storeType", "sql"); setLastResponse(null); }}
               style={{
                 ...styles.toggleButton,
-                opacity: 0.4,
-                cursor: "not-allowed",
+                ...(storeType === "sql" ? styles.toggleActive : {}),
               }}
-              title="SQL not available via delegation (KV only)"
             >
               SQL
             </button>
@@ -216,6 +238,48 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api, delegationActive }) => {
               Refresh
             </button>
           </div>
+
+          {/* SQL controls */}
+          {storeType === "sql" && (
+            <div style={styles.sqlControls}>
+              <input
+                type="text"
+                placeholder="Search items..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && fetchItems()}
+                style={styles.searchInput}
+              />
+              <div style={styles.sortControls}>
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value)}
+                  style={styles.select}
+                >
+                  <option value="created_at">Date Created</option>
+                  <option value="updated_at">Date Updated</option>
+                  <option value="title">Title</option>
+                </select>
+                <button
+                  onClick={() => setSortDir(d => d === "asc" ? "desc" : "asc")}
+                  style={styles.sortDirButton}
+                  title={sortDir === "asc" ? "Ascending" : "Descending"}
+                >
+                  {sortDir === "asc" ? "\u2191" : "\u2193"}
+                </button>
+              </div>
+              {rowCount != null && (
+                <span style={styles.rowCount}>{rowCount} row{rowCount !== 1 ? "s" : ""}</span>
+              )}
+            </div>
+          )}
+
+          {/* SQL query viewer */}
+          {storeType === "sql" && sqlQuery && (
+            <div style={styles.sqlViewer}>
+              <code style={styles.sqlCode}>{sqlQuery}</code>
+            </div>
+          )}
 
           {/* Create form */}
           <form onSubmit={handleCreate} style={styles.createForm}>
@@ -247,7 +311,7 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api, delegationActive }) => {
           </form>
 
           {/* Items list */}
-          {loading && items.length === 0 && (
+          {loading && (
             <p style={styles.loadingText}>Loading items...</p>
           )}
 
@@ -566,5 +630,62 @@ const styles: Record<string, React.CSSProperties> = {
     background: "#fef2f2",
     border: "1px solid #fecaca",
     borderRadius: 6,
+  },
+  sqlControls: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 12,
+  },
+  searchInput: {
+    flex: 1,
+    padding: "6px 10px",
+    fontSize: 13,
+    border: "1px solid #ccc",
+    borderRadius: 6,
+    outline: "none",
+  },
+  sortControls: {
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
+  },
+  select: {
+    padding: "5px 8px",
+    fontSize: 12,
+    border: "1px solid #ccc",
+    borderRadius: 4,
+    background: "#fff",
+    cursor: "pointer",
+  },
+  sortDirButton: {
+    padding: "4px 8px",
+    fontSize: 14,
+    fontWeight: 700,
+    color: "#555",
+    background: "#fff",
+    border: "1px solid #ccc",
+    borderRadius: 4,
+    cursor: "pointer",
+    lineHeight: 1,
+  },
+  rowCount: {
+    fontSize: 12,
+    color: "#888",
+    whiteSpace: "nowrap",
+  },
+  sqlViewer: {
+    marginBottom: 12,
+    padding: "8px 12px",
+    background: "#1e1e2e",
+    borderRadius: 6,
+    overflow: "auto",
+  },
+  sqlCode: {
+    fontSize: 12,
+    color: "#a6e3a1",
+    fontFamily: "'SF Mono', Monaco, 'Cascadia Code', monospace",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-all",
   },
 };

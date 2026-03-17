@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach } from "bun:test";
-import { DelegationCache, type DelegatedAccess } from "../delegation-cache.js";
+import { DelegationCache } from "../delegation-cache.js";
+import type { DelegatedAccess } from "@tinycloud/node-sdk";
 
 function makeDelegatedAccess(): DelegatedAccess {
   return { kv: { fake: "kv" }, sql: { fake: "sql" } };
@@ -22,13 +23,12 @@ describe("DelegationCache", () => {
     expect(cache.get("0xABC")).toBe(access);
   });
 
-  test("get is case-insensitive on address", () => {
+  test("keys are case-sensitive (JWT sub values)", () => {
     const access = makeDelegatedAccess();
-    cache.set("0xAbCdEf", access);
+    cache.set("user-ABC", access);
 
-    expect(cache.get("0xabcdef")).toBe(access);
-    expect(cache.get("0xABCDEF")).toBe(access);
-    expect(cache.get("0xAbCdEf")).toBe(access);
+    expect(cache.get("user-ABC")).toBe(access);
+    expect(cache.get("user-abc")).toBeNull();
   });
 
   test("get returns null after TTL expires", async () => {
@@ -52,10 +52,13 @@ describe("DelegationCache", () => {
     expect(cache.get("0xABC")).toBeNull();
   });
 
-  test("evict is case-insensitive", () => {
-    cache.set("0xAbC", makeDelegatedAccess());
-    cache.evict("0xabc");
-    expect(cache.get("0xAbC")).toBeNull();
+  test("evict requires exact key match", () => {
+    cache.set("user-ABC", makeDelegatedAccess());
+    cache.evict("user-abc");
+    expect(cache.get("user-ABC")).not.toBeNull(); // different case = different key
+
+    cache.evict("user-ABC");
+    expect(cache.get("user-ABC")).toBeNull();
   });
 
   test("has returns true for a cached entry", () => {

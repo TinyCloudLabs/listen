@@ -1,5 +1,6 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import type { JWTPayload, JWTVerifyResult } from "jose";
+import { JWSSignatureVerificationFailed, JWTClaimValidationFailed, JWTExpired } from "jose/errors";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -27,6 +28,29 @@ export interface JWTVerifierConfig {
   audience?: string;
 }
 
+// ── Helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Derive the OpenKey API host from a frontend or API host.
+ * "https://openkey.so" → "https://api.openkey.so"
+ * "https://api.openkey.so" → "https://api.openkey.so" (no change)
+ * "http://localhost:3000" → "http://localhost:3000" (no change)
+ */
+function deriveApiHost(host: string): string {
+  try {
+    const url = new URL(host);
+    if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+      return host;
+    }
+    if (url.hostname.startsWith("api.")) {
+      return host;
+    }
+    return `${url.protocol}//api.${url.host}`;
+  } catch {
+    return host;
+  }
+}
+
 // ── JWT Verifier ─────────────────────────────────────────────────────
 
 /**
@@ -37,14 +61,18 @@ export interface JWTVerifierConfig {
  * 2. Opaque token verification via userinfo endpoint (better-auth session tokens)
  *
  * Tries JWT first, falls back to userinfo if the token isn't a JWT.
+ *
+ * Accepts either the frontend host (https://openkey.so) or API host
+ * (https://api.openkey.so) — the API host is derived automatically.
  */
 export function createJWTVerifier(
   openKeyIssuerUrl: string,
   config?: JWTVerifierConfig,
 ) {
+  const apiHost = deriveApiHost(openKeyIssuerUrl);
   const jwksUrl = new URL(
     "/api/auth/jwks",
-    openKeyIssuerUrl,
+    apiHost,
   );
   const jwks = createRemoteJWKSet(jwksUrl);
 
@@ -70,18 +98,28 @@ export function createJWTVerifier(
         const claims = result.payload as JWTClaims;
         if (!claims.sub) throw new Error("JWT missing 'sub' claim");
         return { claims, token };
-      } catch {
+      } catch (err) {
+        // Re-throw only when the token IS a valid JWT that failed a security check.
+        // Other errors (JWKSNoMatchingKey, JWSInvalid, JWKSTimeout) fall through
+        // to userinfo — the token may be a better-auth session token, not a JWT.
+        if (
+          err instanceof JWSSignatureVerificationFailed ||
+          err instanceof JWTExpired ||
+          err instanceof JWTClaimValidationFailed
+        ) {
+          throw err;
+        }
         // Fall through to userinfo validation
       }
     }
 
     // Opaque token — validate via userinfo endpoint
-    const userInfo = await fetchUserInfo(openKeyIssuerUrl, token);
+    const userInfo = await fetchUserInfo(apiHost, token);
     if (!userInfo.sub) {
       throw new Error("Token validation failed: no sub in userinfo");
     }
     return {
-      claims: { sub: userInfo.sub, iss: openKeyIssuerUrl } as JWTClaims,
+      claims: { sub: userInfo.sub, iss: apiHost } as JWTClaims,
       token,
     };
   }
@@ -99,7 +137,8 @@ export async function fetchUserInfo(
   openKeyUrl: string,
   accessToken: string,
 ): Promise<UserInfo> {
-  const res = await fetch(`${openKeyUrl}/api/auth/oauth2/userinfo`, {
+  const url = deriveApiHost(openKeyUrl);
+  const res = await fetch(`${url}/api/auth/oauth2/userinfo`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
     },

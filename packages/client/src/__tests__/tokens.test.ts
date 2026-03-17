@@ -118,7 +118,7 @@ describe("TokenStore", () => {
       await store.refresh(refreshConfig);
 
       expect(capturedUrl).toBe(
-        "https://openkey.example.com/api/auth/oauth2/token",
+        "https://api.openkey.example.com/api/auth/oauth2/token",
       );
       expect(capturedInit?.method).toBe("POST");
       expect(capturedInit?.headers).toEqual({

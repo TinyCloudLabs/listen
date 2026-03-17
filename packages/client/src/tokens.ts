@@ -7,10 +7,35 @@ export interface StoredTokens {
 }
 
 export interface TokenRefreshConfig {
-  /** OpenKey host, e.g. "https://openkey.so" */
+  /** OpenKey host, e.g. "https://openkey.so" (API host is derived automatically) */
   openKeyHost: string;
   /** OAuth client ID */
   clientId: string;
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Derive the OpenKey API host from the frontend host.
+ * Matches the logic in the OpenKey SDK's `deriveOAuthHost`.
+ *
+ * "https://openkey.so" → "https://api.openkey.so"
+ * "http://localhost:3000" → "http://localhost:3000" (no change)
+ */
+export function deriveApiHost(host: string): string {
+  try {
+    const url = new URL(host);
+    if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+      return host;
+    }
+    // Already an API host
+    if (url.hostname.startsWith("api.")) {
+      return host;
+    }
+    return `${url.protocol}//api.${url.host}`;
+  } catch {
+    return host;
+  }
 }
 
 // ── Token Store ──────────────────────────────────────────────────────
@@ -21,6 +46,7 @@ export interface TokenRefreshConfig {
  */
 export class TokenStore {
   private tokens: StoredTokens | null = null;
+  private refreshPromise: Promise<void> | null = null;
 
   /** Buffer before actual expiry to trigger refresh (30 seconds). */
   private static readonly EXPIRY_BUFFER_MS = 30_000;
@@ -29,10 +55,10 @@ export class TokenStore {
    * Store tokens from an OAuth flow or refresh response.
    * `expiresIn` is in seconds (as returned by OAuth token endpoints).
    */
-  setTokens(accessToken: string, refreshToken: string, expiresIn: number): void {
+  setTokens(accessToken: string, refreshToken: string | undefined, expiresIn: number): void {
     this.tokens = {
       accessToken,
-      refreshToken,
+      refreshToken: refreshToken ?? "",
       expiresAt: Date.now() + expiresIn * 1000,
     };
   }
@@ -68,15 +94,28 @@ export class TokenStore {
 
   /**
    * Refresh the access token using the stored refresh token.
-   * Calls the OpenKey token endpoint with grant_type=refresh_token.
+   * Deduplicates concurrent calls — multiple 401s share one in-flight refresh.
    */
   async refresh(config: TokenRefreshConfig): Promise<void> {
+    if (this.refreshPromise) return this.refreshPromise;
+    this.refreshPromise = this._doRefresh(config).finally(() => {
+      this.refreshPromise = null;
+    });
+    return this.refreshPromise;
+  }
+
+  /**
+   * Internal: performs the actual token refresh.
+   * Calls the OpenKey token endpoint with grant_type=refresh_token.
+   */
+  private async _doRefresh(config: TokenRefreshConfig): Promise<void> {
     const refreshToken = this.tokens?.refreshToken;
     if (!refreshToken) {
       throw new Error("No refresh token available");
     }
 
-    const res = await fetch(`${config.openKeyHost}/api/auth/oauth2/token`, {
+    const apiHost = deriveApiHost(config.openKeyHost);
+    const res = await fetch(`${apiHost}/api/auth/oauth2/token`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({

@@ -42,13 +42,13 @@ export async function createDelegation(
 export async function sendDelegation(
   backendUrl: string,
   serialized: string,
-  userAddress: string,
+  accessToken: string,
 ): Promise<DelegationResponse> {
   const res = await fetch(`${backendUrl}/api/delegations`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-User-Address": userAddress,
+      Authorization: `Bearer ${accessToken}`,
     },
     body: JSON.stringify({ serialized }),
   });
@@ -65,11 +65,11 @@ export async function sendDelegation(
 
 export async function checkDelegationStatus(
   backendUrl: string,
-  userAddress: string,
+  accessToken: string,
 ): Promise<DelegationResponse> {
   const res = await fetch(`${backendUrl}/api/delegations/status`, {
     headers: {
-      "X-User-Address": userAddress,
+      Authorization: `Bearer ${accessToken}`,
     },
   });
 
@@ -85,12 +85,12 @@ export async function checkDelegationStatus(
 
 export async function revokeDelegation(
   backendUrl: string,
-  userAddress: string,
+  accessToken: string,
 ): Promise<void> {
   const res = await fetch(`${backendUrl}/api/delegations`, {
     method: "DELETE",
     headers: {
-      "X-User-Address": userAddress,
+      Authorization: `Bearer ${accessToken}`,
     },
   });
 
