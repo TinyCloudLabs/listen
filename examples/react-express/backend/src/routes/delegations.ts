@@ -19,7 +19,7 @@ interface DelegationRoutesConfig {
 // ── Delegation Routes ────────────────────────────────────────────────
 
 export function createDelegationRouter(config: DelegationRoutesConfig) {
-  const { node, did, store, cache, authMiddleware, openKeyIssuerUrl } = config;
+  const { node, store, cache, authMiddleware, openKeyIssuerUrl } = config;
   const router = Router();
 
   // All delegation routes require authentication
@@ -27,7 +27,10 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
 
   // ── POST /api/delegations — receive + store delegation ─────────
   router.post("/", async (req: Request, res: Response) => {
-    if (!req.user) { res.status(401).json({ error: "unauthenticated", message: "Authentication required" }); return; }
+    if (!req.user) {
+      res.status(401).json({ error: "unauthenticated", message: "Authentication required" });
+      return;
+    }
     const { sub } = req.user;
     const { serialized } = req.body;
 
@@ -48,14 +51,10 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
       const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : "";
       const userInfo = await fetchUserInfo(openKeyIssuerUrl, token);
 
-      if (
-        delegation.ownerAddress?.toLowerCase() !==
-        userInfo.address?.toLowerCase()
-      ) {
+      if (delegation.ownerAddress?.toLowerCase() !== userInfo.address?.toLowerCase()) {
         res.status(403).json({
           error: "ownership_mismatch",
-          message:
-            "Delegation owner does not match authenticated user",
+          message: "Delegation owner does not match authenticated user",
         });
         return;
       }
@@ -65,7 +64,10 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
 
       // Extract metadata from the delegation itself
       const expiresAt = delegation.expiry
-        ? (delegation.expiry instanceof Date ? delegation.expiry : new Date(delegation.expiry)).toISOString()
+        ? (delegation.expiry instanceof Date
+            ? delegation.expiry
+            : new Date(delegation.expiry)
+          ).toISOString()
         : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
       // Store the delegation keyed by JWT sub (not client-supplied address)
@@ -93,7 +95,10 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
 
   // ── DELETE /api/delegations — revoke delegation ────────────────
   router.delete("/", async (req: Request, res: Response) => {
-    if (!req.user) { res.status(401).json({ error: "unauthenticated", message: "Authentication required" }); return; }
+    if (!req.user) {
+      res.status(401).json({ error: "unauthenticated", message: "Authentication required" });
+      return;
+    }
     const { sub } = req.user;
 
     try {
@@ -115,7 +120,10 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
 
   // ── GET /api/delegations/status — check delegation status ─────
   router.get("/status", async (req: Request, res: Response) => {
-    if (!req.user) { res.status(401).json({ error: "unauthenticated", message: "Authentication required" }); return; }
+    if (!req.user) {
+      res.status(401).json({ error: "unauthenticated", message: "Authentication required" });
+      return;
+    }
     const { sub } = req.user;
 
     try {

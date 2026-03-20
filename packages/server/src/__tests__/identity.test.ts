@@ -15,9 +15,7 @@ describe("withSessionRefresh", () => {
   });
 
   test("returns the function result on success", async () => {
-    const result = await withSessionRefresh(mockNode as any, () =>
-      Promise.resolve("ok"),
-    );
+    const result = await withSessionRefresh(mockNode as any, () => Promise.resolve("ok"));
     expect(result).toBe("ok");
     expect(mockNode.signIn).not.toHaveBeenCalled();
   });
@@ -42,9 +40,7 @@ describe("withSessionRefresh", () => {
   test("re-throws non-session errors without retrying", async () => {
     const fn = mock(() => Promise.reject(new Error("network timeout")));
 
-    await expect(withSessionRefresh(mockNode as any, fn)).rejects.toThrow(
-      "network timeout",
-    );
+    await expect(withSessionRefresh(mockNode as any, fn)).rejects.toThrow("network timeout");
 
     expect(fn).toHaveBeenCalledTimes(1);
     expect(mockNode.signIn).not.toHaveBeenCalled();
@@ -102,12 +98,7 @@ describe("withSessionRefresh", () => {
   });
 
   test("does not retry on generic errors", async () => {
-    const nonSessionErrors = [
-      "not found",
-      "internal server error",
-      "rate limited",
-      "ECONNREFUSED",
-    ];
+    const nonSessionErrors = ["not found", "internal server error", "rate limited", "ECONNREFUSED"];
 
     for (const msg of nonSessionErrors) {
       const node = createMockNode();

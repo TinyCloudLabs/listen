@@ -17,19 +17,14 @@ import { ItemsCRUD } from "./components/ItemsCRUD";
 
 // ── Environment ─────────────────────────────────────────────────────
 
-const OPENKEY_HOST =
-  import.meta.env.VITE_OPENKEY_HOST || "https://openkey.so";
-const OPENKEY_CLIENT_ID =
-  import.meta.env.VITE_OPENKEY_CLIENT_ID;
-const TINYCLOUD_HOST =
-  import.meta.env.VITE_TINYCLOUD_HOST || "https://node.tinycloud.xyz";
-const BACKEND_URL =
-  import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
+const OPENKEY_HOST = import.meta.env.VITE_OPENKEY_HOST || "https://openkey.so";
+const OPENKEY_CLIENT_ID = import.meta.env.VITE_OPENKEY_CLIENT_ID;
+const TINYCLOUD_HOST = import.meta.env.VITE_TINYCLOUD_HOST || "https://node.tinycloud.xyz";
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
 
 // ── App ─────────────────────────────────────────────────────────────
 
 export function App() {
-
   // Auth state
   const [address, setAddress] = useState<string | null>(null);
   const [did, setDid] = useState<string | null>(null);
@@ -49,7 +44,11 @@ export function App() {
 
     try {
       // 1. OpenKey sign-in — passkey auth + OAuth PKCE token exchange
-      const { address: addr, web3Provider, tokens } = await openKeySignIn({
+      const {
+        address: addr,
+        web3Provider,
+        tokens,
+      } = await openKeySignIn({
         host: OPENKEY_HOST,
         clientId: OPENKEY_CLIENT_ID,
         redirectUri: window.location.origin,

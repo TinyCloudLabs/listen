@@ -52,10 +52,7 @@ if (content.includes("// [fix-wasm-esm] patched")) {
 // We wrap the module in an async init function if needed.
 const cjsRequirePattern = /require\s*\(\s*['"]fs['"]\s*\)\.readFileSync/g;
 if (cjsRequirePattern.test(content)) {
-  content = content.replace(
-    cjsRequirePattern,
-    "(await import('fs')).readFileSync",
-  );
+  content = content.replace(cjsRequirePattern, "(await import('fs')).readFileSync");
   content = `// [fix-wasm-esm] patched\n${content}`;
   writeFileSync(targetPath, content, "utf-8");
   console.log(`[fix-wasm-esm] Patched: ${targetPath}`);

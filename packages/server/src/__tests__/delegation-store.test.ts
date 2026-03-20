@@ -87,9 +87,7 @@ describe("DelegationStore", () => {
   describe("load", () => {
     test("calls kv.get and parses the result", async () => {
       const delegation = makeDelegation();
-      mockNode.kv.get = mock(() =>
-        Promise.resolve({ data: JSON.stringify(delegation) }),
-      );
+      mockNode.kv.get = mock(() => Promise.resolve({ data: JSON.stringify(delegation) }));
 
       const result = await store.load("0xAbC123");
 
@@ -115,18 +113,14 @@ describe("DelegationStore", () => {
     });
 
     test("returns null on corrupted data", async () => {
-      mockNode.kv.get = mock(() =>
-        Promise.resolve({ data: "not-valid-json{{{" }),
-      );
+      mockNode.kv.get = mock(() => Promise.resolve({ data: "not-valid-json{{{" }));
 
       const result = await store.load("0xABC");
       expect(result).toBeNull();
     });
 
     test("returns null when parsed data has missing required fields", async () => {
-      mockNode.kv.get = mock(() =>
-        Promise.resolve({ data: JSON.stringify({ serialized: "ok" }) }),
-      );
+      mockNode.kv.get = mock(() => Promise.resolve({ data: JSON.stringify({ serialized: "ok" }) }));
 
       const result = await store.load("0xABC");
       expect(result).toBeNull();
@@ -162,9 +156,7 @@ describe("DelegationStore", () => {
     test("returns true for non-expired delegation", async () => {
       const futureDate = new Date(Date.now() + 3600_000).toISOString();
       const delegation = makeDelegation({ expiresAt: futureDate });
-      mockNode.kv.get = mock(() =>
-        Promise.resolve({ data: JSON.stringify(delegation) }),
-      );
+      mockNode.kv.get = mock(() => Promise.resolve({ data: JSON.stringify(delegation) }));
 
       expect(await store.isActive("0xABC")).toBe(true);
     });
@@ -172,9 +164,7 @@ describe("DelegationStore", () => {
     test("returns false for expired delegation", async () => {
       const pastDate = new Date(Date.now() - 3600_000).toISOString();
       const delegation = makeDelegation({ expiresAt: pastDate });
-      mockNode.kv.get = mock(() =>
-        Promise.resolve({ data: JSON.stringify(delegation) }),
-      );
+      mockNode.kv.get = mock(() => Promise.resolve({ data: JSON.stringify(delegation) }));
 
       expect(await store.isActive("0xABC")).toBe(false);
     });

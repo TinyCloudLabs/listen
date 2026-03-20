@@ -47,7 +47,8 @@ export async function createBackendIdentity(
 
 // ── Session Error Detection ──────────────────────────────────────────
 
-const SESSION_ERROR_PATTERN = /\b(session\s+expired|invalid\s+session|token\s+expired|expired\s+credentials?|unauthorized|unauthenticated|sign.?in\s*required)\b|\b401\b(?![\d-])/i;
+const SESSION_ERROR_PATTERN =
+  /\b(session\s+expired|invalid\s+session|token\s+expired|expired\s+credentials?|unauthorized|unauthenticated|sign.?in\s*required)\b|\b401\b(?![\d-])/i;
 
 function isSessionError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
@@ -63,10 +64,7 @@ function isSessionError(err: unknown): boolean {
  * Use this around any TinyCloud KV/SQL operation that might fail due
  * to an expired session.
  */
-export async function withSessionRefresh<T>(
-  node: TinyCloudNode,
-  fn: () => Promise<T>,
-): Promise<T> {
+export async function withSessionRefresh<T>(node: TinyCloudNode, fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (err: unknown) {

@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from "express";
 import type { TinyCloudNode } from "@tinycloud/node-sdk";
 import { deserializeDelegation } from "@tinycloud/node-sdk";
 import type { DelegationStore, DelegationCache } from "@tinyboilerplate/server";
+import { withTimeout } from "./timeout.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -69,14 +70,28 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
       }
 
       // Deserialize and activate the delegation
-      access = await activateDelegation(node, cache, sub, stored.serialized);
+      access = await withTimeout(activateDelegation(node, cache, sub, stored.serialized));
       req.delegatedAccess = access;
       next();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
 
+      // If timed out, return 504
+      if (message.includes("timed out")) {
+        console.error(`[delegation] activation timed out for ${sub}:`, err);
+        res.status(504).json({
+          error: "gateway_timeout",
+          message: "TinyCloud operation timed out",
+        });
+        return;
+      }
+
       // If TinyCloud returns 401, evict cache and retry once
-      if (message.includes("401") || message.includes("Unauthorized") || message.includes("unauthorized")) {
+      if (
+        message.includes("401") ||
+        message.includes("Unauthorized") ||
+        message.includes("unauthorized")
+      ) {
         cache.evict(sub);
 
         try {
@@ -98,14 +113,16 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
             return;
           }
 
-          access = await activateDelegation(node, cache, sub, stored.serialized);
+          access = await withTimeout(activateDelegation(node, cache, sub, stored.serialized));
           req.delegatedAccess = access;
           next();
         } catch (retryErr) {
+          const retryMessage = retryErr instanceof Error ? retryErr.message : String(retryErr);
+          const isTimeout = retryMessage.includes("timed out");
           console.error(`[delegation] activation failed after retry for ${sub}:`, retryErr);
-          res.status(500).json({
-            error: "delegation_activation_failed",
-            message: "Failed to activate delegation",
+          res.status(isTimeout ? 504 : 500).json({
+            error: isTimeout ? "gateway_timeout" : "delegation_activation_failed",
+            message: isTimeout ? "TinyCloud operation timed out" : "Failed to activate delegation",
           });
         }
 
@@ -131,7 +148,9 @@ async function activateDelegation(
 ) {
   const delegation = deserializeDelegation(serialized);
   const access = await node.useDelegation(delegation);
-  console.log(`[delegation] activated: sub=${sub} spaceId=${access.spaceId} path=${JSON.stringify(access.path)}`);
+  console.log(
+    `[delegation] activated: sub=${sub} spaceId=${access.spaceId} path=${JSON.stringify(access.path)}`,
+  );
   cache.set(sub, access);
   return access;
 }

@@ -2,11 +2,8 @@ import "./types/index.js";
 
 import express from "express";
 import cors from "cors";
-import {
-  createBackendIdentity,
-  DelegationStore,
-  DelegationCache,
-} from "@tinyboilerplate/server";
+import rateLimit from "express-rate-limit";
+import { createBackendIdentity, DelegationStore, DelegationCache } from "@tinyboilerplate/server";
 
 import { createAuthMiddleware } from "./middleware/auth.js";
 import { createDelegationMiddleware } from "./middleware/delegation.js";
@@ -55,11 +52,30 @@ async function main() {
   app.use(cors({ origin: FRONTEND_URL }));
   app.use(express.json());
 
-  // 5. Mount routes
+  // 5. Rate limiting
+  const generalLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 100,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+  });
+
+  const delegationLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 10,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    message: { error: "rate_limited", message: "Too many delegation requests" },
+  });
+
+  app.use(generalLimiter);
+
+  // 6. Mount routes
   app.use("/api/server-info", createServerInfoRouter(did));
 
   app.use(
     "/api/delegations",
+    delegationLimiter,
     createDelegationRouter({
       node,
       did,
@@ -70,18 +86,29 @@ async function main() {
     }),
   );
 
-  app.use(
-    "/api/items",
-    authMiddleware,
-    delegationMiddleware,
-    createItemsRouter(),
-  );
+  app.use("/api/items", authMiddleware, delegationMiddleware, createItemsRouter());
 
-  // 6. Start server
-  app.listen(PORT, () => {
+  // 7. Start server
+  const server = app.listen(PORT, () => {
     console.log(`Backend ready. DID: ${did}`);
     console.log(`Listening on http://localhost:${PORT}`);
   });
+
+  // Graceful shutdown
+  const shutdown = async (signal: string) => {
+    console.log(`\n${signal} received. Shutting down gracefully...`);
+    server.close(() => {
+      console.log("HTTP server closed.");
+    });
+    // Wait for in-flight requests (max 10s)
+    setTimeout(() => {
+      console.error("Forced shutdown after timeout.");
+      process.exit(1);
+    }, 10_000);
+  };
+
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
 main().catch((err) => {

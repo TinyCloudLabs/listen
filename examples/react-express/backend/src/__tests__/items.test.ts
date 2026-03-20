@@ -109,9 +109,7 @@ function createMockSQL() {
       // SELECT with LIKE search
       if (trimmed.includes("WHERE TITLE LIKE") && params?.length) {
         const search = String(params[0]).replace(/%/g, "");
-        const matched = rows.filter(
-          (r) => r.title.includes(search) || r.data.includes(search),
-        );
+        const matched = rows.filter((r) => r.title.includes(search) || r.data.includes(search));
         return {
           ok: true,
           data: {
@@ -128,7 +126,9 @@ function createMockSQL() {
           ok: true,
           data: {
             columns,
-            rows: [...rows].reverse().map((r) => [r.id, r.title, r.data, r.created_at, r.updated_at]),
+            rows: [...rows]
+              .reverse()
+              .map((r) => [r.id, r.title, r.data, r.created_at, r.updated_at]),
             rowCount: rows.length,
           },
         };
@@ -163,9 +163,7 @@ function createApp(delegatedAccess: any) {
   return app;
 }
 
-function startServer(
-  app: express.Express,
-): Promise<{ server: Server; port: number }> {
+function startServer(app: express.Express): Promise<{ server: Server; port: number }> {
   return new Promise((resolve) => {
     const server = app.listen(0, () => {
       const port = (server.address() as any).port;

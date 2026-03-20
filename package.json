@@ -20,9 +20,17 @@
     "generate-key": "cd packages/server && bun run generate-key",
     "test": "bun run test:client && bun run test:server",
     "test:client": "cd packages/client && bun test",
-    "test:server": "cd packages/server && bun test"
+    "test:server": "cd packages/server && bun test",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "devDependencies": {
-    "@tinycloud/node-sdk": "2.0.0"
+    "@eslint/js": "^10.0.1",
+    "@tinycloud/node-sdk": "2.0.0",
+    "eslint": "^10.1.0",
+    "prettier": "^3.8.1",
+    "typescript-eslint": "^8.57.1"
   }
 }

@@ -99,10 +99,7 @@ describe("TokenStore", () => {
       let capturedUrl: string | undefined;
       let capturedInit: RequestInit | undefined;
 
-      globalThis.fetch = (async (
-        input: string | URL | Request,
-        init?: RequestInit,
-      ) => {
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
         capturedUrl = input.toString();
         capturedInit = init;
         return new Response(
@@ -117,9 +114,7 @@ describe("TokenStore", () => {
 
       await store.refresh(refreshConfig);
 
-      expect(capturedUrl).toBe(
-        "https://api.openkey.example.com/api/auth/oauth2/token",
-      );
+      expect(capturedUrl).toBe("https://api.openkey.example.com/api/auth/oauth2/token");
       expect(capturedInit?.method).toBe("POST");
       expect(capturedInit?.headers).toEqual({
         "Content-Type": "application/x-www-form-urlencoded",
@@ -179,9 +174,7 @@ describe("TokenStore", () => {
         return new Response("Invalid grant", { status: 400 });
       }) as typeof fetch;
 
-      await expect(store.refresh(refreshConfig)).rejects.toThrow(
-        "Token refresh failed",
-      );
+      await expect(store.refresh(refreshConfig)).rejects.toThrow("Token refresh failed");
 
       expect(store.hasTokens()).toBe(false);
       expect(store.getAccessToken()).toBeNull();
@@ -189,9 +182,7 @@ describe("TokenStore", () => {
 
     test("throws when no refresh token available", async () => {
       // No tokens set at all
-      await expect(store.refresh(refreshConfig)).rejects.toThrow(
-        "No refresh token available",
-      );
+      await expect(store.refresh(refreshConfig)).rejects.toThrow("No refresh token available");
     });
   });
 });

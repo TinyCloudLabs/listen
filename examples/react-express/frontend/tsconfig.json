@@ -7,8 +7,5 @@
     "noEmit": true
   },
   "include": ["src"],
-  "references": [
-    { "path": "../../../packages/core" },
-    { "path": "../../../packages/client" }
-  ]
+  "references": [{ "path": "../../../packages/core" }, { "path": "../../../packages/client" }]
 }

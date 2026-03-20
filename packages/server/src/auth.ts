@@ -43,15 +43,9 @@ export interface JWTVerifierConfig {
  * Accepts either the frontend host (https://openkey.so) or API host
  * (https://api.openkey.so) — the API host is derived automatically.
  */
-export function createJWTVerifier(
-  openKeyIssuerUrl: string,
-  config?: JWTVerifierConfig,
-) {
+export function createJWTVerifier(openKeyIssuerUrl: string, config?: JWTVerifierConfig) {
   const apiHost = deriveApiHost(openKeyIssuerUrl);
-  const jwksUrl = new URL(
-    "/api/auth/jwks",
-    apiHost,
-  );
+  const jwksUrl = new URL("/api/auth/jwks", apiHost);
   const jwks = createRemoteJWKSet(jwksUrl);
 
   const issuer = config?.issuer ?? openKeyIssuerUrl;
@@ -111,10 +105,7 @@ export function createJWTVerifier(
  * Fetch the authenticated user's profile from the OpenKey userinfo endpoint.
  * Requires a valid access token.
  */
-export async function fetchUserInfo(
-  openKeyUrl: string,
-  accessToken: string,
-): Promise<UserInfo> {
+export async function fetchUserInfo(openKeyUrl: string, accessToken: string): Promise<UserInfo> {
   const url = deriveApiHost(openKeyUrl);
   const res = await fetch(`${url}/api/auth/oauth2/userinfo`, {
     headers: {

@@ -25,11 +25,7 @@ export class DelegationStore {
   /**
    * Store a serialized delegation for a user identifier.
    */
-  async store(
-    identifier: string,
-    serialized: string,
-    metadata: DelegationMetadata,
-  ): Promise<void> {
+  async store(identifier: string, serialized: string, metadata: DelegationMetadata): Promise<void> {
     const key = this.keyFor(identifier);
     const record: StoredDelegation = {
       serialized,
@@ -39,9 +35,7 @@ export class DelegationStore {
       path: metadata.path,
     };
 
-    await withSessionRefresh(this.node, () =>
-      this.node.kv.put(key, record),
-    );
+    await withSessionRefresh(this.node, () => this.node.kv.put(key, record));
   }
 
   /**
@@ -51,9 +45,7 @@ export class DelegationStore {
   async load(identifier: string): Promise<StoredDelegation | null> {
     const key = this.keyFor(identifier);
 
-    const result = await withSessionRefresh(this.node, () =>
-      this.node.kv.get(key),
-    );
+    const result = await withSessionRefresh(this.node, () => this.node.kv.get(key));
 
     const response = (result as any)?.data;
     if (!response) return null;
@@ -65,7 +57,8 @@ export class DelegationStore {
 
       // Validate required StoredDelegation fields
       if (
-        typeof raw !== "object" || raw === null ||
+        typeof raw !== "object" ||
+        raw === null ||
         typeof raw.serialized !== "string" ||
         typeof raw.expiresAt !== "string" ||
         !Array.isArray(raw.actions)
@@ -93,9 +86,7 @@ export class DelegationStore {
   async remove(identifier: string): Promise<void> {
     const key = this.keyFor(identifier);
 
-    await withSessionRefresh(this.node, () =>
-      this.node.kv.delete(key),
-    );
+    await withSessionRefresh(this.node, () => this.node.kv.delete(key));
   }
 
   /**
@@ -108,7 +99,12 @@ export class DelegationStore {
   }
 
   private keyFor(identifier: string): string {
-    if (!identifier || identifier.includes("/") || identifier.includes("\\") || identifier.includes("..")) {
+    if (
+      !identifier ||
+      identifier.includes("/") ||
+      identifier.includes("\\") ||
+      identifier.includes("..")
+    ) {
       throw new Error("Invalid delegation identifier");
     }
     return `delegations/${identifier}`;

@@ -23,7 +23,10 @@ export class DelegationCache {
   private readonly cache = new Map<string, CacheEntry>();
   private readonly ttlMs: number;
 
-  constructor(ttlMs?: number, private readonly maxSize: number = 10_000) {
+  constructor(
+    ttlMs?: number,
+    private readonly maxSize: number = 10_000,
+  ) {
     this.ttlMs = ttlMs ?? DELEGATION_CACHE_TTL_MS;
   }
 

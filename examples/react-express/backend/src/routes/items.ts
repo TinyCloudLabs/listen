@@ -11,7 +11,10 @@ export function createItemsRouter() {
   // GET /api/items?store=kv|sql
   router.get("/", async (req: Request, res: Response) => {
     const storeType = getStoreType(req);
-    if (!req.delegatedAccess) { res.status(403).json({ error: "no_delegation", message: "Delegation required" }); return; }
+    if (!req.delegatedAccess) {
+      res.status(403).json({ error: "no_delegation", message: "Delegation required" });
+      return;
+    }
     const access = req.delegatedAccess;
 
     try {
@@ -22,7 +25,9 @@ export function createItemsRouter() {
         const search = (req.query.search as string) ?? "";
         const sortBy = (req.query.sort as string) ?? "created_at";
         const sortDir = (req.query.dir as string) === "asc" ? "ASC" : "DESC";
-        const validSort = ["title", "created_at", "updated_at"].includes(sortBy) ? sortBy : "created_at";
+        const validSort = ["title", "created_at", "updated_at"].includes(sortBy)
+          ? sortBy
+          : "created_at";
 
         let sql = "SELECT id, title, data, created_at, updated_at FROM items";
         const params: (string | number | null)[] = [];
@@ -34,7 +39,7 @@ export function createItemsRouter() {
 
         const result = await access.sql.query(sql, params);
         if (!result.ok) throw new Error(`SQL query failed: ${result.error.message}`);
-        const { rows, columns, rowCount } = result.data;
+        const { rows, columns } = result.data;
         const items: Item[] = rows.map((row) => rowToItem(row, columns));
         res.json({ items });
       } else {
@@ -45,11 +50,12 @@ export function createItemsRouter() {
           return;
         }
         const keys = listResult.data.keys ?? [];
-        const results = await Promise.all(
-          keys.map((key) => access.kv.get(key))
-        );
+        const results = await Promise.all(keys.map((key) => access.kv.get(key)));
         const items: Item[] = results
-          .filter((r): r is typeof r & { ok: true; data: { data: unknown } } => r.ok && r.data.data != null)
+          .filter(
+            (r): r is typeof r & { ok: true; data: { data: unknown } } =>
+              r.ok && r.data.data != null,
+          )
           .map((r) => {
             const val = r.data.data;
             return (typeof val === "string" ? JSON.parse(val) : val) as Item;
@@ -64,7 +70,10 @@ export function createItemsRouter() {
   // POST /api/items?store=kv|sql
   router.post("/", async (req: Request, res: Response) => {
     const storeType = getStoreType(req);
-    if (!req.delegatedAccess) { res.status(403).json({ error: "no_delegation", message: "Delegation required" }); return; }
+    if (!req.delegatedAccess) {
+      res.status(403).json({ error: "no_delegation", message: "Delegation required" });
+      return;
+    }
     const access = req.delegatedAccess;
     const input: CreateItemInput = req.body;
 
@@ -107,7 +116,10 @@ export function createItemsRouter() {
   // GET /api/items/:id?store=kv|sql
   router.get("/:id", async (req: Request, res: Response) => {
     const storeType = getStoreType(req);
-    if (!req.delegatedAccess) { res.status(403).json({ error: "no_delegation", message: "Delegation required" }); return; }
+    if (!req.delegatedAccess) {
+      res.status(403).json({ error: "no_delegation", message: "Delegation required" });
+      return;
+    }
     const access = req.delegatedAccess;
     const { id } = req.params;
 
@@ -149,7 +161,10 @@ export function createItemsRouter() {
   // PUT /api/items/:id?store=kv|sql
   router.put("/:id", async (req: Request, res: Response) => {
     const storeType = getStoreType(req);
-    if (!req.delegatedAccess) { res.status(403).json({ error: "no_delegation", message: "Delegation required" }); return; }
+    if (!req.delegatedAccess) {
+      res.status(403).json({ error: "no_delegation", message: "Delegation required" });
+      return;
+    }
     const access = req.delegatedAccess;
     const { id } = req.params;
     const input: UpdateItemInput = req.body;
@@ -169,10 +184,7 @@ export function createItemsRouter() {
         await ensureTable(access);
 
         // Check if exists
-        const existing = await access.sql.query(
-          `SELECT id FROM items WHERE id = ?`,
-          [id],
-        );
+        const existing = await access.sql.query(`SELECT id FROM items WHERE id = ?`, [id]);
         if (!existing.ok || existing.data.rows.length === 0) {
           res.status(404).json({
             error: "not_found",
@@ -183,8 +195,14 @@ export function createItemsRouter() {
 
         const setClauses: string[] = [];
         const updateParams: (string | number | null)[] = [];
-        if (input.title !== undefined) { setClauses.push("title = ?"); updateParams.push(input.title); }
-        if (input.data !== undefined) { setClauses.push("data = ?"); updateParams.push(input.data); }
+        if (input.title !== undefined) {
+          setClauses.push("title = ?");
+          updateParams.push(input.title);
+        }
+        if (input.data !== undefined) {
+          setClauses.push("data = ?");
+          updateParams.push(input.data);
+        }
         setClauses.push("updated_at = ?");
         updateParams.push(now);
         updateParams.push(id);
@@ -236,7 +254,10 @@ export function createItemsRouter() {
   // DELETE /api/items/:id?store=kv|sql
   router.delete("/:id", async (req: Request, res: Response) => {
     const storeType = getStoreType(req);
-    if (!req.delegatedAccess) { res.status(403).json({ error: "no_delegation", message: "Delegation required" }); return; }
+    if (!req.delegatedAccess) {
+      res.status(403).json({ error: "no_delegation", message: "Delegation required" });
+      return;
+    }
     const access = req.delegatedAccess;
     const { id } = req.params;
 
@@ -245,10 +266,7 @@ export function createItemsRouter() {
         await ensureTable(access);
 
         // Check if exists
-        const existing = await access.sql.query(
-          `SELECT id FROM items WHERE id = ?`,
-          [id],
-        );
+        const existing = await access.sql.query(`SELECT id FROM items WHERE id = ?`, [id]);
         if (!existing.ok || existing.data.rows.length === 0) {
           res.status(404).json({
             error: "not_found",
@@ -257,10 +275,7 @@ export function createItemsRouter() {
           return;
         }
 
-        const deleteResult = await access.sql.execute(
-          `DELETE FROM items WHERE id = ?`,
-          [id],
-        );
+        const deleteResult = await access.sql.execute(`DELETE FROM items WHERE id = ?`, [id]);
         if (!deleteResult.ok) throw new Error(`SQL delete failed: ${deleteResult.error.message}`);
       } else {
         // KV: check existence, then delete
@@ -323,7 +338,9 @@ async function ensureTable(access: DelegatedAccess): Promise<void> {
  */
 function rowToItem(row: unknown[], columns: string[]): Item {
   const obj: Record<string, unknown> = {};
-  columns.forEach((col, i) => { obj[col] = row[i]; });
+  columns.forEach((col, i) => {
+    obj[col] = row[i];
+  });
   return {
     id: obj.id as string,
     title: obj.title as string,
@@ -335,9 +352,9 @@ function rowToItem(row: unknown[], columns: string[]): Item {
 
 function handleStoreError(res: Response, err: unknown, operation: string): void {
   console.error(`[items] ${operation} failed:`, err);
-
-  res.status(500).json({
-    error: "store_error",
-    message: `Failed to ${operation}`,
+  const isTimeout = err instanceof Error && err.message.includes("timed out");
+  res.status(isTimeout ? 504 : 500).json({
+    error: isTimeout ? "gateway_timeout" : "store_error",
+    message: isTimeout ? "TinyCloud operation timed out" : `Failed to ${operation}`,
   });
 }

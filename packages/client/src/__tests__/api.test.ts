@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { createApiClient, type ApiClient } from "../api.js";
+import { createApiClient } from "../api.js";
 import type { TokenStore, TokenRefreshConfig } from "../tokens.js";
 
 // ── Mock TokenStore ──────────────────────────────────────────────────
@@ -37,10 +37,7 @@ describe("createApiClient", () => {
     let capturedUrl: string | undefined;
     let capturedInit: RequestInit | undefined;
 
-    globalThis.fetch = (async (
-      input: string | URL | Request,
-      init?: RequestInit,
-    ) => {
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       capturedUrl = input.toString();
       capturedInit = init;
       return new Response(JSON.stringify({ id: 1 }), {
@@ -66,10 +63,7 @@ describe("createApiClient", () => {
   test("post makes POST request with JSON body and Bearer token", async () => {
     let capturedInit: RequestInit | undefined;
 
-    globalThis.fetch = (async (
-      _input: string | URL | Request,
-      init?: RequestInit,
-    ) => {
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
       capturedInit = init;
       return new Response(JSON.stringify({ id: 2 }), {
         status: 201,
@@ -97,10 +91,7 @@ describe("createApiClient", () => {
   test("put makes PUT request with JSON body", async () => {
     let capturedInit: RequestInit | undefined;
 
-    globalThis.fetch = (async (
-      _input: string | URL | Request,
-      init?: RequestInit,
-    ) => {
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
       capturedInit = init;
       return new Response(JSON.stringify({ id: 1, name: "Bob" }), {
         status: 200,
@@ -125,10 +116,7 @@ describe("createApiClient", () => {
   test("del makes DELETE request", async () => {
     let capturedInit: RequestInit | undefined;
 
-    globalThis.fetch = (async (
-      _input: string | URL | Request,
-      init?: RequestInit,
-    ) => {
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
       capturedInit = init;
       return new Response(null, { status: 204 });
     }) as typeof fetch;
@@ -159,9 +147,7 @@ describe("createApiClient", () => {
     const tokenStore = createMockTokenStore();
     const client = createApiClient(backendUrl, { tokenStore });
 
-    const result = await client.get<{ id: number; name: string; active: boolean }>(
-      "/users/1",
-    );
+    const result = await client.get<{ id: number; name: string; active: boolean }>("/users/1");
     expect(result).toEqual(payload);
   });
 
@@ -169,18 +155,16 @@ describe("createApiClient", () => {
 
   test("throws on non-ok responses with error message", async () => {
     globalThis.fetch = (async () => {
-      return new Response(
-        JSON.stringify({ error: "not_found", message: "User not found" }),
-        { status: 404, headers: { "Content-Type": "application/json" } },
-      );
+      return new Response(JSON.stringify({ error: "not_found", message: "User not found" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
     }) as typeof fetch;
 
     const tokenStore = createMockTokenStore();
     const client = createApiClient(backendUrl, { tokenStore });
 
-    await expect(client.get("/users/999")).rejects.toThrow(
-      "API error (404): User not found",
-    );
+    await expect(client.get("/users/999")).rejects.toThrow("API error (404): User not found");
   });
 
   // ── 401 auto-refresh ──────────────────────────────────────────────
@@ -198,10 +182,10 @@ describe("createApiClient", () => {
       callCount++;
       if (callCount === 1) {
         // First call returns 401
-        return new Response(
-          JSON.stringify({ error: "unauthorized", message: "Token expired" }),
-          { status: 401, headers: { "Content-Type": "application/json" } },
-        );
+        return new Response(JSON.stringify({ error: "unauthorized", message: "Token expired" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        });
       }
       // Retry after refresh succeeds
       return new Response(JSON.stringify({ ok: true }), {
@@ -249,8 +233,6 @@ describe("createApiClient", () => {
 
     const client = createApiClient(backendUrl, { tokenStore });
 
-    await expect(client.get("/anything")).rejects.toThrow(
-      "Not authenticated. Please sign in.",
-    );
+    await expect(client.get("/anything")).rejects.toThrow("Not authenticated. Please sign in.");
   });
 });

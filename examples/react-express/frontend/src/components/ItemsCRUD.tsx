@@ -1,11 +1,6 @@
 import { type FC, useCallback, useEffect, useRef, useState } from "react";
 import type { ApiClient } from "@tinyboilerplate/client";
-import type {
-  Item,
-  ItemListResponse,
-  ItemResponse,
-  StoreType,
-} from "@tinyboilerplate/core";
+import type { Item, ItemListResponse, ItemResponse, StoreType } from "@tinyboilerplate/core";
 
 interface ItemsCRUDProps {
   api: ApiClient | null;
@@ -100,10 +95,7 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api }) => {
         };
         if (newData.trim()) body.data = newData.trim();
 
-        const res = await api.post<ItemResponse>(
-          `/api/items?store=${storeType}`,
-          body,
-        );
+        const res = await api.post<ItemResponse>(`/api/items?store=${storeType}`, body);
         setLastResponse(res);
         setNewTitle("");
         setNewData("");
@@ -134,10 +126,7 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api }) => {
         if (editTitle.trim()) body.title = editTitle.trim();
         if (editData.trim()) body.data = editData.trim();
 
-        const res = await api.put<ItemResponse>(
-          `/api/items/${id}?store=${storeType}`,
-          body,
-        );
+        const res = await api.put<ItemResponse>(`/api/items/${id}?store=${storeType}`, body);
         setLastResponse(res);
         setEditingId(null);
         setEditTitle("");
@@ -204,16 +193,20 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api }) => {
       <h2 style={styles.heading}>2. Items (CRUD)</h2>
 
       {!enabled ? (
-        <p style={styles.description}>
-          Sign in to manage items.
-        </p>
+        <p style={styles.description}>Sign in to manage items.</p>
       ) : (
         <>
           {/* Store type toggle */}
           <div style={styles.toggleRow}>
             <span style={styles.toggleLabel}>Store:</span>
             <button
-              onClick={() => { setStoreType("kv"); localStorage.setItem("tinyboilerplate:storeType", "kv"); setSqlQuery(null); setRowCount(null); setLastResponse(null); }}
+              onClick={() => {
+                setStoreType("kv");
+                localStorage.setItem("tinyboilerplate:storeType", "kv");
+                setSqlQuery(null);
+                setRowCount(null);
+                setLastResponse(null);
+              }}
               style={{
                 ...styles.toggleButton,
                 ...(storeType === "kv" ? styles.toggleActive : {}),
@@ -222,7 +215,11 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api }) => {
               KV
             </button>
             <button
-              onClick={() => { setStoreType("sql"); localStorage.setItem("tinyboilerplate:storeType", "sql"); setLastResponse(null); }}
+              onClick={() => {
+                setStoreType("sql");
+                localStorage.setItem("tinyboilerplate:storeType", "sql");
+                setLastResponse(null);
+              }}
               style={{
                 ...styles.toggleButton,
                 ...(storeType === "sql" ? styles.toggleActive : {}),
@@ -230,11 +227,7 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api }) => {
             >
               SQL
             </button>
-            <button
-              onClick={fetchItems}
-              disabled={loading}
-              style={styles.refreshButton}
-            >
+            <button onClick={fetchItems} disabled={loading} style={styles.refreshButton}>
               Refresh
             </button>
           </div>
@@ -261,7 +254,7 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api }) => {
                   <option value="title">Title</option>
                 </select>
                 <button
-                  onClick={() => setSortDir(d => d === "asc" ? "desc" : "asc")}
+                  onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
                   style={styles.sortDirButton}
                   title={sortDir === "asc" ? "Ascending" : "Descending"}
                 >
@@ -269,7 +262,9 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api }) => {
                 </button>
               </div>
               {rowCount != null && (
-                <span style={styles.rowCount}>{rowCount} row{rowCount !== 1 ? "s" : ""}</span>
+                <span style={styles.rowCount}>
+                  {rowCount} row{rowCount !== 1 ? "s" : ""}
+                </span>
               )}
             </div>
           )}
@@ -311,14 +306,10 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api }) => {
           </form>
 
           {/* Items list */}
-          {loading && (
-            <p style={styles.loadingText}>Loading items...</p>
-          )}
+          {loading && <p style={styles.loadingText}>Loading items...</p>}
 
           {!loading && items.length === 0 && (
-            <p style={styles.emptyText}>
-              No items yet. Create one above.
-            </p>
+            <p style={styles.emptyText}>No items yet. Create one above.</p>
           )}
 
           <div style={styles.itemList}>
@@ -349,10 +340,7 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api }) => {
                       >
                         Save
                       </button>
-                      <button
-                        onClick={cancelEdit}
-                        style={styles.buttonSmallSecondary}
-                      >
+                      <button onClick={cancelEdit} style={styles.buttonSmallSecondary}>
                         Cancel
                       </button>
                     </div>
@@ -362,20 +350,13 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api }) => {
                   <>
                     <div style={styles.itemContent}>
                       <strong style={styles.itemTitle}>{item.title}</strong>
-                      {item.data && (
-                        <span style={styles.itemData}>{item.data}</span>
-                      )}
+                      {item.data && <span style={styles.itemData}>{item.data}</span>}
                       <span style={styles.itemId}>
-                        {item.id.length > 12
-                          ? `${item.id.slice(0, 8)}...`
-                          : item.id}
+                        {item.id.length > 12 ? `${item.id.slice(0, 8)}...` : item.id}
                       </span>
                     </div>
                     <div style={styles.itemActions}>
-                      <button
-                        onClick={() => startEdit(item)}
-                        style={styles.buttonSmallSecondary}
-                      >
+                      <button onClick={() => startEdit(item)} style={styles.buttonSmallSecondary}>
                         Edit
                       </button>
                       <button
@@ -396,9 +377,7 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api }) => {
           {lastResponse !== null && (
             <details style={styles.details}>
               <summary style={styles.summary}>Last API Response</summary>
-              <pre style={styles.pre}>
-                {JSON.stringify(lastResponse, null, 2)}
-              </pre>
+              <pre style={styles.pre}>{JSON.stringify(lastResponse, null, 2)}</pre>
             </details>
           )}
         </>

@@ -23,10 +23,7 @@ export interface ApiClient {
  * Create a fetch wrapper that auto-attaches a Bearer token from the TokenStore.
  * Handles token refresh transparently.
  */
-export function createApiClient(
-  backendUrl: string,
-  config: ApiClientConfig,
-): ApiClient {
+export function createApiClient(backendUrl: string, config: ApiClientConfig): ApiClient {
   const { tokenStore, refreshConfig } = config;
 
   async function request<T>(path: string, init: RequestInit, isRetry = false): Promise<T> {

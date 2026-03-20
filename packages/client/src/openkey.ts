@@ -69,9 +69,7 @@ class OpenKeyEIP1193Provider {
 
 function hexToString(hex: string): string {
   const cleaned = hex.startsWith("0x") ? hex.slice(2) : hex;
-  const bytes = new Uint8Array(
-    cleaned.match(/.{1,2}/g)!.map((b) => parseInt(b, 16)),
-  );
+  const bytes = new Uint8Array(cleaned.match(/.{1,2}/g)!.map((b) => parseInt(b, 16)));
   return new TextDecoder().decode(bytes);
 }
 
@@ -100,10 +98,7 @@ export async function openKeySignIn(config: OpenKeyConfig): Promise<SignInResult
     redirectUri: config.redirectUri,
   };
   const oauthResult = await openkey.oauth.connect(oauthConfig);
-  const tokenResponse = await openkey.oauth.exchangeCode(
-    oauthResult.code,
-    oauthConfig,
-  );
+  const tokenResponse = await openkey.oauth.exchangeCode(oauthResult.code, oauthConfig);
 
   // 3. Create EIP-1193 provider for TinyCloud SIWE signing
   const eip1193 = new OpenKeyEIP1193Provider(

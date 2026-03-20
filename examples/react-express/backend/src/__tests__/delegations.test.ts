@@ -11,7 +11,12 @@ const mockDeserializeDelegation = mock((serialized: string) => ({
 }));
 
 const mockUseDelegation = mock(async (_delegation: any) => ({
-  kv: { get: async () => ({}), put: async () => ({}), list: async () => ({}), delete: async () => ({}) },
+  kv: {
+    get: async () => ({}),
+    put: async () => ({}),
+    list: async () => ({}),
+    delete: async () => ({}),
+  },
   sql: { execute: async () => ({}), query: async () => ({}) },
 }));
 
@@ -79,11 +84,17 @@ function createMockDelegationCache() {
   return {
     _cache: cache,
     get: (key: string) => cache.get(key) ?? null,
-    set: (key: string, access: any) => { cache.set(key, access); },
-    evict: (key: string) => { cache.delete(key); },
+    set: (key: string, access: any) => {
+      cache.set(key, access);
+    },
+    evict: (key: string) => {
+      cache.delete(key);
+    },
     has: (key: string) => cache.has(key),
     clear: () => cache.clear(),
-    get size() { return cache.size; },
+    get size() {
+      return cache.size;
+    },
   };
 }
 
@@ -122,9 +133,7 @@ function createApp(
   return app;
 }
 
-function startServer(
-  app: express.Express,
-): Promise<{ server: Server; port: number }> {
+function startServer(app: express.Express): Promise<{ server: Server; port: number }> {
   return new Promise((resolve) => {
     const server = app.listen(0, () => {
       const port = (server.address() as any).port;
@@ -267,9 +276,7 @@ describe("Delegation Routes", () => {
         body: JSON.stringify({ serialized: "my-delegation-string" }),
       });
 
-      expect(mockDeserializeDelegation).toHaveBeenCalledWith(
-        "my-delegation-string",
-      );
+      expect(mockDeserializeDelegation).toHaveBeenCalledWith("my-delegation-string");
     });
 
     it("calls node.useDelegation to activate", async () => {
@@ -380,9 +387,7 @@ describe("Delegation Routes", () => {
       expect(res.status).toBe(403);
       const body = await res.json();
       expect(body.error).toBe("ownership_mismatch");
-      expect(body.message).toBe(
-        "Delegation owner does not match authenticated user",
-      );
+      expect(body.message).toBe("Delegation owner does not match authenticated user");
 
       // Verify the delegation was NOT stored or cached
       expect(await store.load(TEST_SUB)).toBeNull();
