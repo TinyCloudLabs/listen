@@ -117,4 +117,23 @@ describe("withSessionRefresh", () => {
       expect(node.signIn).not.toHaveBeenCalled();
     }
   });
+
+  describe("false positive rejection", () => {
+    const falsePositives = [
+      "Failed to update session preferences for user 401-smith",
+      "session preferences not found",
+      "session config invalid",
+      "subscription expired",
+    ];
+
+    for (const msg of falsePositives) {
+      test(`does NOT retry on: "${msg}"`, async () => {
+        const node = createMockNode();
+        const fn = mock(() => Promise.reject(new Error(msg)));
+
+        await expect(withSessionRefresh(node as any, fn)).rejects.toThrow();
+        expect(node.signIn).not.toHaveBeenCalled();
+      });
+    }
+  });
 });

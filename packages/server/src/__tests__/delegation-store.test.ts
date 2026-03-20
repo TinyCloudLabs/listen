@@ -122,6 +122,30 @@ describe("DelegationStore", () => {
       const result = await store.load("0xABC");
       expect(result).toBeNull();
     });
+
+    test("returns null when parsed data has missing required fields", async () => {
+      mockNode.kv.get = mock(() =>
+        Promise.resolve({ data: JSON.stringify({ serialized: "ok" }) }),
+      );
+
+      const result = await store.load("0xABC");
+      expect(result).toBeNull();
+    });
+
+    test("returns null when parsed data has wrong field types", async () => {
+      mockNode.kv.get = mock(() =>
+        Promise.resolve({
+          data: JSON.stringify({
+            serialized: 123,
+            expiresAt: "2026-12-31",
+            actions: [],
+          }),
+        }),
+      );
+
+      const result = await store.load("0xABC");
+      expect(result).toBeNull();
+    });
   });
 
   describe("remove", () => {

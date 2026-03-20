@@ -7,6 +7,7 @@ import {
   createApiClient,
   createDelegation,
   sendDelegation,
+  revokeDelegation,
   TokenStore,
   type ApiClient,
 } from "@tinyboilerplate/client";
@@ -106,6 +107,12 @@ export function App() {
   // ── Sign Out ──────────────────────────────────────────────────────
 
   const handleSignOut = useCallback(async () => {
+    // Best-effort revoke — don't block sign-out on failure
+    const token = tokenStoreRef.current.getAccessToken();
+    if (token) {
+      revokeDelegation(BACKEND_URL, token).catch(() => {});
+    }
+
     await tcw?.signOut?.();
     tokenStoreRef.current.clear();
     setAddress(null);

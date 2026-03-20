@@ -291,9 +291,13 @@ function getStoreType(req: Request): StoreType {
 
 /**
  * Ensure the items table exists. Runs CREATE TABLE IF NOT EXISTS
- * on every call — idempotent and cheap over the network.
+ * at most once per DelegatedAccess instance (keyed by object identity).
  */
+const tableCreated = new WeakSet<object>();
+
 async function ensureTable(access: any): Promise<void> {
+  if (tableCreated.has(access)) return;
+
   const result = await access.sql.execute(`
     CREATE TABLE IF NOT EXISTS items (
       id TEXT PRIMARY KEY,
@@ -306,6 +310,8 @@ async function ensureTable(access: any): Promise<void> {
   if (!result.ok) {
     throw new Error(`Failed to create items table: ${(result as any).error?.message ?? "unknown"}`);
   }
+
+  tableCreated.add(access);
 }
 
 /**

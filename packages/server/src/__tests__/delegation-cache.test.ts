@@ -106,6 +106,29 @@ describe("DelegationCache", () => {
     expect(cache.size).toBe(2);
   });
 
+  test("LRU eviction keeps frequently accessed entries", () => {
+    const smallCache = new DelegationCache(undefined, 3);
+    const a1 = makeDelegatedAccess();
+    const a2 = makeDelegatedAccess();
+    const a3 = makeDelegatedAccess();
+
+    smallCache.set("0xA", a1);
+    smallCache.set("0xB", a2);
+    smallCache.set("0xC", a3);
+
+    // Access 0xA to move it to end (most recently used)
+    smallCache.get("0xA");
+
+    // Adding a 4th entry should evict 0xB (least recently used), not 0xA
+    const a4 = makeDelegatedAccess();
+    smallCache.set("0xD", a4);
+
+    expect(smallCache.get("0xA")).toBe(a1); // survived eviction
+    expect(smallCache.get("0xB")).toBeNull(); // evicted (LRU)
+    expect(smallCache.get("0xC")).not.toBeNull();
+    expect(smallCache.get("0xD")).toBe(a4);
+  });
+
   test("TTL expiry auto-removes stale entries on get", async () => {
     const shortCache = new DelegationCache(50);
     shortCache.set("0xStale", makeDelegatedAccess());

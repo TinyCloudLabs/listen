@@ -42,6 +42,10 @@ export class DelegationCache {
       return null;
     }
 
+    // Move to end for LRU eviction (delete + re-insert)
+    this.cache.delete(address);
+    this.cache.set(address, entry);
+
     return entry.delegatedAccess;
   }
 

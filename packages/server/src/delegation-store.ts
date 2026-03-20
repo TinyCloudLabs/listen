@@ -61,9 +61,22 @@ export class DelegationStore {
     try {
       // KV get returns { data: value } — unwrap it
       let raw = response.data ?? response;
-      // Handle double-serialization (string) or direct object
       if (typeof raw === "string") raw = JSON.parse(raw);
-      if (typeof raw === "string") raw = JSON.parse(raw); // double-encoded
+
+      // Validate required StoredDelegation fields
+      if (
+        typeof raw !== "object" || raw === null ||
+        typeof raw.serialized !== "string" ||
+        typeof raw.expiresAt !== "string" ||
+        !Array.isArray(raw.actions)
+      ) {
+        console.warn(
+          `[DelegationStore] Invalid delegation shape for ${identifier}:`,
+          Object.keys(raw ?? {}),
+        );
+        return null;
+      }
+
       return raw as StoredDelegation;
     } catch (err) {
       console.warn(

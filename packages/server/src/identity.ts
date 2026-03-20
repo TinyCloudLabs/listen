@@ -47,7 +47,7 @@ export async function createBackendIdentity(
 
 // ── Session Error Detection ──────────────────────────────────────────
 
-const SESSION_ERROR_PATTERN = /\b(401|session|expired|unauthorized|unauthenticated|sign.?in\s*required)\b/i;
+const SESSION_ERROR_PATTERN = /\b(session\s+expired|invalid\s+session|token\s+expired|expired\s+credentials?|unauthorized|unauthenticated|sign.?in\s*required)\b|\b401\b(?![\d-])/i;
 
 function isSessionError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
