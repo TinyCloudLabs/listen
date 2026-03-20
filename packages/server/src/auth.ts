@@ -1,6 +1,7 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import type { JWTPayload, JWTVerifyResult } from "jose";
 import { JWSSignatureVerificationFailed, JWTClaimValidationFailed, JWTExpired } from "jose/errors";
+import { deriveApiHost } from "@tinyboilerplate/core";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -26,29 +27,6 @@ export interface JWTVerifierConfig {
   issuer?: string;
   /** Expected audience (your client ID or app identifier) */
   audience?: string;
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────
-
-/**
- * Derive the OpenKey API host from a frontend or API host.
- * "https://openkey.so" → "https://api.openkey.so"
- * "https://api.openkey.so" → "https://api.openkey.so" (no change)
- * "http://localhost:3000" → "http://localhost:3000" (no change)
- */
-function deriveApiHost(host: string): string {
-  try {
-    const url = new URL(host);
-    if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
-      return host;
-    }
-    if (url.hostname.startsWith("api.")) {
-      return host;
-    }
-    return `${url.protocol}//api.${url.host}`;
-  } catch {
-    return host;
-  }
 }
 
 // ── JWT Verifier ─────────────────────────────────────────────────────

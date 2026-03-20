@@ -1,3 +1,6 @@
+import { deriveApiHost } from "@tinyboilerplate/core";
+export { deriveApiHost };
+
 // ── Types ────────────────────────────────────────────────────────────
 
 export interface StoredTokens {
@@ -11,31 +14,6 @@ export interface TokenRefreshConfig {
   openKeyHost: string;
   /** OAuth client ID */
   clientId: string;
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────
-
-/**
- * Derive the OpenKey API host from the frontend host.
- * Matches the logic in the OpenKey SDK's `deriveOAuthHost`.
- *
- * "https://openkey.so" → "https://api.openkey.so"
- * "http://localhost:3000" → "http://localhost:3000" (no change)
- */
-export function deriveApiHost(host: string): string {
-  try {
-    const url = new URL(host);
-    if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
-      return host;
-    }
-    // Already an API host
-    if (url.hostname.startsWith("api.")) {
-      return host;
-    }
-    return `${url.protocol}//api.${url.host}`;
-  } catch {
-    return host;
-  }
 }
 
 // ── Token Store ──────────────────────────────────────────────────────

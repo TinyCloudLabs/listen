@@ -1,5 +1,5 @@
 import { Router } from "express";
-import type { Request, Response } from "express";
+import type { Request, Response, RequestHandler } from "express";
 import type { TinyCloudNode } from "@tinycloud/node-sdk";
 import { deserializeDelegation } from "@tinycloud/node-sdk";
 import type { DelegationStore, DelegationCache } from "@tinyboilerplate/server";
@@ -12,7 +12,7 @@ interface DelegationRoutesConfig {
   did: string;
   store: DelegationStore;
   cache: DelegationCache;
-  authMiddleware: (req: Request, res: Response, next: () => void) => void;
+  authMiddleware: RequestHandler;
   openKeyIssuerUrl: string;
 }
 
@@ -23,11 +23,12 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
   const router = Router();
 
   // All delegation routes require authentication
-  router.use(authMiddleware as any);
+  router.use(authMiddleware);
 
   // ── POST /api/delegations — receive + store delegation ─────────
   router.post("/", async (req: Request, res: Response) => {
-    const { sub } = req.user!;
+    if (!req.user) { res.status(401).json({ error: "unauthenticated", message: "Authentication required" }); return; }
+    const { sub } = req.user;
     const { serialized } = req.body;
 
     if (!serialized || typeof serialized !== "string") {
@@ -92,7 +93,8 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
 
   // ── DELETE /api/delegations — revoke delegation ────────────────
   router.delete("/", async (req: Request, res: Response) => {
-    const { sub } = req.user!;
+    if (!req.user) { res.status(401).json({ error: "unauthenticated", message: "Authentication required" }); return; }
+    const { sub } = req.user;
 
     try {
       await store.remove(sub);
@@ -113,7 +115,8 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
 
   // ── GET /api/delegations/status — check delegation status ─────
   router.get("/status", async (req: Request, res: Response) => {
-    const { sub } = req.user!;
+    if (!req.user) { res.status(401).json({ error: "unauthenticated", message: "Authentication required" }); return; }
+    const { sub } = req.user;
 
     try {
       const stored = await store.load(sub);

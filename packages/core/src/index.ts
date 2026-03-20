@@ -81,3 +81,26 @@ export const DEFAULT_DELEGATION_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** DelegatedAccess cache TTL: 50 minutes (under 1-hour sub-session cap) */
 export const DELEGATION_CACHE_TTL_MS = 50 * 60 * 1000;
+
+// ── Utilities ───────────────────────────────────────────────────────
+
+/**
+ * Derive the OpenKey API host from a frontend or API host.
+ * "https://openkey.so" → "https://api.openkey.so"
+ * "https://api.openkey.so" → "https://api.openkey.so" (no change)
+ * "http://localhost:3000" → "http://localhost:3000" (no change)
+ */
+export function deriveApiHost(host: string): string {
+  try {
+    const url = new URL(host);
+    if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+      return host;
+    }
+    if (url.hostname.startsWith("api.")) {
+      return host;
+    }
+    return `${url.protocol}//api.${url.host}`;
+  } catch {
+    return host;
+  }
+}

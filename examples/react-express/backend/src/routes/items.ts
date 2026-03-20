@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
 import type { Item, CreateItemInput, UpdateItemInput, StoreType } from "@tinyboilerplate/core";
+import type { DelegatedAccess } from "@tinyboilerplate/server";
 
 // ── Items Router ─────────────────────────────────────────────────────
 
@@ -10,7 +11,8 @@ export function createItemsRouter() {
   // GET /api/items?store=kv|sql
   router.get("/", async (req: Request, res: Response) => {
     const storeType = getStoreType(req);
-    const access = req.delegatedAccess!;
+    if (!req.delegatedAccess) { res.status(403).json({ error: "no_delegation", message: "Delegation required" }); return; }
+    const access = req.delegatedAccess;
 
     try {
       if (storeType === "sql") {
@@ -31,11 +33,9 @@ export function createItemsRouter() {
         sql += ` ORDER BY ${validSort} ${sortDir}`;
 
         const result = await access.sql.query(sql, params);
-        if (!result.ok) throw new Error(`SQL query failed: ${(result as any).error?.message ?? "unknown"}`);
-        const rows = (result.data as any)?.rows ?? [];
-        const columns: string[] = (result.data as any)?.columns ?? [];
-        const rowCount = (result.data as any)?.rowCount ?? rows.length;
-        const items: Item[] = rows.map((row: any[]) => rowToItem(row, columns));
+        if (!result.ok) throw new Error(`SQL query failed: ${result.error.message}`);
+        const { rows, columns, rowCount } = result.data;
+        const items: Item[] = rows.map((row) => rowToItem(row, columns));
         res.json({ items });
       } else {
         // KV list returns { keys: string[] }, then get each value in parallel
@@ -49,9 +49,9 @@ export function createItemsRouter() {
           keys.map((key) => access.kv.get(key))
         );
         const items: Item[] = results
-          .filter((r) => r.ok && (r.data as any)?.data)
+          .filter((r): r is typeof r & { ok: true; data: { data: unknown } } => r.ok && r.data.data != null)
           .map((r) => {
-            const val = (r.data as any).data;
+            const val = r.data.data;
             return (typeof val === "string" ? JSON.parse(val) : val) as Item;
           });
         res.json({ items });
@@ -64,7 +64,8 @@ export function createItemsRouter() {
   // POST /api/items?store=kv|sql
   router.post("/", async (req: Request, res: Response) => {
     const storeType = getStoreType(req);
-    const access = req.delegatedAccess!;
+    if (!req.delegatedAccess) { res.status(403).json({ error: "no_delegation", message: "Delegation required" }); return; }
+    const access = req.delegatedAccess;
     const input: CreateItemInput = req.body;
 
     if (!input.title || typeof input.title !== "string") {
@@ -91,10 +92,10 @@ export function createItemsRouter() {
           `INSERT INTO items (id, title, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
           [item.id, item.title, item.data ?? "", item.createdAt, item.updatedAt],
         );
-        if (!insertResult.ok) throw new Error(`SQL insert failed: ${(insertResult as any).error?.message ?? "unknown"}`);
+        if (!insertResult.ok) throw new Error(`SQL insert failed: ${insertResult.error.message}`);
       } else {
         const putResult = await access.kv.put(`items/${item.id}`, item);
-        if (!putResult.ok) throw new Error(`KV put failed: ${(putResult as any).error?.message}`);
+        if (!putResult.ok) throw new Error(`KV put failed: ${putResult.error.message}`);
       }
 
       res.status(201).json({ item });
@@ -106,7 +107,8 @@ export function createItemsRouter() {
   // GET /api/items/:id?store=kv|sql
   router.get("/:id", async (req: Request, res: Response) => {
     const storeType = getStoreType(req);
-    const access = req.delegatedAccess!;
+    if (!req.delegatedAccess) { res.status(403).json({ error: "no_delegation", message: "Delegation required" }); return; }
+    const access = req.delegatedAccess;
     const { id } = req.params;
 
     try {
@@ -116,9 +118,8 @@ export function createItemsRouter() {
           `SELECT id, title, data, created_at, updated_at FROM items WHERE id = ?`,
           [id],
         );
-        if (!result.ok) throw new Error(`SQL query failed: ${(result as any).error?.message ?? "unknown"}`);
-        const rows = (result.data as any)?.rows ?? [];
-        const cols: string[] = (result.data as any)?.columns ?? [];
+        if (!result.ok) throw new Error(`SQL query failed: ${result.error.message}`);
+        const { rows, columns } = result.data;
         if (rows.length === 0) {
           res.status(404).json({
             error: "not_found",
@@ -126,7 +127,7 @@ export function createItemsRouter() {
           });
           return;
         }
-        res.json({ item: rowToItem(rows[0], cols) });
+        res.json({ item: rowToItem(rows[0], columns) });
       } else {
         const result = await access.kv.get(`items/${id}`);
         if (!result.ok || !result.data?.data) {
@@ -148,7 +149,8 @@ export function createItemsRouter() {
   // PUT /api/items/:id?store=kv|sql
   router.put("/:id", async (req: Request, res: Response) => {
     const storeType = getStoreType(req);
-    const access = req.delegatedAccess!;
+    if (!req.delegatedAccess) { res.status(403).json({ error: "no_delegation", message: "Delegation required" }); return; }
+    const access = req.delegatedAccess;
     const { id } = req.params;
     const input: UpdateItemInput = req.body;
 
@@ -171,7 +173,7 @@ export function createItemsRouter() {
           `SELECT id FROM items WHERE id = ?`,
           [id],
         );
-        if (((existing.ok ? (existing.data as any)?.rows : null) ?? []).length === 0) {
+        if (!existing.ok || existing.data.rows.length === 0) {
           res.status(404).json({
             error: "not_found",
             message: `Item '${id}' not found`,
@@ -191,17 +193,17 @@ export function createItemsRouter() {
           `UPDATE items SET ${setClauses.join(", ")} WHERE id = ?`,
           updateParams,
         );
-        if (!updateResult.ok) throw new Error(`SQL update failed: ${(updateResult as any).error?.message ?? "unknown"}`);
+        if (!updateResult.ok) throw new Error(`SQL update failed: ${updateResult.error.message}`);
 
         // Fetch the updated item
         const result = await access.sql.query(
           `SELECT id, title, data, created_at, updated_at FROM items WHERE id = ?`,
           [id],
         );
-        if (!result.ok) throw new Error(`SQL query failed: ${(result as any).error?.message ?? "unknown"}`);
-        const rows = (result.data as any)?.rows ?? [];
+        if (!result.ok) throw new Error(`SQL query failed: ${result.error.message}`);
+        const { rows, columns } = result.data;
         if (rows.length === 0) throw new Error("Item disappeared after update");
-        res.json({ item: rowToItem(rows[0], (result.data as any)?.columns ?? []) });
+        res.json({ item: rowToItem(rows[0], columns) });
       } else {
         // KV: read-modify-write
         const result = await access.kv.get(`items/${id}`);
@@ -223,7 +225,7 @@ export function createItemsRouter() {
         };
 
         const putResult = await access.kv.put(`items/${id}`, updated);
-        if (!putResult.ok) throw new Error(`KV put failed: ${(putResult as any).error?.message}`);
+        if (!putResult.ok) throw new Error(`KV put failed: ${putResult.error.message}`);
         res.json({ item: updated });
       }
     } catch (err) {
@@ -234,7 +236,8 @@ export function createItemsRouter() {
   // DELETE /api/items/:id?store=kv|sql
   router.delete("/:id", async (req: Request, res: Response) => {
     const storeType = getStoreType(req);
-    const access = req.delegatedAccess!;
+    if (!req.delegatedAccess) { res.status(403).json({ error: "no_delegation", message: "Delegation required" }); return; }
+    const access = req.delegatedAccess;
     const { id } = req.params;
 
     try {
@@ -246,7 +249,7 @@ export function createItemsRouter() {
           `SELECT id FROM items WHERE id = ?`,
           [id],
         );
-        if (((existing.ok ? (existing.data as any)?.rows : null) ?? []).length === 0) {
+        if (!existing.ok || existing.data.rows.length === 0) {
           res.status(404).json({
             error: "not_found",
             message: `Item '${id}' not found`,
@@ -258,7 +261,7 @@ export function createItemsRouter() {
           `DELETE FROM items WHERE id = ?`,
           [id],
         );
-        if (!deleteResult.ok) throw new Error(`SQL delete failed: ${(deleteResult as any).error?.message ?? "unknown"}`);
+        if (!deleteResult.ok) throw new Error(`SQL delete failed: ${deleteResult.error.message}`);
       } else {
         // KV: check existence, then delete
         const result = await access.kv.get(`items/${id}`);
@@ -295,7 +298,7 @@ function getStoreType(req: Request): StoreType {
  */
 const tableCreated = new WeakSet<object>();
 
-async function ensureTable(access: any): Promise<void> {
+async function ensureTable(access: DelegatedAccess): Promise<void> {
   if (tableCreated.has(access)) return;
 
   const result = await access.sql.execute(`
@@ -308,7 +311,7 @@ async function ensureTable(access: any): Promise<void> {
     )
   `);
   if (!result.ok) {
-    throw new Error(`Failed to create items table: ${(result as any).error?.message ?? "unknown"}`);
+    throw new Error(`Failed to create items table: ${result.error.message}`);
   }
 
   tableCreated.add(access);
@@ -317,26 +320,16 @@ async function ensureTable(access: any): Promise<void> {
 /**
  * Convert a SQL row to an Item.
  * QueryResponse rows are arrays (not objects), so we map by column index.
- * If columns are provided, use them; otherwise assume named object.
  */
-function rowToItem(row: any, columns?: string[]): Item {
-  if (columns && Array.isArray(row)) {
-    const obj: Record<string, any> = {};
-    columns.forEach((col, i) => { obj[col] = row[i]; });
-    return {
-      id: obj.id,
-      title: obj.title,
-      data: obj.data ?? undefined,
-      createdAt: obj.created_at,
-      updatedAt: obj.updated_at,
-    };
-  }
+function rowToItem(row: unknown[], columns: string[]): Item {
+  const obj: Record<string, unknown> = {};
+  columns.forEach((col, i) => { obj[col] = row[i]; });
   return {
-    id: row.id,
-    title: row.title,
-    data: row.data ?? undefined,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    id: obj.id as string,
+    title: obj.title as string,
+    data: (obj.data as string) ?? undefined,
+    createdAt: obj.created_at as string,
+    updatedAt: obj.updated_at as string,
   };
 }
 
