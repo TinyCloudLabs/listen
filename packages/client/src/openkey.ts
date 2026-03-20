@@ -43,6 +43,9 @@ class OpenKeyEIP1193Provider {
     private chainId: string,
   ) {}
 
+  on(_event: string, _listener: (...args: any[]) => void): void {}
+  removeListener(_event: string, _listener: (...args: any[]) => void): void {}
+
   async request({ method, params }: { method: string; params?: any[] }): Promise<any> {
     switch (method) {
       case "eth_accounts":
@@ -109,7 +112,7 @@ export async function openKeySignIn(config: OpenKeyConfig): Promise<SignInResult
   );
 
   // Wrap in ethers Web3Provider for TinyCloudWeb compatibility
-  const web3Provider = new providers.Web3Provider(eip1193 as any);
+  const web3Provider = new providers.Web3Provider(eip1193);
 
   return {
     address: authResult.address,

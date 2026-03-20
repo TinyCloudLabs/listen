@@ -1,0 +1,620 @@
+openapi: 3.1.0
+info:
+  title: TinyBoilerplate API
+  version: 1.0.0
+  description: >
+    Example API for the TinyBoilerplate React + Express starter.
+    Uses two auth layers: JWT authentication via OpenKey and TinyCloud delegation
+    for data access. Delegation routes require only a Bearer JWT. Item routes
+    additionally require an active delegation granting the backend access to the
+    user's TinyCloud space.
+
+servers:
+  - url: http://localhost:3001
+    description: Local development server
+
+# ── Security Schemes ──────────────────────────────────────────────────
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        OpenKey-issued JWT access token. Include as `Authorization: Bearer <token>`.
+        Required for all delegation and item routes.
+
+  schemas:
+    # ── Domain Models ───────────────────────────────────────────────────
+
+    Item:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        data:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required: [id, title, createdAt, updatedAt]
+
+    CreateItemInput:
+      type: object
+      properties:
+        title:
+          type: string
+        data:
+          type: string
+      required: [title]
+
+    UpdateItemInput:
+      type: object
+      properties:
+        title:
+          type: string
+        data:
+          type: string
+      minProperties: 1
+
+    # ── Response Schemas ────────────────────────────────────────────────
+
+    ServerInfoResponse:
+      type: object
+      properties:
+        did:
+          type: string
+          description: The backend's Decentralized Identifier (DID)
+          example: "did:key:z6Mk..."
+        status:
+          type: string
+          example: "ready"
+      required: [did, status]
+
+    DelegationStatusResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [active, expired, none]
+        expiresAt:
+          type: [string, "null"]
+          format: date-time
+      required: [status, expiresAt]
+
+    ItemResponse:
+      type: object
+      properties:
+        item:
+          $ref: "#/components/schemas/Item"
+      required: [item]
+
+    ItemListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Item"
+      required: [items]
+
+    ApiError:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+      required: [error, message]
+
+  # ── Reusable Parameters ─────────────────────────────────────────────
+
+  parameters:
+    StoreType:
+      name: store
+      in: query
+      description: Storage backend to use. Defaults to `kv` if omitted.
+      required: false
+      schema:
+        type: string
+        enum: [kv, sql]
+        default: kv
+
+    ItemId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+# ── Paths ─────────────────────────────────────────────────────────────
+
+paths:
+  /api/server-info:
+    get:
+      summary: Get server info
+      operationId: getServerInfo
+      description: >
+        Returns the backend's DID and readiness status. No authentication
+        required. The frontend uses this to discover the backend's DID before
+        creating a delegation.
+      tags: [Server Info]
+      responses:
+        "200":
+          description: Server info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServerInfoResponse"
+
+  /api/delegations:
+    post:
+      summary: Submit a delegation
+      operationId: createDelegation
+      description: >
+        Receive, validate, and store a serialized TinyCloud delegation.
+        The delegation's owner address must match the authenticated user's
+        address (fetched from the OpenKey userinfo endpoint).
+      tags: [Delegations]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                serialized:
+                  type: string
+                  description: Serialized PortableDelegation string
+              required: [serialized]
+      responses:
+        "200":
+          description: Delegation accepted and activated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DelegationStatusResponse"
+              example:
+                status: active
+                expiresAt: "2026-03-27T00:00:00.000Z"
+        "400":
+          description: Invalid request body or delegation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              examples:
+                invalid_body:
+                  summary: Missing or invalid serialized field
+                  value:
+                    error: invalid_body
+                    message: "Request body must include a 'serialized' string field"
+                invalid_delegation:
+                  summary: Delegation could not be deserialized or activated
+                  value:
+                    error: invalid_delegation
+                    message: "Failed to process delegation"
+        "401":
+          description: Missing or invalid Bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                error: unauthenticated
+                message: "Authentication required"
+        "403":
+          description: Delegation owner does not match authenticated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                error: ownership_mismatch
+                message: "Delegation owner does not match authenticated user"
+
+    delete:
+      summary: Revoke delegation
+      operationId: revokeDelegation
+      description: >
+        Remove the stored delegation and evict the cached DelegatedAccess
+        for the authenticated user.
+      tags: [Delegations]
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Delegation revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DelegationStatusResponse"
+              example:
+                status: none
+                expiresAt: null
+        "401":
+          description: Missing or invalid Bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "500":
+          description: Failed to revoke delegation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                error: revoke_failed
+                message: "Failed to revoke delegation"
+
+  /api/delegations/status:
+    get:
+      summary: Check delegation status
+      operationId: getDelegationStatus
+      description: >
+        Returns the current delegation status for the authenticated user.
+        If the delegation has expired, it is automatically cleaned up and
+        the status is returned as `expired`.
+      tags: [Delegations]
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Current delegation status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DelegationStatusResponse"
+              examples:
+                active:
+                  summary: Active delegation
+                  value:
+                    status: active
+                    expiresAt: "2026-03-27T00:00:00.000Z"
+                expired:
+                  summary: Expired delegation (auto-cleaned)
+                  value:
+                    status: expired
+                    expiresAt: "2026-03-13T00:00:00.000Z"
+                none:
+                  summary: No delegation on file
+                  value:
+                    status: none
+                    expiresAt: null
+        "401":
+          description: Missing or invalid Bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "500":
+          description: Failed to check delegation status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                error: status_check_failed
+                message: "Failed to check delegation status"
+
+  /api/items:
+    get:
+      summary: List items
+      operationId: listItems
+      description: >
+        List all items from the specified store. SQL store supports search,
+        sort, and direction parameters. KV store returns all items under the
+        `items/` prefix.
+      tags: [Items]
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/StoreType"
+        - name: search
+          in: query
+          description: Search term for title and data fields (SQL store only)
+          required: false
+          schema:
+            type: string
+        - name: sort
+          in: query
+          description: Column to sort by (SQL store only)
+          required: false
+          schema:
+            type: string
+            enum: [title, created_at, updated_at]
+            default: created_at
+        - name: dir
+          in: query
+          description: Sort direction (SQL store only)
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        "200":
+          description: List of items
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ItemListResponse"
+        "401":
+          description: Missing or invalid Bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: No active delegation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                error: no_delegation
+                message: "Delegation required"
+        "500":
+          description: Store operation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                error: store_error
+                message: "Failed to list items"
+        "504":
+          description: TinyCloud operation timed out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                error: gateway_timeout
+                message: "TinyCloud operation timed out"
+
+    post:
+      summary: Create an item
+      operationId: createItem
+      description: Create a new item in the specified store.
+      tags: [Items]
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/StoreType"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateItemInput"
+      responses:
+        "201":
+          description: Item created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ItemResponse"
+        "400":
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                error: invalid_body
+                message: "Request body must include a 'title' string field"
+        "401":
+          description: Missing or invalid Bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: No active delegation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                error: no_delegation
+                message: "Delegation required"
+        "500":
+          description: Store operation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "504":
+          description: TinyCloud operation timed out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/items/{id}:
+    get:
+      summary: Get an item
+      operationId: getItem
+      description: Retrieve a single item by ID from the specified store.
+      tags: [Items]
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ItemId"
+        - $ref: "#/components/parameters/StoreType"
+      responses:
+        "200":
+          description: The requested item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ItemResponse"
+        "401":
+          description: Missing or invalid Bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: No active delegation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                error: no_delegation
+                message: "Delegation required"
+        "404":
+          description: Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                error: not_found
+                message: "Item 'abc-123' not found"
+        "500":
+          description: Store operation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "504":
+          description: TinyCloud operation timed out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+    put:
+      summary: Update an item
+      operationId: updateItem
+      description: >
+        Update an existing item by ID. At least one of `title` or `data`
+        must be provided.
+      tags: [Items]
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ItemId"
+        - $ref: "#/components/parameters/StoreType"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateItemInput"
+      responses:
+        "200":
+          description: The updated item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ItemResponse"
+        "400":
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                error: invalid_body
+                message: "Request body must include at least 'title' or 'data'"
+        "401":
+          description: Missing or invalid Bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: No active delegation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                error: no_delegation
+                message: "Delegation required"
+        "404":
+          description: Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                error: not_found
+                message: "Item 'abc-123' not found"
+        "500":
+          description: Store operation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "504":
+          description: TinyCloud operation timed out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+    delete:
+      summary: Delete an item
+      operationId: deleteItem
+      description: Delete an item by ID from the specified store.
+      tags: [Items]
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ItemId"
+        - $ref: "#/components/parameters/StoreType"
+      responses:
+        "204":
+          description: Item deleted (no body)
+        "401":
+          description: Missing or invalid Bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: No active delegation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                error: no_delegation
+                message: "Delegation required"
+        "404":
+          description: Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              example:
+                error: not_found
+                message: "Item 'abc-123' not found"
+        "500":
+          description: Store operation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "504":
+          description: TinyCloud operation timed out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"

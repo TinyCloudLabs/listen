@@ -42,7 +42,6 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api }) => {
     if (!api) return;
 
     const id = ++fetchIdRef.current;
-    setItems([]);
     setLoading(true);
     setError(null);
     setSqlQuery(null);
