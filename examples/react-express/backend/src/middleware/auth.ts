@@ -31,9 +31,10 @@ export function createAuthMiddleware(openKeyIssuerUrl: string) {
       req.user = { sub: claims.sub };
       next();
     } catch (err) {
+      console.error("[auth] token verification failed:", err);
       res.status(401).json({
         error: "invalid_token",
-        message: err instanceof Error ? err.message : "Token verification failed",
+        message: "Token verification failed",
       });
     }
   };

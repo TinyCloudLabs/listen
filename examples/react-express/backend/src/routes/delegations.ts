@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 import type { TinyCloudNode } from "@tinycloud/node-sdk";
 import { deserializeDelegation } from "@tinycloud/node-sdk";
 import type { DelegationStore, DelegationCache } from "@tinyboilerplate/server";
+import { fetchUserInfo } from "@tinyboilerplate/server";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -12,12 +13,13 @@ interface DelegationRoutesConfig {
   store: DelegationStore;
   cache: DelegationCache;
   authMiddleware: (req: Request, res: Response, next: () => void) => void;
+  openKeyIssuerUrl: string;
 }
 
 // ── Delegation Routes ────────────────────────────────────────────────
 
 export function createDelegationRouter(config: DelegationRoutesConfig) {
-  const { node, did, store, cache, authMiddleware } = config;
+  const { node, did, store, cache, authMiddleware, openKeyIssuerUrl } = config;
   const router = Router();
 
   // All delegation routes require authentication
@@ -39,6 +41,23 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
     try {
       // Deserialize and validate the delegation
       const delegation = deserializeDelegation(serialized);
+
+      // Verify that the delegation's owner matches the authenticated user
+      const authHeader = req.headers.authorization;
+      const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : "";
+      const userInfo = await fetchUserInfo(openKeyIssuerUrl, token);
+
+      if (
+        delegation.ownerAddress?.toLowerCase() !==
+        userInfo.address?.toLowerCase()
+      ) {
+        res.status(403).json({
+          error: "ownership_mismatch",
+          message:
+            "Delegation owner does not match authenticated user",
+        });
+        return;
+      }
 
       // Activate the delegation to verify it works
       const access = await node.useDelegation(delegation);
@@ -63,11 +82,10 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
         expiresAt,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-
+      console.error("[delegations] failed to process delegation:", err);
       res.status(400).json({
         error: "invalid_delegation",
-        message: `Failed to process delegation: ${message}`,
+        message: "Failed to process delegation",
       });
     }
   });
@@ -85,11 +103,10 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
         expiresAt: null,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-
+      console.error("[delegations] failed to revoke delegation:", err);
       res.status(500).json({
         error: "revoke_failed",
-        message: `Failed to revoke delegation: ${message}`,
+        message: "Failed to revoke delegation",
       });
     }
   });
@@ -128,11 +145,10 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
         expiresAt: stored.expiresAt,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-
+      console.error("[delegations] failed to check delegation status:", err);
       res.status(500).json({
         error: "status_check_failed",
-        message: `Failed to check delegation status: ${message}`,
+        message: "Failed to check delegation status",
       });
     }
   });

@@ -366,6 +366,5 @@ describe("Items CRUD (SQL store)", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.items).toHaveLength(2);
-    expect(body.rowCount).toBe(2);
   });
 });

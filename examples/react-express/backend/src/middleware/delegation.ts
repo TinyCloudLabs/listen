@@ -102,11 +102,10 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
           req.delegatedAccess = access;
           next();
         } catch (retryErr) {
-          const retryMessage = retryErr instanceof Error ? retryErr.message : String(retryErr);
           console.error(`[delegation] activation failed after retry for ${sub}:`, retryErr);
           res.status(500).json({
             error: "delegation_activation_failed",
-            message: `Failed to activate delegation after retry: ${retryMessage}`,
+            message: "Failed to activate delegation",
           });
         }
 
@@ -116,7 +115,7 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
       console.error(`[delegation] activation failed for ${sub}:`, err);
       res.status(500).json({
         error: "delegation_activation_failed",
-        message: `Failed to activate delegation: ${message}`,
+        message: "Failed to activate delegation",
       });
     }
   };

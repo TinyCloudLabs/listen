@@ -66,6 +66,7 @@ async function main() {
       store: delegationStore,
       cache: delegationCache,
       authMiddleware,
+      openKeyIssuerUrl: OPENKEY_ISSUER_URL,
     }),
   );
 

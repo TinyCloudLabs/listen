@@ -19,6 +19,15 @@ mock.module("@tinycloud/node-sdk", () => ({
   deserializeDelegation: mockDeserializeDelegation,
 }));
 
+const mockFetchUserInfo = mock(async (_issuerUrl: string, _token: string) => ({
+  sub: "test-sub",
+  address: "0xTEST",
+}));
+
+mock.module("@tinyboilerplate/server", () => ({
+  fetchUserInfo: mockFetchUserInfo,
+}));
+
 import express from "express";
 import type { Server } from "http";
 import type { Request, Response, NextFunction } from "express";
@@ -85,6 +94,7 @@ const TEST_DID = "did:pkh:eip155:1:0xTEST";
 
 function mockAuthMiddleware(req: Request, _res: Response, next: NextFunction) {
   req.user = { sub: TEST_SUB };
+  req.headers.authorization = "Bearer test-token";
   next();
 }
 
@@ -106,6 +116,7 @@ function createApp(
       store: store as any,
       cache: cache as any,
       authMiddleware: mockAuthMiddleware,
+      openKeyIssuerUrl: "https://openkey.test",
     }),
   );
   return app;
@@ -141,6 +152,7 @@ describe("Delegation Routes", () => {
     cache = createMockDelegationCache();
     mockDeserializeDelegation.mockClear();
     mockUseDelegation.mockClear();
+    mockFetchUserInfo.mockClear();
 
     const app = createApp(store, cache);
     const result = await startServer(app);
@@ -332,7 +344,7 @@ describe("Delegation Routes", () => {
       expect(res.status).toBe(400);
       const body = await res.json();
       expect(body.error).toBe("invalid_delegation");
-      expect(body.message).toContain("Invalid delegation format");
+      expect(body.message).toBe("Failed to process delegation");
     });
 
     it("returns 400 when node.useDelegation rejects", async () => {
@@ -349,7 +361,32 @@ describe("Delegation Routes", () => {
       expect(res.status).toBe(400);
       const body = await res.json();
       expect(body.error).toBe("invalid_delegation");
-      expect(body.message).toContain("Delegation verification failed");
+      expect(body.message).toBe("Failed to process delegation");
+    });
+
+    it("returns 403 when delegation owner doesn't match authenticated user", async () => {
+      // Mock fetchUserInfo to return a different address than the delegation owner
+      mockFetchUserInfo.mockImplementationOnce(async () => ({
+        sub: "test-sub",
+        address: "0xDIFFERENT",
+      }));
+
+      const res = await fetch(`${baseUrl}/api/delegations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serialized: "stolen-delegation" }),
+      });
+
+      expect(res.status).toBe(403);
+      const body = await res.json();
+      expect(body.error).toBe("ownership_mismatch");
+      expect(body.message).toBe(
+        "Delegation owner does not match authenticated user",
+      );
+
+      // Verify the delegation was NOT stored or cached
+      expect(await store.load(TEST_SUB)).toBeNull();
+      expect(cache.has(TEST_SUB)).toBe(false);
     });
   });
 

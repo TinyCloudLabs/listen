@@ -36,7 +36,7 @@ export function createItemsRouter() {
         const columns: string[] = (result.data as any)?.columns ?? [];
         const rowCount = (result.data as any)?.rowCount ?? rows.length;
         const items: Item[] = rows.map((row: any[]) => rowToItem(row, columns));
-        res.json({ items, sql, rowCount });
+        res.json({ items });
       } else {
         // KV list returns { keys: string[] }, then get each value in parallel
         const listResult = await access.kv.list({ prefix: "items/" });
@@ -335,11 +335,10 @@ function rowToItem(row: any, columns?: string[]): Item {
 }
 
 function handleStoreError(res: Response, err: unknown, operation: string): void {
-  const detail = err instanceof Error ? err.message : String(err);
   console.error(`[items] ${operation} failed:`, err);
 
   res.status(500).json({
     error: "store_error",
-    message: `Failed to ${operation}: ${detail}`,
+    message: `Failed to ${operation}`,
   });
 }
