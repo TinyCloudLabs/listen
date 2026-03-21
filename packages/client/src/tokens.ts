@@ -7,6 +7,7 @@ export interface StoredTokens {
   accessToken: string;
   refreshToken: string;
   expiresAt: number; // Unix timestamp in ms
+  address?: string; // Which user these tokens belong to
 }
 
 export interface TokenRefreshConfig {
@@ -25,20 +26,28 @@ export interface TokenRefreshConfig {
 export class TokenStore {
   private tokens: StoredTokens | null = null;
   private refreshPromise: Promise<void> | null = null;
+  private storageKey: string;
 
   /** Buffer before actual expiry to trigger refresh (30 seconds). */
   private static readonly EXPIRY_BUFFER_MS = 30_000;
+
+  constructor(storageKey = "tinyboilerplate:tokens") {
+    this.storageKey = storageKey;
+    this._loadFromStorage();
+  }
 
   /**
    * Store tokens from an OAuth flow or refresh response.
    * `expiresIn` is in seconds (as returned by OAuth token endpoints).
    */
-  setTokens(accessToken: string, refreshToken: string | undefined, expiresIn: number): void {
+  setTokens(accessToken: string, refreshToken: string | undefined, expiresIn: number, address?: string): void {
     this.tokens = {
       accessToken,
       refreshToken: refreshToken ?? "",
       expiresAt: Date.now() + expiresIn * 1000,
+      address,
     };
+    this._saveToStorage();
   }
 
   /** Get the current access token, or null if not set. */
@@ -65,9 +74,15 @@ export class TokenStore {
     return Date.now() >= this.tokens.expiresAt - TokenStore.EXPIRY_BUFFER_MS;
   }
 
+  /** Get the address associated with the stored tokens. */
+  getAddress(): string | null {
+    return this.tokens?.address ?? null;
+  }
+
   /** Clear all stored tokens (e.g., on sign-out). */
   clear(): void {
     this.tokens = null;
+    this._removeFromStorage();
   }
 
   /**
@@ -115,6 +130,45 @@ export class TokenStore {
       data.access_token,
       data.refresh_token ?? refreshToken, // Some providers don't rotate refresh tokens
       data.expires_in,
+      this.tokens?.address,
     );
+  }
+
+  /** Persist tokens to localStorage. */
+  private _saveToStorage(): void {
+    try {
+      if (this.tokens) {
+        localStorage.setItem(this.storageKey, JSON.stringify(this.tokens));
+      }
+    } catch {
+      // localStorage unavailable (SSR, private browsing, etc.)
+    }
+  }
+
+  /** Load tokens from localStorage on construction. */
+  private _loadFromStorage(): void {
+    try {
+      const raw = localStorage.getItem(this.storageKey);
+      if (raw) {
+        const parsed: StoredTokens = JSON.parse(raw);
+        // Only restore if not already expired
+        if (parsed.expiresAt > Date.now()) {
+          this.tokens = parsed;
+        } else {
+          localStorage.removeItem(this.storageKey);
+        }
+      }
+    } catch {
+      // localStorage unavailable or corrupt data
+    }
+  }
+
+  /** Remove tokens from localStorage. */
+  private _removeFromStorage(): void {
+    try {
+      localStorage.removeItem(this.storageKey);
+    } catch {
+      // localStorage unavailable
+    }
   }
 }

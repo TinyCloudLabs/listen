@@ -7,8 +7,8 @@
     "examples/react-express/backend"
   ],
   "overrides": {
-    "@tinycloud/sdk-core": "2.0.0",
-    "@tinycloud/sdk-services": "1.7.0",
+    "@tinycloud/sdk-core": "2.0.1",
+    "@tinycloud/sdk-services": "2.0.1",
     "@tinycloud/web-core": "1.7.0"
   },
   "scripts": {
@@ -28,7 +28,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@tinycloud/node-sdk": "2.0.0",
+    "@tinycloud/node-sdk": "~2.0.0",
     "eslint": "^10.1.0",
     "prettier": "^3.8.1",
     "typescript-eslint": "^8.57.1"

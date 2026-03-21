@@ -73,8 +73,8 @@ export const DEFAULT_DELEGATION_ACTIONS = [
   "tinycloud.sql/write",
 ] as const;
 
-/** Default delegation path scope — scoped to items/ for the boilerplate's CRUD routes */
-export const DEFAULT_DELEGATION_PATH = "items/";
+/** Default delegation path scope — empty string means full access (same as default TinyCloud session) */
+export const DEFAULT_DELEGATION_PATH = "";
 
 /** Default delegation expiry: 7 days */
 export const DEFAULT_DELEGATION_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;

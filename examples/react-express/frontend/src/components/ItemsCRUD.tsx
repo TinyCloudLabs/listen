@@ -202,6 +202,7 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api }) => {
               onClick={() => {
                 setStoreType("kv");
                 localStorage.setItem("tinyboilerplate:storeType", "kv");
+                setItems([]);
                 setSqlQuery(null);
                 setRowCount(null);
                 setLastResponse(null);
@@ -217,6 +218,7 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api }) => {
               onClick={() => {
                 setStoreType("sql");
                 localStorage.setItem("tinyboilerplate:storeType", "sql");
+                setItems([]);
                 setLastResponse(null);
               }}
               style={{
@@ -305,7 +307,7 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api }) => {
           </form>
 
           {/* Items list */}
-          {loading && <p style={styles.loadingText}>Loading items...</p>}
+          {loading && items.length === 0 && <p style={styles.loadingText}>Loading items...</p>}
 
           {!loading && items.length === 0 && (
             <p style={styles.emptyText}>No items yet. Create one above.</p>

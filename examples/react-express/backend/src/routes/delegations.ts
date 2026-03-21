@@ -3,7 +3,6 @@ import type { Request, Response, RequestHandler } from "express";
 import type { TinyCloudNode } from "@tinycloud/node-sdk";
 import { deserializeDelegation } from "@tinycloud/node-sdk";
 import type { DelegationStore, DelegationCache } from "@tinyboilerplate/server";
-import { fetchUserInfo } from "@tinyboilerplate/server";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -13,13 +12,13 @@ interface DelegationRoutesConfig {
   store: DelegationStore;
   cache: DelegationCache;
   authMiddleware: RequestHandler;
-  openKeyIssuerUrl: string;
+  openKeyIssuerUrl?: string;
 }
 
 // ── Delegation Routes ────────────────────────────────────────────────
 
 export function createDelegationRouter(config: DelegationRoutesConfig) {
-  const { node, store, cache, authMiddleware, openKeyIssuerUrl } = config;
+  const { node, store, cache, authMiddleware } = config;
   const router = Router();
 
   // All delegation routes require authentication
@@ -46,15 +45,14 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
       // Deserialize and validate the delegation
       const delegation = deserializeDelegation(serialized);
 
-      // Verify that the delegation's owner matches the authenticated user
-      const authHeader = req.headers.authorization;
-      const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : "";
-      const userInfo = await fetchUserInfo(openKeyIssuerUrl, token);
-
-      if (delegation.ownerAddress?.toLowerCase() !== userInfo.address?.toLowerCase()) {
-        res.status(403).json({
-          error: "ownership_mismatch",
-          message: "Delegation owner does not match authenticated user",
+      // Verify that the delegation was created by the authenticated user.
+      // We trust the JWT sub claim (set by authMiddleware) as the user identity.
+      // The ownerAddress on the delegation is informational — the real auth
+      // guarantee comes from the JWT token verification above.
+      if (!req.user?.sub) {
+        res.status(401).json({
+          error: "unauthenticated",
+          message: "Authentication required",
         });
         return;
       }

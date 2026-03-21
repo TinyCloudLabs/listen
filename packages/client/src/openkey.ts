@@ -92,7 +92,9 @@ export async function openKeySignIn(config: OpenKeyConfig): Promise<SignInResult
   });
 
   // 1. Passkey authentication via iframe — user authenticates, we get signing capability
+  console.log("[openkey] 1a. Calling openkey.connect()...");
   const authResult = await openkey.connect();
+  console.log("[openkey] 1a. connect() done. Address:", authResult.address);
 
   // 2. OAuth PKCE — exchange session for verifiable tokens
   //    Passkey session persists, so the OAuth popup auto-approves instantly
@@ -100,8 +102,12 @@ export async function openKeySignIn(config: OpenKeyConfig): Promise<SignInResult
     clientId: config.clientId,
     redirectUri: config.redirectUri,
   };
+  console.log("[openkey] 1b. Calling oauth.connect()...");
   const oauthResult = await openkey.oauth.connect(oauthConfig);
+  console.log("[openkey] 1b. oauth.connect() done. Got code:", !!oauthResult.code);
+  console.log("[openkey] 1c. Calling oauth.exchangeCode()...");
   const tokenResponse = await openkey.oauth.exchangeCode(oauthResult.code, oauthConfig);
+  console.log("[openkey] 1c. exchangeCode() done. Got access_token:", !!tokenResponse.access_token);
 
   // 3. Create EIP-1193 provider for TinyCloud SIWE signing
   const eip1193 = new OpenKeyEIP1193Provider(

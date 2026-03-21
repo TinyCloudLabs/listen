@@ -7,7 +7,13 @@ export {
   type OAuthTokens,
 } from "./openkey.js";
 
-export { createAndSignIn, type TinyCloudWebConfig } from "./tinycloud.js";
+export { createTinyCloudWeb, createAndSignIn, type TinyCloudWebConfig } from "./tinycloud.js";
+
+export {
+  loadPersistedSession,
+  clearPersistedSession,
+  type PersistedTinyCloudSession,
+} from "./session-persistence.js";
 
 export {
   createDelegation,

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
 import type { ServerInfo } from "@tinyboilerplate/core";
 import {
@@ -7,6 +7,7 @@ import {
   createApiClient,
   createDelegation,
   sendDelegation,
+  checkDelegationStatus,
   revokeDelegation,
   TokenStore,
   type ApiClient,
@@ -33,8 +34,62 @@ export function App() {
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  // Token store (persists across re-renders)
+  // Token store (persists across re-renders, auto-loads from localStorage)
   const tokenStoreRef = useRef(new TokenStore());
+  const restoreAttemptedRef = useRef(false);
+
+  // ── Session Restore ─────────────────────────────────────────────
+
+  useEffect(() => {
+    if (restoreAttemptedRef.current) return;
+    restoreAttemptedRef.current = true;
+
+    const tokenStore = tokenStoreRef.current;
+    if (!tokenStore.hasTokens() || tokenStore.isExpired()) return;
+
+    const storedAddress = tokenStore.getAddress();
+    if (!storedAddress) return;
+
+    (async () => {
+      setAuthLoading(true);
+      try {
+        console.log("[restore] Attempting session restore for", storedAddress);
+
+        // 1. Create API client with persisted tokens
+        const apiClient = createApiClient(BACKEND_URL, {
+          tokenStore,
+          refreshConfig: {
+            openKeyHost: OPENKEY_HOST,
+            clientId: OPENKEY_CLIENT_ID,
+          },
+        });
+
+        // 2. Check if backend still has an active delegation
+        const token = tokenStore.getAccessToken();
+        if (!token) throw new Error("No access token after restore");
+
+        const status = await checkDelegationStatus(BACKEND_URL, token);
+        if (status.status !== "active") {
+          throw new Error("Delegation expired or missing — re-auth required");
+        }
+        console.log("[restore] Delegation active. Session fully restored!");
+
+        // DID is deterministic from address (mainnet)
+        const did = `did:pkh:eip155:1:${storedAddress}`;
+
+        // No TinyCloudWeb instance — not needed for API operations.
+        // User must re-authenticate to create new delegations.
+        setAddress(storedAddress);
+        setDid(did);
+        setApi(apiClient);
+      } catch (err) {
+        console.warn("[restore] Session restore failed, clearing state:", err);
+        tokenStore.clear();
+      } finally {
+        setAuthLoading(false);
+      }
+    })();
+  }, []);
 
   // ── Sign In ───────────────────────────────────────────────────────
 
@@ -44,6 +99,7 @@ export function App() {
 
     try {
       // 1. OpenKey sign-in — passkey auth + OAuth PKCE token exchange
+      console.log("[sign-in] Step 1: OpenKey sign-in...");
       const {
         address: addr,
         web3Provider,
@@ -53,19 +109,24 @@ export function App() {
         clientId: OPENKEY_CLIENT_ID,
         redirectUri: window.location.origin,
       });
+      console.log("[sign-in] Step 1 complete. Address:", addr);
 
-      // 2. Store tokens for backend auth
+      // 2. Store tokens for backend auth (with address for session restore)
       tokenStoreRef.current.setTokens(
         tokens.accessToken,
         tokens.refreshToken ?? "",
         tokens.expiresIn,
+        addr,
       );
+      console.log("[sign-in] Step 2: Tokens stored.");
 
       // 3. TinyCloud sign-in — SIWE signed via OpenKey
+      console.log("[sign-in] Step 3: TinyCloud sign-in...");
       const tcwInstance = await createAndSignIn(web3Provider, {
         tinycloudHosts: [TINYCLOUD_HOST],
         autoCreateSpace: true,
       });
+      console.log("[sign-in] Step 3 complete. DID:", tcwInstance.did);
 
       // 4. Create API client with token-based auth
       const apiClient = createApiClient(BACKEND_URL, {
@@ -75,12 +136,15 @@ export function App() {
           clientId: OPENKEY_CLIENT_ID,
         },
       });
+      console.log("[sign-in] Step 4: API client created.");
 
       // 5. Auto-delegate to backend
+      console.log("[sign-in] Step 5: Fetching server-info...");
       const infoRes = await fetch(`${BACKEND_URL}/api/server-info`);
       if (!infoRes.ok) throw new Error(`Server info: ${infoRes.statusText}`);
       const info: ServerInfo = await infoRes.json();
       const backendDID = info.did;
+      console.log("[sign-in] Step 5 complete. Backend DID:", backendDID);
 
       const token = tokenStoreRef.current.getAccessToken();
       if (!token) throw new Error("No access token after sign-in");
@@ -88,8 +152,11 @@ export function App() {
       // Always create a fresh delegation on sign-in to pick up any
       // config changes (path, actions, expiry). Sending a new delegation
       // overwrites the previous one on the backend.
+      console.log("[sign-in] Step 6: Creating delegation...");
       const serialized = await createDelegation(tcwInstance, backendDID);
+      console.log("[sign-in] Step 6 complete. Sending delegation...");
       await sendDelegation(BACKEND_URL, serialized, token);
+      console.log("[sign-in] Step 7: Delegation sent. Sign-in complete!");
 
       // Update state — api being non-null signals delegation is ready
       setAddress(addr);
@@ -123,7 +190,7 @@ export function App() {
 
   // ── Render ────────────────────────────────────────────────────────
 
-  const isSignedIn = address !== null && tcw !== null;
+  const isSignedIn = address !== null && api !== null;
 
   return (
     <div style={styles.container}>
