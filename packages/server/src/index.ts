@@ -21,3 +21,5 @@ export {
   type UserInfo,
   type JWTVerifierConfig,
 } from "./auth.js";
+
+export { createCsrfMiddleware, type CsrfConfig } from "./csrf.js";

@@ -1,9 +1,19 @@
 import "./types/index.js";
 
+import { readFileSync } from "fs";
+import { resolve, dirname } from "path";
+import { fileURLToPath } from "url";
 import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
-import { createBackendIdentity, DelegationStore, DelegationCache } from "@tinyboilerplate/server";
+import { apiReference } from "@scalar/express-api-reference";
+import { load as loadYaml } from "js-yaml";
+import {
+  createBackendIdentity,
+  DelegationStore,
+  DelegationCache,
+  createCsrfMiddleware,
+} from "@tinyboilerplate/server";
 
 import { createAuthMiddleware } from "./middleware/auth.js";
 import { createDelegationMiddleware } from "./middleware/delegation.js";
@@ -51,6 +61,7 @@ async function main() {
   const app = express();
   app.use(cors({ origin: FRONTEND_URL }));
   app.use(express.json());
+  app.use(createCsrfMiddleware());
 
   // 5. Rate limiting
   const generalLimiter = rateLimit({
@@ -88,7 +99,13 @@ async function main() {
 
   app.use("/api/items", authMiddleware, delegationMiddleware, createItemsRouter());
 
-  // 7. Start server
+  // 7. OpenAPI docs
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const spec = loadYaml(readFileSync(resolve(__dirname, "../openapi.yaml"), "utf-8")) as object;
+  app.get("/api/openapi.json", (_req, res) => res.json(spec));
+  app.use("/api/docs", apiReference({ spec: { content: spec } }));
+
+  // 8. Start server
   const server = app.listen(PORT, () => {
     console.log(`Backend ready. DID: ${did}`);
     console.log(`Listening on http://localhost:${PORT}`);

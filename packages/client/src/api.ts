@@ -42,6 +42,7 @@ export function createApiClient(backendUrl: string, config: ApiClientConfig): Ap
       headers: {
         ...init.headers,
         Authorization: `Bearer ${accessToken}`,
+        "X-Requested-With": "TinyBoilerplate",
       },
     });
 

@@ -47,6 +47,7 @@ export async function sendDelegation(
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${accessToken}`,
+      "X-Requested-With": "TinyBoilerplate",
     },
     body: JSON.stringify({ serialized }),
   });
@@ -68,6 +69,7 @@ export async function checkDelegationStatus(
   const res = await fetch(`${backendUrl}/api/delegations/status`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
+      "X-Requested-With": "TinyBoilerplate",
     },
   });
 
@@ -86,6 +88,7 @@ export async function revokeDelegation(backendUrl: string, accessToken: string):
     method: "DELETE",
     headers: {
       Authorization: `Bearer ${accessToken}`,
+      "X-Requested-With": "TinyBoilerplate",
     },
   });
 
