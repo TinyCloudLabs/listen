@@ -5,7 +5,7 @@ Full-stack boilerplate for [TinyCloud](https://tinycloud.xyz) + [OpenKey](https:
 ## Architecture
 
 ```
-┌─────────────┐       ┌─────────────┐       ┌─────────────┐
+┌──────────────┐       ┌──────────────┐       ┌──────────────┐
 │   Frontend   │       │   Backend    │       │  TinyCloud   │
 │   (browser)  │       │   (server)   │       │   (storage)  │
 │              │       │              │       │              │
@@ -14,7 +14,7 @@ Full-stack boilerplate for [TinyCloud](https://tinycloud.xyz) + [OpenKey](https:
 │ Create deleg ├──────►│ Store deleg  ├──────►│ BE's KV      │
 │              │       │ Cache access │       │              │
 │ CRUD via API ├──────►│ Use deleg    ├──────►│ User's KV/SQL│
-└─────────────┘       └─────────────┘       └──────────────┘
+└──────────────┘       └──────────────┘       └──────────────┘
 ```
 
 **Two auth layers:**
