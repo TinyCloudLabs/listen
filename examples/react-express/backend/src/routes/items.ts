@@ -8,7 +8,7 @@ import type { DelegatedAccess } from "@tinyboilerplate/server";
 export function createItemsRouter() {
   const router = Router();
 
-  // GET /api/items?store=kv|sql
+  // GET /api/items?store=kv|sql|duckdb
   router.get("/", async (req: Request, res: Response) => {
     const storeType = getStoreType(req);
     if (!req.delegatedAccess) {
@@ -18,10 +18,11 @@ export function createItemsRouter() {
     const access = req.delegatedAccess;
 
     try {
-      if (storeType === "sql") {
-        await ensureTable(access);
+      if (storeType === "sql" || storeType === "duckdb") {
+        const svc = storeType === "duckdb" ? access.duckdb : access.sql;
+        await ensureTable(access, storeType);
 
-        // SQL supports search + sort via query params
+        // SQL/DuckDB supports search + sort via query params
         const search = (req.query.search as string) ?? "";
         const sortBy = (req.query.sort as string) ?? "created_at";
         const sortDir = (req.query.dir as string) === "asc" ? "ASC" : "DESC";
@@ -37,8 +38,8 @@ export function createItemsRouter() {
         }
         sql += ` ORDER BY ${validSort} ${sortDir}`;
 
-        const result = await access.sql.query(sql, params);
-        if (!result.ok) throw new Error(`SQL query failed: ${result.error.message}`);
+        const result = await svc.query(sql, params);
+        if (!result.ok) throw new Error(`${storeType} query failed: ${result.error.message}`);
         const { rows, columns } = result.data;
         const items: Item[] = rows.map((row) => rowToItem(row, columns));
         res.json({ items });
@@ -67,7 +68,7 @@ export function createItemsRouter() {
     }
   });
 
-  // POST /api/items?store=kv|sql
+  // POST /api/items?store=kv|sql|duckdb
   router.post("/", async (req: Request, res: Response) => {
     const storeType = getStoreType(req);
     if (!req.delegatedAccess) {
@@ -95,13 +96,15 @@ export function createItemsRouter() {
     };
 
     try {
-      if (storeType === "sql") {
-        await ensureTable(access);
-        const insertResult = await access.sql.execute(
+      if (storeType === "sql" || storeType === "duckdb") {
+        const svc = storeType === "duckdb" ? access.duckdb : access.sql;
+        await ensureTable(access, storeType);
+        const insertResult = await svc.execute(
           `INSERT INTO items (id, title, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
           [item.id, item.title, item.data ?? "", item.createdAt, item.updatedAt],
         );
-        if (!insertResult.ok) throw new Error(`SQL insert failed: ${insertResult.error.message}`);
+        if (!insertResult.ok)
+          throw new Error(`${storeType} insert failed: ${insertResult.error.message}`);
       } else {
         const putResult = await access.kv.put(`items/${item.id}`, item);
         if (!putResult.ok) throw new Error(`KV put failed: ${putResult.error.message}`);
@@ -113,7 +116,7 @@ export function createItemsRouter() {
     }
   });
 
-  // GET /api/items/:id?store=kv|sql
+  // GET /api/items/:id?store=kv|sql|duckdb
   router.get("/:id", async (req: Request, res: Response) => {
     const storeType = getStoreType(req);
     if (!req.delegatedAccess) {
@@ -124,13 +127,14 @@ export function createItemsRouter() {
     const { id } = req.params;
 
     try {
-      if (storeType === "sql") {
-        await ensureTable(access);
-        const result = await access.sql.query(
+      if (storeType === "sql" || storeType === "duckdb") {
+        const svc = storeType === "duckdb" ? access.duckdb : access.sql;
+        await ensureTable(access, storeType);
+        const result = await svc.query(
           `SELECT id, title, data, created_at, updated_at FROM items WHERE id = ?`,
           [id],
         );
-        if (!result.ok) throw new Error(`SQL query failed: ${result.error.message}`);
+        if (!result.ok) throw new Error(`${storeType} query failed: ${result.error.message}`);
         const { rows, columns } = result.data;
         if (rows.length === 0) {
           res.status(404).json({
@@ -158,7 +162,7 @@ export function createItemsRouter() {
     }
   });
 
-  // PUT /api/items/:id?store=kv|sql
+  // PUT /api/items/:id?store=kv|sql|duckdb
   router.put("/:id", async (req: Request, res: Response) => {
     const storeType = getStoreType(req);
     if (!req.delegatedAccess) {
@@ -180,11 +184,12 @@ export function createItemsRouter() {
     try {
       const now = new Date().toISOString();
 
-      if (storeType === "sql") {
-        await ensureTable(access);
+      if (storeType === "sql" || storeType === "duckdb") {
+        const svc = storeType === "duckdb" ? access.duckdb : access.sql;
+        await ensureTable(access, storeType);
 
         // Check if exists
-        const existing = await access.sql.query(`SELECT id FROM items WHERE id = ?`, [id]);
+        const existing = await svc.query(`SELECT id FROM items WHERE id = ?`, [id]);
         if (!existing.ok || existing.data.rows.length === 0) {
           res.status(404).json({
             error: "not_found",
@@ -207,18 +212,19 @@ export function createItemsRouter() {
         updateParams.push(now);
         updateParams.push(id);
 
-        const updateResult = await access.sql.execute(
+        const updateResult = await svc.execute(
           `UPDATE items SET ${setClauses.join(", ")} WHERE id = ?`,
           updateParams,
         );
-        if (!updateResult.ok) throw new Error(`SQL update failed: ${updateResult.error.message}`);
+        if (!updateResult.ok)
+          throw new Error(`${storeType} update failed: ${updateResult.error.message}`);
 
         // Fetch the updated item
-        const result = await access.sql.query(
+        const result = await svc.query(
           `SELECT id, title, data, created_at, updated_at FROM items WHERE id = ?`,
           [id],
         );
-        if (!result.ok) throw new Error(`SQL query failed: ${result.error.message}`);
+        if (!result.ok) throw new Error(`${storeType} query failed: ${result.error.message}`);
         const { rows, columns } = result.data;
         if (rows.length === 0) throw new Error("Item disappeared after update");
         res.json({ item: rowToItem(rows[0], columns) });
@@ -251,7 +257,7 @@ export function createItemsRouter() {
     }
   });
 
-  // DELETE /api/items/:id?store=kv|sql
+  // DELETE /api/items/:id?store=kv|sql|duckdb
   router.delete("/:id", async (req: Request, res: Response) => {
     const storeType = getStoreType(req);
     if (!req.delegatedAccess) {
@@ -262,11 +268,12 @@ export function createItemsRouter() {
     const { id } = req.params;
 
     try {
-      if (storeType === "sql") {
-        await ensureTable(access);
+      if (storeType === "sql" || storeType === "duckdb") {
+        const svc = storeType === "duckdb" ? access.duckdb : access.sql;
+        await ensureTable(access, storeType);
 
         // Check if exists
-        const existing = await access.sql.query(`SELECT id FROM items WHERE id = ?`, [id]);
+        const existing = await svc.query(`SELECT id FROM items WHERE id = ?`, [id]);
         if (!existing.ok || existing.data.rows.length === 0) {
           res.status(404).json({
             error: "not_found",
@@ -275,8 +282,9 @@ export function createItemsRouter() {
           return;
         }
 
-        const deleteResult = await access.sql.execute(`DELETE FROM items WHERE id = ?`, [id]);
-        if (!deleteResult.ok) throw new Error(`SQL delete failed: ${deleteResult.error.message}`);
+        const deleteResult = await svc.execute(`DELETE FROM items WHERE id = ?`, [id]);
+        if (!deleteResult.ok)
+          throw new Error(`${storeType} delete failed: ${deleteResult.error.message}`);
       } else {
         // KV: check existence, then delete
         const result = await access.kv.get(`items/${id}`);
@@ -304,19 +312,27 @@ export function createItemsRouter() {
 
 function getStoreType(req: Request): StoreType {
   const store = req.query.store as string | undefined;
-  return store === "sql" ? "sql" : "kv";
+  if (store === "sql") return "sql";
+  if (store === "duckdb") return "duckdb";
+  return "kv";
 }
 
 /**
  * Ensure the items table exists. Runs CREATE TABLE IF NOT EXISTS
- * at most once per DelegatedAccess instance (keyed by object identity).
+ * at most once per DelegatedAccess + store type combination.
  */
-const tableCreated = new WeakSet<object>();
+const tableCreated = new WeakMap<object, Set<string>>();
 
-async function ensureTable(access: DelegatedAccess): Promise<void> {
-  if (tableCreated.has(access)) return;
+async function ensureTable(access: DelegatedAccess, storeType: "sql" | "duckdb"): Promise<void> {
+  let created = tableCreated.get(access);
+  if (!created) {
+    created = new Set();
+    tableCreated.set(access, created);
+  }
+  if (created.has(storeType)) return;
 
-  const result = await access.sql.execute(`
+  const svc = storeType === "duckdb" ? access.duckdb : access.sql;
+  const result = await svc.execute(`
     CREATE TABLE IF NOT EXISTS items (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -326,10 +342,10 @@ async function ensureTable(access: DelegatedAccess): Promise<void> {
     )
   `);
   if (!result.ok) {
-    throw new Error(`Failed to create items table: ${result.error.message}`);
+    throw new Error(`Failed to create items table (${storeType}): ${result.error.message}`);
   }
 
-  tableCreated.add(access);
+  created.add(storeType);
 }
 
 /**

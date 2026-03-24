@@ -5,9 +5,10 @@ import { fileURLToPath } from "url";
 import { load as loadYaml } from "js-yaml";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const spec = loadYaml(
-  readFileSync(resolve(__dirname, "../../openapi.yaml"), "utf-8"),
-) as Record<string, unknown>;
+const spec = loadYaml(readFileSync(resolve(__dirname, "../../openapi.yaml"), "utf-8")) as Record<
+  string,
+  unknown
+>;
 
 describe("OpenAPI spec", () => {
   test("is valid OpenAPI 3.1.0", () => {

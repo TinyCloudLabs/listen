@@ -10,7 +10,9 @@ function createLocalStorageMock() {
     setItem: (key: string, value: string) => store.set(key, value),
     removeItem: (key: string) => store.delete(key),
     clear: () => store.clear(),
-    get length() { return store.size; },
+    get length() {
+      return store.size;
+    },
     key: (index: number) => [...store.keys()][index] ?? null,
     _store: store, // for test inspection
   };
@@ -189,10 +191,10 @@ describe("TokenStore — localStorage persistence", () => {
     const reloadStore = new TokenStore();
 
     // Verify the restore preconditions the App.tsx useEffect checks:
-    expect(reloadStore.hasTokens()).toBe(true);        // ✅ tokens exist
-    expect(reloadStore.isExpired()).toBe(false);         // ✅ not expired
-    expect(reloadStore.getAddress()).not.toBeNull();     // ✅ address available
-    expect(reloadStore.getAddress()).toBe("0xUser123");  // ✅ correct address
+    expect(reloadStore.hasTokens()).toBe(true); // ✅ tokens exist
+    expect(reloadStore.isExpired()).toBe(false); // ✅ not expired
+    expect(reloadStore.getAddress()).not.toBeNull(); // ✅ address available
+    expect(reloadStore.getAddress()).toBe("0xUser123"); // ✅ correct address
     expect(reloadStore.getAccessToken()).toBe("access-xyz");
   });
 });

@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    allowedHosts: true,
     ...(fs.existsSync("./localhost.pem") && {
       https: {
         key: fs.readFileSync("./localhost-key.pem"),

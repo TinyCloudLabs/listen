@@ -59,11 +59,11 @@ export interface ApiError {
 
 // ── Store Selection ──────────────────────────────────────────────────
 
-export type StoreType = "kv" | "sql";
+export type StoreType = "kv" | "sql" | "duckdb";
 
 // ── Constants ────────────────────────────────────────────────────────
 
-/** Default TinyCloud actions for item CRUD (KV + SQL) */
+/** Default TinyCloud actions for item CRUD (KV + SQL + DuckDB) */
 export const DEFAULT_DELEGATION_ACTIONS = [
   "tinycloud.kv/get",
   "tinycloud.kv/put",
@@ -71,6 +71,8 @@ export const DEFAULT_DELEGATION_ACTIONS = [
   "tinycloud.kv/list",
   "tinycloud.sql/read",
   "tinycloud.sql/write",
+  "tinycloud.duckdb/read",
+  "tinycloud.duckdb/write",
 ] as const;
 
 /** Default delegation path scope — empty string means full access (same as default TinyCloud session) */

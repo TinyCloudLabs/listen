@@ -40,7 +40,12 @@ export class TokenStore {
    * Store tokens from an OAuth flow or refresh response.
    * `expiresIn` is in seconds (as returned by OAuth token endpoints).
    */
-  setTokens(accessToken: string, refreshToken: string | undefined, expiresIn: number, address?: string): void {
+  setTokens(
+    accessToken: string,
+    refreshToken: string | undefined,
+    expiresIn: number,
+    address?: string,
+  ): void {
     this.tokens = {
       accessToken,
       refreshToken: refreshToken ?? "",

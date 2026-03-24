@@ -146,7 +146,24 @@ DELEGATION_CACHE_TTL_MS = 50 * 60 * 1000  // 50 minutes
 
 - `AuthPanel` — Sign in/out with OpenKey. Shows address and DID.
 - `DelegationPanel` — Fetch backend DID, grant/revoke delegation. Polls status every 30s.
-- `ItemsCRUD` — Create/read/update/delete items. Toggle between KV and SQL storage. Shows raw API responses.
+- `ItemsCRUD` — Create/read/update/delete items via backend API. Toggle between KV and SQL storage. Shows raw API responses.
+- `DirectStorage` — Direct browser-to-TinyCloud KV and SQL operations using `tcw.kv.*` and `tcw.sql.*`, bypassing the backend. Toggle between KV and SQL. Only available with a fresh TinyCloudWeb session (not session restore).
+
+### Direct Storage (No Backend)
+
+The `DirectStorage` panel uses `tcw.kv` and `tcw.sql` directly from the browser, operating on the user's own TinyCloud space without delegation or backend involvement. All SDK methods return `Result<T>` (not exceptions). Check `result.ok` before accessing `result.data`.
+
+```typescript
+// KV
+tcw.kv.list({ prefix? })           → Result<{ keys: string[] }>
+tcw.kv.get(key)                     → Result<{ data: T, headers }>
+tcw.kv.put(key, value)              → Result<{ data: void, headers }>
+tcw.kv.delete(key)                  → Result<void>
+
+// SQL
+tcw.sql.query(sql, params?)         → Result<{ columns, rows, rowCount }>
+tcw.sql.execute(sql, params?)       → Result<{ changes, lastInsertRowId }>
+```
 
 ### Express Type Augmentation
 

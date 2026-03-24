@@ -12,11 +12,7 @@ function createTestApp(config?: Parameters<typeof createCsrfMiddleware>[0]) {
   return app;
 }
 
-async function req(
-  app: express.Express,
-  method: string,
-  headers?: Record<string, string>,
-) {
+async function req(app: express.Express, method: string, headers?: Record<string, string>) {
   const server = app.listen(0);
   const port = (server.address() as { port: number }).port;
 

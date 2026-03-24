@@ -15,6 +15,7 @@ import {
 
 import { AuthPanel } from "./components/AuthPanel";
 import { ItemsCRUD } from "./components/ItemsCRUD";
+import { DirectStorage } from "./components/DirectStorage";
 
 // ── Environment ─────────────────────────────────────────────────────
 
@@ -211,6 +212,8 @@ export function App() {
         />
 
         <ItemsCRUD api={api} />
+
+        <DirectStorage tcw={tcw} />
       </main>
 
       <footer style={styles.footer}>

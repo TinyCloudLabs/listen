@@ -49,7 +49,7 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api }) => {
 
     try {
       let path = `/api/items?store=${storeType}`;
-      if (storeType === "sql") {
+      if (storeType === "sql" || storeType === "duckdb") {
         if (search) path += `&search=${encodeURIComponent(search)}`;
         path += `&sort=${sortBy}&dir=${sortDir}`;
       }
@@ -228,13 +228,27 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api }) => {
             >
               SQL
             </button>
+            <button
+              onClick={() => {
+                setStoreType("duckdb");
+                localStorage.setItem("tinyboilerplate:storeType", "duckdb");
+                setItems([]);
+                setLastResponse(null);
+              }}
+              style={{
+                ...styles.toggleButton,
+                ...(storeType === "duckdb" ? styles.toggleActive : {}),
+              }}
+            >
+              DuckDB
+            </button>
             <button onClick={fetchItems} disabled={loading} style={styles.refreshButton}>
               Refresh
             </button>
           </div>
 
-          {/* SQL controls */}
-          {storeType === "sql" && (
+          {/* SQL/DuckDB controls */}
+          {(storeType === "sql" || storeType === "duckdb") && (
             <div style={styles.sqlControls}>
               <input
                 type="text"
@@ -270,8 +284,8 @@ export const ItemsCRUD: FC<ItemsCRUDProps> = ({ api }) => {
             </div>
           )}
 
-          {/* SQL query viewer */}
-          {storeType === "sql" && sqlQuery && (
+          {/* SQL/DuckDB query viewer */}
+          {(storeType === "sql" || storeType === "duckdb") && sqlQuery && (
             <div style={styles.sqlViewer}>
               <code style={styles.sqlCode}>{sqlQuery}</code>
             </div>

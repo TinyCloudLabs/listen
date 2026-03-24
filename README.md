@@ -14,8 +14,17 @@ Full-stack boilerplate for [TinyCloud](https://tinycloud.xyz) + [OpenKey](https:
 │ Create deleg ├──────►│ Store deleg  ├──────►│ BE's KV      │
 │              │       │ Cache access │       │              │
 │ CRUD via API ├──────►│ Use deleg    ├──────►│ User's KV/SQL│
+│              │       │              │       │              │
+│ Direct KV/SQL├──────────────────────────────►│ User's KV/SQL│
 └──────────────┘       └──────────────┘       └──────────────┘
 ```
+
+**Two data access patterns:**
+
+| Pattern | Path | Use case |
+|---------|------|----------|
+| Delegated (via backend) | Frontend → Backend → TinyCloud | Server-side logic, validation, multi-user |
+| Direct (browser-only) | Frontend → TinyCloud | Simple reads/writes, no backend needed |
 
 **Two auth layers:**
 
@@ -152,6 +161,19 @@ Frontend                    Backend                    TinyCloud
 ```
 
 The delegation middleware resolves `DelegatedAccess` from cache (or store on miss) before any data route.
+
+### 5. Frontend accesses TinyCloud directly (no backend)
+
+```
+Frontend                                       TinyCloud
+   │── tcw.kv.put("key", value) ──────────────►│ (User's space)
+   │◄── Result<KVResponse> ───────────────────│
+   │                                           │
+   │── tcw.sql.query("SELECT * FROM items") ──►│
+   │◄── Result<{ columns, rows }> ────────────│
+```
+
+The `DirectStorage` panel uses the `TinyCloudWeb` instance directly — `tcw.kv.*` for key-value and `tcw.sql.*` for SQL. No delegation or backend involved. This only works with a fresh sign-in session (not session restore).
 
 ## Building Your Own App
 
