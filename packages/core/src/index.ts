@@ -78,8 +78,8 @@ export const DEFAULT_DELEGATION_ACTIONS = [
 /** Default delegation path scope — empty string means full access (same as default TinyCloud session) */
 export const DEFAULT_DELEGATION_PATH = "";
 
-/** Default delegation expiry: 7 days */
-export const DEFAULT_DELEGATION_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
+/** Default delegation expiry: 1 year */
+export const DEFAULT_DELEGATION_EXPIRY_MS = 365 * 24 * 60 * 60 * 1000;
 
 /** DelegatedAccess cache TTL: 50 minutes (under 1-hour sub-session cap) */
 export const DELEGATION_CACHE_TTL_MS = 50 * 60 * 1000;

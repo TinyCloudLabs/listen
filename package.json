@@ -4,7 +4,9 @@
   "workspaces": [
     "packages/*",
     "examples/react-express/frontend",
-    "examples/react-express/backend"
+    "examples/react-express/backend",
+    "examples/conversation-sync/frontend",
+    "examples/conversation-sync/backend"
   ],
   "overrides": {
     "@tinycloud/sdk-core": "2.0.1",
