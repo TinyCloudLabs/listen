@@ -65,6 +65,10 @@ function validPayload(meetingId = "meeting-123") {
   });
 }
 
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 3b4de56 (chore: include remaining conversation-sync backend and shared changes)
 /** Current Fireflies payload format */
 function validPayloadV2(meetingId = "meeting-123") {
   return JSON.stringify({
@@ -74,6 +78,11 @@ function validPayloadV2(meetingId = "meeting-123") {
   });
 }
 
+<<<<<<< HEAD
+=======
+>>>>>>> 3b90c5b (TC-1313: Add POST /api/webhooks/fireflies endpoint with HMAC verification)
+=======
+>>>>>>> 3b4de56 (chore: include remaining conversation-sync backend and shared changes)
 function startServer(app: express.Express): Promise<{ server: Server; port: number }> {
   return new Promise((resolve) => {
     const server = app.listen(0, () => {
@@ -197,6 +206,10 @@ describe("POST /api/webhooks/fireflies", () => {
     expect(json.status).toBe("processed");
   });
 
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 3b4de56 (chore: include remaining conversation-sync backend and shared changes)
   it("returns 200 with status 'processed' for current Fireflies payload format", async () => {
     const body = validPayloadV2("v2-meeting");
     const res = await post(body, { "x-hub-signature": sign(body, SECRET) });
@@ -208,6 +221,11 @@ describe("POST /api/webhooks/fireflies", () => {
     expect(syncFn.mock.calls[0][0]).toBe("v2-meeting");
   });
 
+<<<<<<< HEAD
+=======
+>>>>>>> 3b90c5b (TC-1313: Add POST /api/webhooks/fireflies endpoint with HMAC verification)
+=======
+>>>>>>> 3b4de56 (chore: include remaining conversation-sync backend and shared changes)
   it("calls syncFn with correct meetingId", async () => {
     const body = validPayload("my-meeting");
     await post(body, { "x-hub-signature": sign(body, SECRET) });

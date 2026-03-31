@@ -11,11 +11,16 @@ function createMockKV() {
 
   return {
     _data: data,
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 3b4de56 (chore: include remaining conversation-sync backend and shared changes)
     get: async (key: string) => {
       const val = data.get(key);
       if (val === undefined) return { ok: true, data: { data: null } };
       return { ok: true, data: { data: val } };
     },
+<<<<<<< HEAD
     put: async (key: string, value: string) => {
       data.set(key, value);
       return { ok: true };
@@ -23,6 +28,21 @@ function createMockKV() {
     delete: async (key: string) => {
       data.delete(key);
       return { ok: true };
+=======
+    get: async (key: string) => data.get(key) ?? null,
+=======
+>>>>>>> 3b4de56 (chore: include remaining conversation-sync backend and shared changes)
+    put: async (key: string, value: string) => {
+      data.set(key, value);
+      return { ok: true };
+    },
+    delete: async (key: string) => {
+      data.delete(key);
+<<<<<<< HEAD
+>>>>>>> 3e0b0dc (TC-1301: Add config endpoints for Fireflies API key (PUT/DELETE/GET exists))
+=======
+      return { ok: true };
+>>>>>>> 3b4de56 (chore: include remaining conversation-sync backend and shared changes)
     },
   };
 }
@@ -203,6 +223,57 @@ describe("Config Routes", () => {
 
       const body = await res.json();
       expect(JSON.stringify(body)).not.toContain("secret-api-key");
+    });
+  });
+
+  // ── Google Meet config routes ────────────────────────────────────
+
+  const GOOGLE_TOKENS_PATH = "/app.conversations/config/google-tokens";
+
+  describe("GET /api/config/google-meet/connected", () => {
+    it("returns connected: false when no tokens stored", async () => {
+      const res = await fetch(`http://localhost:${port}/api/config/google-meet/connected`);
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ connected: false });
+    });
+
+    it("returns connected: true when tokens exist", async () => {
+      mockKV._data.set(
+        GOOGLE_TOKENS_PATH,
+        JSON.stringify({ access_token: "ya29.x", refresh_token: "1//x" }),
+      );
+
+      const res = await fetch(`http://localhost:${port}/api/config/google-meet/connected`);
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ connected: true });
+    });
+  });
+
+  describe("DELETE /api/config/google-meet", () => {
+    it("deletes tokens from KV and returns ok", async () => {
+      mockKV._data.set(
+        GOOGLE_TOKENS_PATH,
+        JSON.stringify({ access_token: "ya29.x", refresh_token: "1//x" }),
+      );
+
+      const res = await fetch(`http://localhost:${port}/api/config/google-meet`, {
+        method: "DELETE",
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true });
+      expect(mockKV._data.has(GOOGLE_TOKENS_PATH)).toBe(false);
+    });
+
+    it("succeeds even when no tokens exist", async () => {
+      const res = await fetch(`http://localhost:${port}/api/config/google-meet`, {
+        method: "DELETE",
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true });
     });
   });
 

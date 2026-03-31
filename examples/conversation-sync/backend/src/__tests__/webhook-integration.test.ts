@@ -39,7 +39,15 @@ export function mockFirefliesTranscript(
     id: meetingId,
     title: overrides.title ?? `Meeting ${meetingId}`,
     date: overrides.date ?? 1711000000000,
+<<<<<<< HEAD
+<<<<<<< HEAD
     duration: overrides.duration ?? 30,
+=======
+    duration: overrides.duration ?? 1800,
+>>>>>>> 8b3d7eb (TC-1317: Integration tests + OpenAPI spec update for webhook endpoints)
+=======
+    duration: overrides.duration ?? 30,
+>>>>>>> 94871e9 (feat: full Fireflies pagination, SSE streaming sync, and frontend redesign)
     organizer_email: overrides.organizer_email ?? "organizer@example.com",
     transcript_url: overrides.transcript_url ?? `https://app.fireflies.ai/view/${meetingId}`,
     speakers: overrides.speakers ?? [
@@ -223,7 +231,15 @@ describe("Webhook Integration Tests", () => {
       "/api/webhooks",
       createWebhookRouter({
         backendKV,
+<<<<<<< HEAD
+<<<<<<< HEAD
         tryGetDelegatedAccess: async () => (delegationActive ? (mockAccess as any) : null),
+=======
+        tryGetDelegatedAccess: async () => (delegationActive ? mockAccess as any : null),
+>>>>>>> 8b3d7eb (TC-1317: Integration tests + OpenAPI spec update for webhook endpoints)
+=======
+        tryGetDelegatedAccess: async () => (delegationActive ? (mockAccess as any) : null),
+>>>>>>> 4ccbd94 (style: run Prettier on all conversation-sync files)
         authMiddleware: mockAuthMiddleware,
         delegationMiddleware,
         syncFn: syncSingleTranscript,
@@ -428,6 +444,8 @@ describe("Webhook Integration Tests", () => {
       mockAccess.sql._insertedRows.push({
         table: "conversation",
         values: [
+<<<<<<< HEAD
+<<<<<<< HEAD
           "existing-conv-id", // id
           "Already Synced Meeting", // title
           "fireflies", // source
@@ -440,6 +458,33 @@ describe("Webhook Integration Tests", () => {
           "{}", // metadata
           "2026-01-01T00:00:00Z", // created_at
           "2026-01-01T00:00:00Z", // updated_at
+=======
+          "existing-conv-id",      // id
+=======
+          "existing-conv-id", // id
+>>>>>>> 4ccbd94 (style: run Prettier on all conversation-sync files)
+          "Already Synced Meeting", // title
+          "fireflies", // source
+          "already-synced", // source_id
+          "https://app.fireflies.ai/view/already-synced", // source_url
+<<<<<<< HEAD
+          "2026-01-01T00:00:00Z",  // started_at
+          "2026-01-01T00:30:00Z",  // ended_at
+          1800,                    // duration_secs
+          "Overview text",         // summary
+          "{}",                    // metadata
+          "2026-01-01T00:00:00Z",  // created_at
+          "2026-01-01T00:00:00Z",  // updated_at
+>>>>>>> 8b3d7eb (TC-1317: Integration tests + OpenAPI spec update for webhook endpoints)
+=======
+          "2026-01-01T00:00:00Z", // started_at
+          "2026-01-01T00:30:00Z", // ended_at
+          1800, // duration_secs
+          "Overview text", // summary
+          "{}", // metadata
+          "2026-01-01T00:00:00Z", // created_at
+          "2026-01-01T00:00:00Z", // updated_at
+>>>>>>> 4ccbd94 (style: run Prettier on all conversation-sync files)
         ],
       });
 

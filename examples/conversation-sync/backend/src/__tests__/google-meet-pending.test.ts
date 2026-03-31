@@ -2,16 +2,24 @@ import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
 import express from "express";
 import type { Server } from "http";
 import type { Request, Response, NextFunction } from "express";
-import { createWebhookRouter } from "../routes/webhooks.js";
+import { createGoogleMeetPushRouter } from "../routes/google-meet-webhooks.js";
 
 // ── Constants ───────────────────────────────────────────────────────
 
-const PENDING_KV_KEY = "/app.webhooks/pending/fireflies";
-const FIREFLIES_KEY_PATH = "/app.conversations/config/fireflies-key";
+const PENDING_KV_KEY = "/app.webhooks/pending/google-meet";
+const FAILED_KV_KEY = "/app.webhooks/failed/google-meet";
+const GOOGLE_TOKENS_PATH = "/app.conversations/config/google-tokens";
+const EXPECTED_AUDIENCE = "https://example.com/api/webhooks/google-meet";
+const EXPECTED_EMAIL = "sa@project.iam.gserviceaccount.com";
+
+const MOCK_TOKENS = {
+  access_token: "ya29.test",
+  refresh_token: "1//test-refresh",
+};
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-function createMockBackendKV() {
+function createMockKV() {
   const data = new Map<string, string>();
   return {
     _data: data,
@@ -27,27 +35,21 @@ function createMockBackendKV() {
   };
 }
 
-function createMockAccess(apiKey?: string) {
-  const kvData = new Map<string, string>();
-  if (apiKey) kvData.set(FIREFLIES_KEY_PATH, apiKey);
-
+function createMockAccess(opts?: { existingSourceIds?: string[] }) {
+  const kvStore = createMockKV();
   return {
-    _kvData: kvData,
-    kv: {
-      get: async (key: string) => {
-        const val = kvData.get(key);
-        if (val === undefined) return { ok: true, data: { data: null } };
-        return { ok: true, data: { data: val } };
-      },
-      put: async (key: string, value: string) => {
-        kvData.set(key, value);
-        return { ok: true };
-      },
-    },
+    _kvStore: kvStore,
     sql: {
-      query: async () => ({ ok: true, data: { rows: [], columns: [] } }),
-      execute: async () => ({ ok: true, data: { changes: 1 } }),
+      query: async (_sql: string, params?: any[]) => {
+        const sourceId = params?.[0];
+        if (opts?.existingSourceIds?.includes(sourceId)) {
+          return { ok: true, data: { rows: [{ source_id: sourceId }] } };
+        }
+        return { ok: true, data: { rows: [] } };
+      },
+      execute: async () => ({ ok: true }),
     },
+    kv: kvStore,
   };
 }
 
@@ -71,34 +73,23 @@ function closeServer(server: Server): Promise<void> {
   });
 }
 
-function pendingItems(...meetingIds: string[]) {
-  return meetingIds.map((id) => ({
-    meetingId: id,
+function pendingItems(...names: string[]) {
+  return names.map((name) => ({
+    conferenceRecordName: name,
     receivedAt: "2026-01-01T00:00:00Z",
   }));
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
 
-describe("GET /api/webhooks/fireflies/pending", () => {
+describe("GET /api/webhooks/google-meet/pending", () => {
   let server: Server;
   let port: number;
-  let backendKV: ReturnType<typeof createMockBackendKV>;
+  let backendKV: ReturnType<typeof createMockKV>;
   let mockAccess: ReturnType<typeof createMockAccess>;
   let syncFn: ReturnType<typeof mock>;
 
-<<<<<<< HEAD
-<<<<<<< HEAD
   function createApp(overrides?: { authMiddleware?: any; delegationMiddleware?: any }) {
-=======
-  function createApp(overrides?: {
-    authMiddleware?: any;
-    delegationMiddleware?: any;
-  }) {
->>>>>>> 983fcc0 (TC-1314: Pending webhook queue store, process, and clear endpoints)
-=======
-  function createApp(overrides?: { authMiddleware?: any; delegationMiddleware?: any }) {
->>>>>>> 4ccbd94 (style: run Prettier on all conversation-sync files)
     const delegationMiddleware =
       overrides?.delegationMiddleware ??
       ((req: Request, _res: Response, next: NextFunction) => {
@@ -106,30 +97,36 @@ describe("GET /api/webhooks/fireflies/pending", () => {
         next();
       });
 
+    // Pre-store Google tokens in user KV
+    mockAccess.kv.put(GOOGLE_TOKENS_PATH, JSON.stringify(MOCK_TOKENS));
+
     const app = express();
+    app.use(express.json());
     app.use(
-      "/api/webhooks",
-      createWebhookRouter({
+      "/api/webhooks/google-meet",
+      createGoogleMeetPushRouter({
         backendKV,
         tryGetDelegatedAccess: async () => null,
+        expectedAudience: EXPECTED_AUDIENCE,
+        expectedEmail: EXPECTED_EMAIL,
+        verifyToken: () => true,
         authMiddleware: overrides?.authMiddleware ?? mockAuthMiddleware,
         delegationMiddleware,
-        syncFn,
+        syncConference: syncFn as any,
       }),
     );
     return app;
   }
 
   beforeEach(async () => {
-    backendKV = createMockBackendKV();
-    mockAccess = createMockAccess("test-fireflies-key");
+    backendKV = createMockKV();
+    mockAccess = createMockAccess();
 
-    syncFn = mock(async (meetingId: string) => ({
+    syncFn = mock(async (conferenceRecordName: string) => ({
       status: "created" as const,
-      meetingId,
-      conversationId: `conv-${meetingId}`,
-      title: `Meeting ${meetingId}`,
-      startedAt: "2026-01-01T00:00:00Z",
+      conferenceRecordName,
+      conversationId: `conv-${conferenceRecordName}`,
+      title: `Meeting ${conferenceRecordName}`,
     }));
 
     const app = createApp();
@@ -137,11 +134,11 @@ describe("GET /api/webhooks/fireflies/pending", () => {
   });
 
   afterEach(async () => {
-    await closeServer(server);
+    if (server) await closeServer(server);
   });
 
   function getPending() {
-    return fetch(`http://localhost:${port}/api/webhooks/fireflies/pending`);
+    return fetch(`http://localhost:${port}/api/webhooks/google-meet/pending`);
   }
 
   // ── Auth ─────────────────────────────────────────────────────────
@@ -182,28 +179,37 @@ describe("GET /api/webhooks/fireflies/pending", () => {
   // ── Processing ───────────────────────────────────────────────────
 
   it("processes pending items and returns results", async () => {
-    backendKV._data.set(PENDING_KV_KEY, JSON.stringify(pendingItems("m1", "m2")));
+    backendKV._data.set(
+      PENDING_KV_KEY,
+      JSON.stringify(pendingItems("conferenceRecords/abc", "conferenceRecords/def")),
+    );
 
     const res = await getPending();
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.processed).toHaveLength(2);
-    expect(body.processed[0].meetingId).toBe("m1");
-    expect(body.processed[1].meetingId).toBe("m2");
+    expect(body.processed[0].conferenceRecordName).toBe("conferenceRecords/abc");
+    expect(body.processed[1].conferenceRecordName).toBe("conferenceRecords/def");
   });
 
-  it("calls syncFn for each pending meetingId", async () => {
-    backendKV._data.set(PENDING_KV_KEY, JSON.stringify(pendingItems("m1", "m2")));
+  it("calls syncConference for each pending item", async () => {
+    backendKV._data.set(
+      PENDING_KV_KEY,
+      JSON.stringify(pendingItems("conferenceRecords/abc", "conferenceRecords/def")),
+    );
 
     await getPending();
 
     expect(syncFn).toHaveBeenCalledTimes(2);
-    expect(syncFn.mock.calls[0][0]).toBe("m1");
-    expect(syncFn.mock.calls[1][0]).toBe("m2");
+    expect(syncFn.mock.calls[0][0]).toBe("conferenceRecords/abc");
+    expect(syncFn.mock.calls[1][0]).toBe("conferenceRecords/def");
   });
 
   it("removes processed items from pending queue", async () => {
-    backendKV._data.set(PENDING_KV_KEY, JSON.stringify(pendingItems("m1", "m2")));
+    backendKV._data.set(
+      PENDING_KV_KEY,
+      JSON.stringify(pendingItems("conferenceRecords/abc")),
+    );
 
     await getPending();
 
@@ -213,54 +219,39 @@ describe("GET /api/webhooks/fireflies/pending", () => {
 
   // ── Dedup (skipped) ──────────────────────────────────────────────
 
-  it("reports skipped items from dedup", async () => {
-    syncFn = mock(async (meetingId: string) => ({
+  it("reports skipped items", async () => {
+    syncFn = mock(async (name: string) => ({
       status: "skipped" as const,
-      meetingId,
+      conferenceRecordName: name,
     }));
 
     await closeServer(server);
     const app = createApp();
     ({ server, port } = await startServer(app));
 
-    backendKV._data.set(PENDING_KV_KEY, JSON.stringify(pendingItems("m1")));
+    backendKV._data.set(
+      PENDING_KV_KEY,
+      JSON.stringify(pendingItems("conferenceRecords/abc")),
+    );
 
     const res = await getPending();
     const body = await res.json();
     expect(body.skipped).toHaveLength(1);
-    expect(body.skipped[0].meetingId).toBe("m1");
+    expect(body.skipped[0].conferenceRecordName).toBe("conferenceRecords/abc");
     expect(body.processed).toHaveLength(0);
   });
 
-  it("removes skipped items from pending queue", async () => {
-    syncFn = mock(async (meetingId: string) => ({
-      status: "skipped" as const,
-      meetingId,
-    }));
+  // ── Partial failure ──────────────────────────────────────────────
 
-    await closeServer(server);
-    const app = createApp();
-    ({ server, port } = await startServer(app));
-
-    backendKV._data.set(PENDING_KV_KEY, JSON.stringify(pendingItems("m1")));
-
-    await getPending();
-
-    const remaining = JSON.parse(backendKV._data.get(PENDING_KV_KEY)!);
-    expect(remaining).toHaveLength(0);
-  });
-
-  // ── Errors ───────────────────────────────────────────────────────
-
-  it("keeps failed items in pending queue", async () => {
-    syncFn = mock(async (meetingId: string) => {
-      if (meetingId === "m2") {
-        return { status: "error" as const, meetingId, error: "API timeout" };
+  it("keeps failed items in pending queue, removes successful ones", async () => {
+    syncFn = mock(async (name: string) => {
+      if (name === "conferenceRecords/fail") {
+        return { status: "error" as const, conferenceRecordName: name, error: "API timeout" };
       }
       return {
         status: "created" as const,
-        meetingId,
-        conversationId: `conv-${meetingId}`,
+        conferenceRecordName: name,
+        conversationId: `conv-${name}`,
       };
     });
 
@@ -268,54 +259,99 @@ describe("GET /api/webhooks/fireflies/pending", () => {
     const app = createApp();
     ({ server, port } = await startServer(app));
 
-    backendKV._data.set(PENDING_KV_KEY, JSON.stringify(pendingItems("m1", "m2", "m3")));
+    backendKV._data.set(
+      PENDING_KV_KEY,
+      JSON.stringify(
+        pendingItems("conferenceRecords/ok1", "conferenceRecords/fail", "conferenceRecords/ok2"),
+      ),
+    );
 
     const res = await getPending();
     const body = await res.json();
 
     expect(body.processed).toHaveLength(2);
     expect(body.errors).toHaveLength(1);
-    expect(body.errors[0].meetingId).toBe("m2");
+    expect(body.errors[0].conferenceRecordName).toBe("conferenceRecords/fail");
     expect(body.errors[0].error).toBe("API timeout");
 
-    // Only m2 remains in queue
+    // Only failed item remains in queue
     const remaining = JSON.parse(backendKV._data.get(PENDING_KV_KEY)!);
     expect(remaining).toHaveLength(1);
-    expect(remaining[0].meetingId).toBe("m2");
+    expect(remaining[0].conferenceRecordName).toBe("conferenceRecords/fail");
   });
 
-  // ── Missing API key ──────────────────────────────────────────────
+  it("stores failed items in failed events queue", async () => {
+    syncFn = mock(async (name: string) => ({
+      status: "error" as const,
+      conferenceRecordName: name,
+      error: "Google API error",
+    }));
 
-  it("returns 400 when Fireflies API key not configured", async () => {
-    mockAccess._kvData.delete(FIREFLIES_KEY_PATH);
+    await closeServer(server);
+    const app = createApp();
+    ({ server, port } = await startServer(app));
 
-    backendKV._data.set(PENDING_KV_KEY, JSON.stringify(pendingItems("m1")));
+    backendKV._data.set(
+      PENDING_KV_KEY,
+      JSON.stringify(pendingItems("conferenceRecords/fail1")),
+    );
+
+    await getPending();
+
+    const failed = JSON.parse(backendKV._data.get(FAILED_KV_KEY)!);
+    expect(failed).toHaveLength(1);
+    expect(failed[0].conferenceRecordName).toBe("conferenceRecords/fail1");
+    expect(failed[0].error).toBe("Google API error");
+    expect(failed[0].failedAt).toBeDefined();
+  });
+
+  // ── No Google tokens ─────────────────────────────────────────────
+
+  it("returns 400 when Google tokens not configured", async () => {
+    mockAccess._kvStore._data.delete(GOOGLE_TOKENS_PATH);
+
+    await closeServer(server);
+    // Create app WITHOUT pre-storing tokens
+    const delegationMiddleware = (req: Request, _res: Response, next: NextFunction) => {
+      req.delegatedAccess = mockAccess as any;
+      next();
+    };
+    const app = express();
+    app.use(express.json());
+    app.use(
+      "/api/webhooks/google-meet",
+      createGoogleMeetPushRouter({
+        backendKV,
+        tryGetDelegatedAccess: async () => null,
+        expectedAudience: EXPECTED_AUDIENCE,
+        expectedEmail: EXPECTED_EMAIL,
+        verifyToken: () => true,
+        authMiddleware: mockAuthMiddleware,
+        delegationMiddleware,
+        syncConference: syncFn as any,
+      }),
+    );
+    ({ server, port } = await startServer(app));
+
+    backendKV._data.set(
+      PENDING_KV_KEY,
+      JSON.stringify(pendingItems("conferenceRecords/abc")),
+    );
 
     const res = await getPending();
     expect(res.status).toBe(400);
     const body = await res.json();
-    expect(body.error).toBe("no_api_key");
+    expect(body.error).toBe("no_google_tokens");
   });
 });
 
-describe("DELETE /api/webhooks/fireflies/pending", () => {
+describe("DELETE /api/webhooks/google-meet/pending", () => {
   let server: Server;
   let port: number;
-  let backendKV: ReturnType<typeof createMockBackendKV>;
+  let backendKV: ReturnType<typeof createMockKV>;
   let mockAccess: ReturnType<typeof createMockAccess>;
 
-<<<<<<< HEAD
-<<<<<<< HEAD
   function createApp(overrides?: { authMiddleware?: any; delegationMiddleware?: any }) {
-=======
-  function createApp(overrides?: {
-    authMiddleware?: any;
-    delegationMiddleware?: any;
-  }) {
->>>>>>> 983fcc0 (TC-1314: Pending webhook queue store, process, and clear endpoints)
-=======
-  function createApp(overrides?: { authMiddleware?: any; delegationMiddleware?: any }) {
->>>>>>> 4ccbd94 (style: run Prettier on all conversation-sync files)
     const delegationMiddleware =
       overrides?.delegationMiddleware ??
       ((req: Request, _res: Response, next: NextFunction) => {
@@ -324,11 +360,15 @@ describe("DELETE /api/webhooks/fireflies/pending", () => {
       });
 
     const app = express();
+    app.use(express.json());
     app.use(
-      "/api/webhooks",
-      createWebhookRouter({
+      "/api/webhooks/google-meet",
+      createGoogleMeetPushRouter({
         backendKV,
         tryGetDelegatedAccess: async () => null,
+        expectedAudience: EXPECTED_AUDIENCE,
+        expectedEmail: EXPECTED_EMAIL,
+        verifyToken: () => true,
         authMiddleware: overrides?.authMiddleware ?? mockAuthMiddleware,
         delegationMiddleware,
       }),
@@ -337,19 +377,19 @@ describe("DELETE /api/webhooks/fireflies/pending", () => {
   }
 
   beforeEach(async () => {
-    backendKV = createMockBackendKV();
-    mockAccess = createMockAccess("test-key");
+    backendKV = createMockKV();
+    mockAccess = createMockAccess();
 
     const app = createApp();
     ({ server, port } = await startServer(app));
   });
 
   afterEach(async () => {
-    await closeServer(server);
+    if (server) await closeServer(server);
   });
 
   function deletePending() {
-    return fetch(`http://localhost:${port}/api/webhooks/fireflies/pending`, {
+    return fetch(`http://localhost:${port}/api/webhooks/google-meet/pending`, {
       method: "DELETE",
     });
   }
@@ -390,18 +430,10 @@ describe("DELETE /api/webhooks/fireflies/pending", () => {
   });
 
   it("clears all pending items and returns count", async () => {
-<<<<<<< HEAD
-<<<<<<< HEAD
-    backendKV._data.set(PENDING_KV_KEY, JSON.stringify(pendingItems("m1", "m2", "m3")));
-=======
     backendKV._data.set(
       PENDING_KV_KEY,
-      JSON.stringify(pendingItems("m1", "m2", "m3")),
+      JSON.stringify(pendingItems("conferenceRecords/a", "conferenceRecords/b", "conferenceRecords/c")),
     );
->>>>>>> 983fcc0 (TC-1314: Pending webhook queue store, process, and clear endpoints)
-=======
-    backendKV._data.set(PENDING_KV_KEY, JSON.stringify(pendingItems("m1", "m2", "m3")));
->>>>>>> 4ccbd94 (style: run Prettier on all conversation-sync files)
 
     const res = await deletePending();
     expect(res.status).toBe(200);
@@ -410,18 +442,10 @@ describe("DELETE /api/webhooks/fireflies/pending", () => {
   });
 
   it("empties the pending queue in KV", async () => {
-<<<<<<< HEAD
-<<<<<<< HEAD
-    backendKV._data.set(PENDING_KV_KEY, JSON.stringify(pendingItems("m1", "m2")));
-=======
     backendKV._data.set(
       PENDING_KV_KEY,
-      JSON.stringify(pendingItems("m1", "m2")),
+      JSON.stringify(pendingItems("conferenceRecords/a")),
     );
->>>>>>> 983fcc0 (TC-1314: Pending webhook queue store, process, and clear endpoints)
-=======
-    backendKV._data.set(PENDING_KV_KEY, JSON.stringify(pendingItems("m1", "m2")));
->>>>>>> 4ccbd94 (style: run Prettier on all conversation-sync files)
 
     await deletePending();
 

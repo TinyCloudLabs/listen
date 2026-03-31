@@ -8,24 +8,38 @@ interface BackendKV {
   put(key: string, value: string): Promise<{ ok: boolean }>;
 }
 
+interface SubscriptionMetadata {
+  subscriptionName: string;
+  googleUserId: string;
+  expiresAt: string;
+  createdAt: string;
+}
+
 interface ConfigRoutesConfig {
   authMiddleware: RequestHandler;
   delegationMiddleware: RequestHandler;
   backendKV?: BackendKV;
   frontendUrl?: string;
+  /** Delete Workspace Events subscription on Google disconnect */
+  deleteSubscription?: (metadata: SubscriptionMetadata, accessToken: string) => Promise<void>;
 }
 
 // ── Constants ────────────────────────────────────────────────────────
 
 const FIREFLIES_KEY_PATH = "/app.conversations/config/fireflies-key";
+const GOOGLE_TOKENS_PATH = "/app.conversations/config/google-tokens";
 const WEBHOOK_SECRET_PATH = "/app.webhooks/config/fireflies-secret";
 const WEBHOOK_USER_SUB_PATH = "/app.webhooks/config/user-sub";
 const WEBHOOK_PENDING_PATH = "/app.webhooks/pending/fireflies";
+const GMEET_SUBSCRIPTION_KV_PATH = "/app.webhooks/config/google-meet-subscription";
+const GMEET_PENDING_KV_PATH = "/app.webhooks/pending/google-meet";
+const GMEET_FAILED_KV_PATH = "/app.webhooks/failed/google-meet";
+const GMEET_USER_SUB_KV_PATH = "/app.webhooks/config/google-meet-user-sub";
 
 // ── Config Routes ────────────────────────────────────────────────────
 
 export function createConfigRouter(config: ConfigRoutesConfig) {
-  const { authMiddleware, delegationMiddleware, backendKV } = config;
+  const { authMiddleware, delegationMiddleware, backendKV, deleteSubscription } = config;
   const router = Router();
 
   // All config routes require auth
@@ -82,6 +96,66 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
         error: "check_failed",
         message: "Failed to check API key existence",
       });
+    }
+  });
+
+  // ── Google Meet connection routes (auth + delegation) ──────────────
+
+  // ── GET /api/config/google-meet/connected — check token existence ─
+  router.get("/google-meet/connected", delegationMiddleware, async (req: Request, res: Response) => {
+    try {
+      const result = await req.delegatedAccess!.kv.get(GOOGLE_TOKENS_PATH);
+      res.json({ connected: result.ok && result.data.data != null });
+    } catch (err) {
+      console.error("[config] failed to check google-meet connection:", err);
+      res.status(500).json({ error: "check_failed", message: "Failed to check connection" });
+    }
+  });
+
+  // ── DELETE /api/config/google-meet — disconnect (delete tokens + cleanup) ─
+  router.delete("/google-meet", delegationMiddleware, async (req: Request, res: Response) => {
+    try {
+      const access = req.delegatedAccess!;
+
+      // 1. Read tokens (needed for Workspace Events API delete call)
+      const tokensResult = await access.kv.get(GOOGLE_TOKENS_PATH);
+      const tokensRaw = tokensResult.ok && tokensResult.data.data ? tokensResult.data.data : null;
+
+      // 2. Read subscription metadata from backend KV
+      let metadata: SubscriptionMetadata | null = null;
+      if (backendKV) {
+        const metaResult = await backendKV.get(GMEET_SUBSCRIPTION_KV_PATH);
+        if (metaResult.ok && metaResult.data.data) {
+          try { metadata = JSON.parse(metaResult.data.data); } catch {}
+        }
+      }
+
+      // 3. Delete Workspace Events subscription if we have both tokens and metadata
+      if (metadata && tokensRaw && deleteSubscription) {
+        try {
+          const tokens = JSON.parse(tokensRaw);
+          await deleteSubscription(metadata, tokens.access_token);
+        } catch (err) {
+          console.warn("[config] failed to delete Workspace Events subscription:", err);
+          // Continue with cleanup even if API call fails
+        }
+      }
+
+      // 4. Delete user tokens
+      await access.kv.delete(GOOGLE_TOKENS_PATH);
+
+      // 5. Clear webhook KV entries
+      if (backendKV) {
+        await backendKV.put(GMEET_PENDING_KV_PATH, JSON.stringify([]));
+        await backendKV.put(GMEET_FAILED_KV_PATH, JSON.stringify([]));
+        await backendKV.put(GMEET_SUBSCRIPTION_KV_PATH, "");
+        await backendKV.put(GMEET_USER_SUB_KV_PATH, "");
+      }
+
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[config] failed to disconnect google-meet:", err);
+      res.status(500).json({ error: "disconnect_failed", message: "Failed to disconnect" });
     }
   });
 

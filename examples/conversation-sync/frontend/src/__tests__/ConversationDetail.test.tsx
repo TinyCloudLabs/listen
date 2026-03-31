@@ -1,5 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+<<<<<<< HEAD
+<<<<<<< HEAD
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
+=======
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  cleanup,
+} from "@testing-library/react";
+>>>>>>> ab0248b (TC-1308: Build ConversationDetail component with transcript view and speaker labels)
+=======
+import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
+>>>>>>> 4ccbd94 (style: run Prettier on all conversation-sync files)
 import { ConversationDetail } from "../components/ConversationDetail";
 import type { ApiClient } from "@tinyboilerplate/client";
 
@@ -33,6 +47,10 @@ const DETAIL_RESPONSE = {
     { id: "p2", name: "Bob", email: "bob@example.com", speaker_label: "Speaker 2" },
   ],
   transcript: [
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 4ccbd94 (style: run Prettier on all conversation-sync files)
     {
       index: 0,
       speaker_id: "1",
@@ -73,6 +91,15 @@ const DETAIL_RESPONSE = {
       end_time: 70,
       ai_filters: {},
     },
+<<<<<<< HEAD
+=======
+    { index: 0, speaker_id: "1", speaker_name: "Alice", text: "Let's start the sprint planning.", raw_text: "Let's start the sprint planning.", start_time: 0, end_time: 5, ai_filters: {} },
+    { index: 1, speaker_id: "1", speaker_name: "Alice", text: "We have a lot to cover today.", raw_text: "We have a lot to cover today.", start_time: 5, end_time: 10, ai_filters: {} },
+    { index: 2, speaker_id: "2", speaker_name: "Bob", text: "Sounds good. I prepared the backlog.", raw_text: "Sounds good. I prepared the backlog.", start_time: 10, end_time: 15, ai_filters: {} },
+    { index: 3, speaker_id: "1", speaker_name: "Alice", text: "Great, let's review it.", raw_text: "Great, let's review it.", start_time: 65, end_time: 70, ai_filters: {} },
+>>>>>>> ab0248b (TC-1308: Build ConversationDetail component with transcript view and speaker labels)
+=======
+>>>>>>> 4ccbd94 (style: run Prettier on all conversation-sync files)
   ],
 };
 
@@ -105,19 +132,45 @@ describe("ConversationDetail", () => {
   it("shows loading state while fetching", async () => {
     let resolveGet!: (v: any) => void;
     const getMock = vi.fn().mockReturnValue(
+<<<<<<< HEAD
+<<<<<<< HEAD
       new Promise((resolve) => {
         resolveGet = resolve;
       }),
+=======
+      new Promise((resolve) => { resolveGet = resolve; }),
+>>>>>>> ab0248b (TC-1308: Build ConversationDetail component with transcript view and speaker labels)
+=======
+      new Promise((resolve) => {
+        resolveGet = resolve;
+      }),
+>>>>>>> 4ccbd94 (style: run Prettier on all conversation-sync files)
     );
     api = mockApi({ get: getMock });
 
     render(<ConversationDetail api={api} conversationId="01ABC" onBack={onBack} />);
 
+<<<<<<< HEAD
+<<<<<<< HEAD
     expect(screen.getByText("Loading conversation")).toBeInTheDocument();
 
     resolveGet(DETAIL_RESPONSE);
     await waitFor(() => {
       expect(screen.queryByText("Loading conversation")).not.toBeInTheDocument();
+=======
+    expect(screen.getByText(/loading/i)).toBeInTheDocument();
+
+    resolveGet(DETAIL_RESPONSE);
+    await waitFor(() => {
+      expect(screen.queryByText(/loading/i)).not.toBeInTheDocument();
+>>>>>>> ab0248b (TC-1308: Build ConversationDetail component with transcript view and speaker labels)
+=======
+    expect(screen.getByText("Loading conversation")).toBeInTheDocument();
+
+    resolveGet(DETAIL_RESPONSE);
+    await waitFor(() => {
+      expect(screen.queryByText("Loading conversation")).not.toBeInTheDocument();
+>>>>>>> eafdd67 (test: update frontend tests for redesigned components)
     });
   });
 
@@ -132,17 +185,42 @@ describe("ConversationDetail", () => {
     });
   });
 
+<<<<<<< HEAD
+<<<<<<< HEAD
   it("renders participant names as chips", async () => {
+=======
+  it("renders participant names", async () => {
+>>>>>>> ab0248b (TC-1308: Build ConversationDetail component with transcript view and speaker labels)
+=======
+  it("renders participant names as chips", async () => {
+>>>>>>> eafdd67 (test: update frontend tests for redesigned components)
     api = mockApi({ get: vi.fn().mockResolvedValue(DETAIL_RESPONSE) });
 
     render(<ConversationDetail api={api} conversationId="01ABC" onBack={onBack} />);
 
     await waitFor(() => {
+<<<<<<< HEAD
+<<<<<<< HEAD
       expect(screen.getByText("2 participants")).toBeInTheDocument();
     });
   });
 
   it("renders summary section with HTML", async () => {
+=======
+      // Participants shown as comma-separated list in header
+      expect(screen.getByText("Alice, Bob")).toBeInTheDocument();
+    });
+  });
+
+  it("renders summary section", async () => {
+>>>>>>> ab0248b (TC-1308: Build ConversationDetail component with transcript view and speaker labels)
+=======
+      expect(screen.getByText("2 participants")).toBeInTheDocument();
+    });
+  });
+
+  it("renders summary section with HTML", async () => {
+>>>>>>> eafdd67 (test: update frontend tests for redesigned components)
     api = mockApi({ get: vi.fn().mockResolvedValue(DETAIL_RESPONSE) });
 
     render(<ConversationDetail api={api} conversationId="01ABC" onBack={onBack} />);
@@ -158,9 +236,19 @@ describe("ConversationDetail", () => {
     render(<ConversationDetail api={api} conversationId="01ABC" onBack={onBack} />);
 
     await waitFor(() => {
+<<<<<<< HEAD
+<<<<<<< HEAD
       expect(
         screen.getByText("Let's start the sprint planning. We have a lot to cover today."),
       ).toBeInTheDocument();
+=======
+      expect(screen.getByText("Let's start the sprint planning. We have a lot to cover today.")).toBeInTheDocument();
+>>>>>>> ab0248b (TC-1308: Build ConversationDetail component with transcript view and speaker labels)
+=======
+      expect(
+        screen.getByText("Let's start the sprint planning. We have a lot to cover today."),
+      ).toBeInTheDocument();
+>>>>>>> 4ccbd94 (style: run Prettier on all conversation-sync files)
       expect(screen.getByText("Sounds good. I prepared the backlog.")).toBeInTheDocument();
       expect(screen.getByText("Great, let's review it.")).toBeInTheDocument();
     });
@@ -182,15 +270,35 @@ describe("ConversationDetail", () => {
     expect(blocks.length).toBe(3);
   });
 
+<<<<<<< HEAD
+<<<<<<< HEAD
   it("formats timestamps as m:ss", async () => {
+=======
+  it("formats timestamps as mm:ss", async () => {
+>>>>>>> ab0248b (TC-1308: Build ConversationDetail component with transcript view and speaker labels)
+=======
+  it("formats timestamps as m:ss", async () => {
+>>>>>>> eafdd67 (test: update frontend tests for redesigned components)
     api = mockApi({ get: vi.fn().mockResolvedValue(DETAIL_RESPONSE) });
 
     render(<ConversationDetail api={api} conversationId="01ABC" onBack={onBack} />);
 
     await waitFor(() => {
+<<<<<<< HEAD
+<<<<<<< HEAD
       expect(screen.getByText("0:00")).toBeInTheDocument(); // start_time 0
       expect(screen.getByText("0:10")).toBeInTheDocument(); // start_time 10
       expect(screen.getByText("1:05")).toBeInTheDocument(); // start_time 65
+=======
+      expect(screen.getByText("00:00")).toBeInTheDocument(); // start_time 0
+      expect(screen.getByText("00:10")).toBeInTheDocument(); // start_time 10
+      expect(screen.getByText("01:05")).toBeInTheDocument(); // start_time 65
+>>>>>>> ab0248b (TC-1308: Build ConversationDetail component with transcript view and speaker labels)
+=======
+      expect(screen.getByText("0:00")).toBeInTheDocument(); // start_time 0
+      expect(screen.getByText("0:10")).toBeInTheDocument(); // start_time 10
+      expect(screen.getByText("1:05")).toBeInTheDocument(); // start_time 65
+>>>>>>> eafdd67 (test: update frontend tests for redesigned components)
     });
   });
 
@@ -202,7 +310,18 @@ describe("ConversationDetail", () => {
     await waitFor(() => {
       const link = screen.getByText(/view on fireflies/i);
       expect(link).toBeInTheDocument();
+<<<<<<< HEAD
+<<<<<<< HEAD
       expect(link.closest("a")).toHaveAttribute("href", "https://app.fireflies.ai/view/01ABC");
+=======
+      expect(link.closest("a")).toHaveAttribute(
+        "href",
+        "https://app.fireflies.ai/view/01ABC",
+      );
+>>>>>>> ab0248b (TC-1308: Build ConversationDetail component with transcript view and speaker labels)
+=======
+      expect(link.closest("a")).toHaveAttribute("href", "https://app.fireflies.ai/view/01ABC");
+>>>>>>> 4ccbd94 (style: run Prettier on all conversation-sync files)
     });
   });
 
@@ -257,6 +376,24 @@ describe("ConversationDetail", () => {
 
     await waitFor(() => {
       expect(screen.getByText(/network error/i)).toBeInTheDocument();
+    });
+  });
+
+  // ── New dynamic source link test ─────────────────────────────────
+
+  it("shows 'View transcript' for Google Meet source", async () => {
+    const gmResponse = {
+      ...DETAIL_RESPONSE,
+      conversation: { ...DETAIL_RESPONSE.conversation, source: "google-meet", source_url: "https://docs.google.com/document/d/123" },
+    };
+    api = mockApi({ get: vi.fn().mockResolvedValue(gmResponse) });
+
+    render(<ConversationDetail api={api} conversationId="01ABC" onBack={onBack} />);
+
+    await waitFor(() => {
+      const link = screen.getByText(/view transcript/i);
+      expect(link).toBeInTheDocument();
+      expect(link.closest("a")).toHaveAttribute("href", "https://docs.google.com/document/d/123");
     });
   });
 });

@@ -26,6 +26,12 @@ import { createFirefliesRouter } from "./routes/fireflies.js";
 import { createSyncRouter } from "./routes/sync.js";
 import { createConversationsRouter } from "./routes/conversations.js";
 import { createWebhookRouter } from "./routes/webhooks.js";
+import { createGoogleMeetPushRouter } from "./routes/google-meet-webhooks.js";
+import { createGoogleMeetSyncRouter } from "./routes/google-meet-sync.js";
+import { createGoogleMeetStatusRouter } from "./routes/google-meet-status.js";
+import { createGoogleAuthRouter } from "./routes/google-auth.js";
+import { initGoogleMeetWebhooks, isGoogleMeetWebhooksEnabled } from "./services/google-meet-webhooks.js";
+import { parsePubSubConfig, createMeetSubscription, deleteMeetSubscription } from "./services/pubsub-manager.js";
 
 // ── Environment ──────────────────────────────────────────────────────
 
@@ -49,6 +55,10 @@ async function main() {
     privateKey: BACKEND_PRIVATE_KEY,
     host: TINYCLOUD_HOST,
   });
+
+  // 1b. Initialize Google Meet webhook infrastructure (Pub/Sub topic + subscription)
+  // Gracefully skipped if GOOGLE_SERVICE_ACCOUNT_KEY / GOOGLE_PUBSUB_PUSH_URL are not set
+  await initGoogleMeetWebhooks();
 
   // 2. Create delegation infrastructure
   const delegationStore = new DelegationStore(node);
@@ -133,6 +143,42 @@ async function main() {
   );
 
   app.use(express.json());
+
+  // Google Meet push endpoint — after JSON parsing, before CSRF (public, OIDC-verified)
+  const pubSubConfig = parsePubSubConfig();
+  if (pubSubConfig) {
+    const GOOGLE_MEET_USER_SUB_PATH = "/app.webhooks/config/google-meet-user-sub";
+    const tryGetGoogleMeetAccess = async () => {
+      const subResult = await backendKV.get(GOOGLE_MEET_USER_SUB_PATH);
+      const sub = subResult.ok && (subResult as any).data?.data ? String((subResult as any).data.data) : null;
+      if (!sub) return null;
+      let access = delegationCache.get(sub);
+      if (access) return access;
+      const stored = await delegationStore.load(sub);
+      if (!stored || new Date(stored.expiresAt).getTime() <= Date.now()) return null;
+      try {
+        const delegation = deserializeDelegation(stored.serialized);
+        access = await node.useDelegation(delegation);
+        delegationCache.set(sub, access);
+        return access;
+      } catch {
+        return null;
+      }
+    };
+
+    app.use(
+      "/api/webhooks/google-meet",
+      createGoogleMeetPushRouter({
+        backendKV,
+        tryGetDelegatedAccess: tryGetGoogleMeetAccess,
+        expectedAudience: pubSubConfig.pushUrl,
+        expectedEmail: pubSubConfig.serviceAccountEmail,
+        authMiddleware: authMiddleware as any,
+        delegationMiddleware: delegationMiddleware as any,
+      }),
+    );
+  }
+
   app.use(createCsrfMiddleware());
 
   // 5. Rate limiting
@@ -177,6 +223,34 @@ async function main() {
       delegationMiddleware,
       backendKV,
       frontendUrl: FRONTEND_URL,
+      deleteSubscription: deleteMeetSubscription,
+    }),
+  );
+
+  // Google OAuth routes
+  app.use(
+    "/api/auth/google",
+    createGoogleAuthRouter({
+      authMiddleware,
+      delegationMiddleware,
+      resolveDelegation: async (sub: string) => {
+        let access = delegationCache.get(sub);
+        if (access) return access;
+        const stored = await delegationStore.load(sub);
+        if (!stored || new Date(stored.expiresAt).getTime() <= Date.now()) return null;
+        try {
+          const delegation = deserializeDelegation(stored.serialized);
+          access = await node.useDelegation(delegation);
+          delegationCache.set(sub, access);
+          return access;
+        } catch {
+          return null;
+        }
+      },
+      backendKV,
+      isWebhooksEnabled: isGoogleMeetWebhooksEnabled,
+      createMeetSubscription,
+      pubSubProjectId: pubSubConfig?.projectId,
     }),
   );
 
@@ -193,6 +267,24 @@ async function main() {
   app.use(
     "/api/sync",
     createSyncRouter({
+      authMiddleware,
+      delegationMiddleware,
+    }),
+  );
+
+  // Google Meet sync routes
+  app.use(
+    "/api/sync/google-meet",
+    createGoogleMeetSyncRouter({
+      authMiddleware,
+      delegationMiddleware,
+    }),
+  );
+
+  // Google Meet connection status
+  app.use(
+    "/api/google-meet",
+    createGoogleMeetStatusRouter({
       authMiddleware,
       delegationMiddleware,
     }),

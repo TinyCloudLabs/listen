@@ -34,7 +34,15 @@ function createMockSQL() {
   /** Rows returned for the "missing summaries" SELECT */
   let missingRows: Array<{ id: string; source_id: string }> = [];
   /** Metadata stored per conversation id */
+<<<<<<< HEAD
+<<<<<<< HEAD
   const metadataByConvId = new Map<string, string>();
+=======
+  let metadataByConvId = new Map<string, string>();
+>>>>>>> 3b4de56 (chore: include remaining conversation-sync backend and shared changes)
+=======
+  const metadataByConvId = new Map<string, string>();
+>>>>>>> 554d6dd (fix: resolve all ESLint errors for CI)
 
   return {
     _calls: calls,
@@ -105,9 +113,19 @@ function createMockFullTranscript(overrides: Partial<FullTranscript> = {}): Full
     organizer_email: overrides.organizer_email ?? "test@example.com",
     transcript_url: overrides.transcript_url ?? "https://app.fireflies.ai/view/ff-1",
     speakers: overrides.speakers ?? [{ id: "s1", name: "Alice" }],
+<<<<<<< HEAD
+<<<<<<< HEAD
     meeting_attendees: overrides.meeting_attendees ?? [
       { displayName: "Alice", email: "alice@example.com" },
     ],
+=======
+    meeting_attendees: overrides.meeting_attendees ?? [{ displayName: "Alice", email: "alice@example.com" }],
+>>>>>>> 3b4de56 (chore: include remaining conversation-sync backend and shared changes)
+=======
+    meeting_attendees: overrides.meeting_attendees ?? [
+      { displayName: "Alice", email: "alice@example.com" },
+    ],
+>>>>>>> 4ccbd94 (style: run Prettier on all conversation-sync files)
     sentences: overrides.sentences ?? [],
     summary: overrides.summary ?? {
       keywords: ["planning"],
@@ -121,13 +139,29 @@ function createMockFullTranscript(overrides: Partial<FullTranscript> = {}): Full
 }
 
 function createMockClientFactory() {
+<<<<<<< HEAD
+<<<<<<< HEAD
   const getResults = new Map<string, FullTranscript | Error>();
+=======
+  let getResults = new Map<string, FullTranscript | Error>();
+>>>>>>> 3b4de56 (chore: include remaining conversation-sync backend and shared changes)
+=======
+  const getResults = new Map<string, FullTranscript | Error>();
+>>>>>>> 554d6dd (fix: resolve all ESLint errors for CI)
 
   return {
     setGetResult(id: string, result: FullTranscript | Error) {
       getResults.set(id, result);
     },
+<<<<<<< HEAD
+<<<<<<< HEAD
     factory(_apiKey: string) {
+=======
+    factory(apiKey: string) {
+>>>>>>> 3b4de56 (chore: include remaining conversation-sync backend and shared changes)
+=======
+    factory(_apiKey: string) {
+>>>>>>> 554d6dd (fix: resolve all ESLint errors for CI)
       return {
         listTranscripts: async () => [],
         getTranscript: async (id: string) => {
@@ -237,6 +271,10 @@ describe("Backfill Summaries — POST /api/sync/backfill-summaries", () => {
       { id: "conv-1", source_id: "ff-1" },
       { id: "conv-2", source_id: "ff-2" },
     ]);
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 4ccbd94 (style: run Prettier on all conversation-sync files)
     mockSQL._setMetadata(
       "conv-1",
       JSON.stringify({ audio_url: "https://audio.example.com/ff-1.mp3" }),
@@ -245,6 +283,7 @@ describe("Backfill Summaries — POST /api/sync/backfill-summaries", () => {
       "conv-2",
       JSON.stringify({ audio_url: "https://audio.example.com/ff-2.mp3" }),
     );
+<<<<<<< HEAD
 
     // Both now have summaries on Fireflies
     clientFactory.setGetResult(
@@ -273,6 +312,62 @@ describe("Backfill Summaries — POST /api/sync/backfill-summaries", () => {
         },
       }),
     );
+=======
+    mockSQL._setMetadata("conv-1", JSON.stringify({ audio_url: "https://audio.example.com/ff-1.mp3" }));
+    mockSQL._setMetadata("conv-2", JSON.stringify({ audio_url: "https://audio.example.com/ff-2.mp3" }));
+
+    // Both now have summaries on Fireflies
+    clientFactory.setGetResult("ff-1", createMockFullTranscript({
+      id: "ff-1",
+      summary: {
+        keywords: ["roadmap"],
+        action_items: [],
+        overview: "Discussed Q3 roadmap",
+        shorthand_bullet: "- Roadmap",
+        meeting_type: "planning",
+      },
+    }));
+    clientFactory.setGetResult("ff-2", createMockFullTranscript({
+      id: "ff-2",
+      summary: {
+        keywords: ["standup"],
+        action_items: [],
+        overview: "Daily standup sync",
+        shorthand_bullet: "- Standup",
+        meeting_type: "standup",
+      },
+    }));
+>>>>>>> 3b4de56 (chore: include remaining conversation-sync backend and shared changes)
+=======
+
+    // Both now have summaries on Fireflies
+    clientFactory.setGetResult(
+      "ff-1",
+      createMockFullTranscript({
+        id: "ff-1",
+        summary: {
+          keywords: ["roadmap"],
+          action_items: [],
+          overview: "Discussed Q3 roadmap",
+          shorthand_bullet: "- Roadmap",
+          meeting_type: "planning",
+        },
+      }),
+    );
+    clientFactory.setGetResult(
+      "ff-2",
+      createMockFullTranscript({
+        id: "ff-2",
+        summary: {
+          keywords: ["standup"],
+          action_items: [],
+          overview: "Daily standup sync",
+          shorthand_bullet: "- Standup",
+          meeting_type: "standup",
+        },
+      }),
+    );
+>>>>>>> 4ccbd94 (style: run Prettier on all conversation-sync files)
 
     const res = await fetch(`http://localhost:${port}/api/sync/backfill-summaries`, {
       method: "POST",
@@ -285,8 +380,18 @@ describe("Backfill Summaries — POST /api/sync/backfill-summaries", () => {
     expect(body.still_missing).toBe(0);
 
     // Verify UPDATE calls were made
+<<<<<<< HEAD
+<<<<<<< HEAD
     const updateCalls = mockSQL._calls.filter((c) =>
       c.sql.includes("UPDATE conversation SET summary"),
+=======
+    const updateCalls = mockSQL._calls.filter(
+      (c) => c.sql.includes("UPDATE conversation SET summary"),
+>>>>>>> 3b4de56 (chore: include remaining conversation-sync backend and shared changes)
+=======
+    const updateCalls = mockSQL._calls.filter((c) =>
+      c.sql.includes("UPDATE conversation SET summary"),
+>>>>>>> 4ccbd94 (style: run Prettier on all conversation-sync files)
     );
     expect(updateCalls).toHaveLength(2);
 
@@ -309,6 +414,10 @@ describe("Backfill Summaries — POST /api/sync/backfill-summaries", () => {
     mockSQL._setMissingRows([{ id: "conv-1", source_id: "ff-1" }]);
     mockSQL._setMetadata("conv-1", JSON.stringify({}));
 
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 4ccbd94 (style: run Prettier on all conversation-sync files)
     clientFactory.setGetResult(
       "ff-1",
       createMockFullTranscript({
@@ -322,6 +431,21 @@ describe("Backfill Summaries — POST /api/sync/backfill-summaries", () => {
         },
       }),
     );
+<<<<<<< HEAD
+=======
+    clientFactory.setGetResult("ff-1", createMockFullTranscript({
+      id: "ff-1",
+      summary: {
+        keywords: ["retro"],
+        action_items: [],
+        overview: "Sprint retrospective",
+        shorthand_bullet: "- Retro",
+        meeting_type: "retro",
+      },
+    }));
+>>>>>>> 3b4de56 (chore: include remaining conversation-sync backend and shared changes)
+=======
+>>>>>>> 4ccbd94 (style: run Prettier on all conversation-sync files)
 
     const res = await fetch(`http://localhost:${port}/api/sync/backfill-summaries`, {
       method: "POST",
@@ -347,6 +471,10 @@ describe("Backfill Summaries — POST /api/sync/backfill-summaries", () => {
     ]);
 
     // ff-1 now has a summary, ff-2 still does not
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 4ccbd94 (style: run Prettier on all conversation-sync files)
     clientFactory.setGetResult(
       "ff-1",
       createMockFullTranscript({
@@ -373,6 +501,31 @@ describe("Backfill Summaries — POST /api/sync/backfill-summaries", () => {
         },
       }),
     );
+<<<<<<< HEAD
+=======
+    clientFactory.setGetResult("ff-1", createMockFullTranscript({
+      id: "ff-1",
+      summary: {
+        keywords: ["demo"],
+        action_items: [],
+        overview: "Product demo meeting",
+        shorthand_bullet: "- Demo",
+        meeting_type: "demo",
+      },
+    }));
+    clientFactory.setGetResult("ff-2", createMockFullTranscript({
+      id: "ff-2",
+      summary: {
+        keywords: [],
+        action_items: [],
+        overview: "", // empty overview = still no summary
+        shorthand_bullet: "",
+        meeting_type: "",
+      },
+    }));
+>>>>>>> 3b4de56 (chore: include remaining conversation-sync backend and shared changes)
+=======
+>>>>>>> 4ccbd94 (style: run Prettier on all conversation-sync files)
 
     mockSQL._setMetadata("conv-1", JSON.stringify({}));
 

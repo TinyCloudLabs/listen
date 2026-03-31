@@ -8,10 +8,11 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@google-cloud/pubsub": "^5.3.0",
+    "@scalar/express-api-reference": "^0.4.0",
     "@tinyboilerplate/core": "workspace:*",
     "@tinyboilerplate/server": "workspace:*",
     "@tinycloud/node-sdk": "~2.0.0",
-    "@scalar/express-api-reference": "^0.4.0",
     "cors": "^2.8.5",
     "express": "^4.21.0",
     "express-rate-limit": "^8.3.1",
