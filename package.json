@@ -15,7 +15,7 @@
     "@tinycloud/web-core": "1.7.0"
   },
   "scripts": {
-    "build": "turbo run build --filter=!conversation-sync-frontend --filter=!conversation-sync-backend",
+    "build": "turbo run build",
     "predev": "lsof -ti:3001,5173 | xargs kill -9 2>/dev/null; pkill -9 -f 'bun --watch src/index.ts' 2>/dev/null; true",
     "dev": "turbo run dev --filter=@tinyboilerplate/example-frontend --filter=@tinyboilerplate/example-backend",
     "dev:conversation-sync": "turbo run dev --filter=conversation-sync-frontend --filter=conversation-sync-backend",

@@ -2,14 +2,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
 import type { ServerInfo } from "@tinyboilerplate/core";
 import {
-  openKeySignIn,
+  connectWallet,
+  requestNonce,
+  verifySession,
   createAndSignIn,
   createApiClient,
   createDelegation,
   sendDelegation,
   checkDelegationStatus,
   revokeDelegation,
-  TokenStore,
+  SessionStore,
   type ApiClient,
 } from "@tinyboilerplate/client";
 
@@ -22,7 +24,6 @@ import { ConversationDetail } from "./components/ConversationDetail";
 // ── Environment ─────────────────────────────────────────────────────
 
 const OPENKEY_HOST = import.meta.env.VITE_OPENKEY_HOST || "https://openkey.so";
-const OPENKEY_CLIENT_ID = import.meta.env.VITE_OPENKEY_CLIENT_ID;
 const TINYCLOUD_HOST = import.meta.env.VITE_TINYCLOUD_HOST || "https://node.tinycloud.xyz";
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
@@ -43,7 +44,7 @@ export function App() {
   const [pendingBanner, setPendingBanner] = useState<string | null>(null);
   const [gmLapsedBanner, setGmLapsedBanner] = useState(false);
 
-  const tokenStoreRef = useRef(new TokenStore());
+  const sessionStoreRef = useRef(new SessionStore());
   const restoreAttemptedRef = useRef(false);
 
   // ── Session Restore ─────────────────────────────────────────────
@@ -52,22 +53,19 @@ export function App() {
     if (restoreAttemptedRef.current) return;
     restoreAttemptedRef.current = true;
 
-    const tokenStore = tokenStoreRef.current;
-    if (!tokenStore.hasTokens() || tokenStore.isExpired()) return;
+    const sessionStore = sessionStoreRef.current;
+    if (!sessionStore.hasSession() || sessionStore.isExpired()) return;
 
-    const storedAddress = tokenStore.getAddress();
+    const storedAddress = sessionStore.getAddress();
     if (!storedAddress) return;
 
     (async () => {
       setAuthLoading(true);
       try {
         console.log("[restore] Attempting session restore for", storedAddress);
-        const apiClient = createApiClient(BACKEND_URL, {
-          tokenStore,
-          refreshConfig: { openKeyHost: OPENKEY_HOST, clientId: OPENKEY_CLIENT_ID },
-        });
-        const token = tokenStore.getAccessToken();
-        if (!token) throw new Error("No access token after restore");
+        const apiClient = createApiClient(BACKEND_URL, { sessionStore });
+        const token = sessionStore.getToken();
+        if (!token) throw new Error("No session token after restore");
         const status = await checkDelegationStatus(BACKEND_URL, token);
         if (status.status !== "active") throw new Error("Delegation expired or missing");
         console.log("[restore] Session fully restored!");
@@ -77,7 +75,7 @@ export function App() {
         setApi(apiClient);
       } catch (err) {
         console.warn("[restore] Session restore failed:", err);
-        tokenStore.clear();
+        sessionStore.clear();
       } finally {
         setAuthLoading(false);
       }
@@ -168,34 +166,25 @@ export function App() {
     setAuthLoading(true);
     setAuthError(null);
     try {
-      const {
-        address: addr,
-        web3Provider,
-        tokens,
-      } = await openKeySignIn({
-        host: OPENKEY_HOST,
-        clientId: OPENKEY_CLIENT_ID,
-        redirectUri: window.location.origin,
-      });
-      tokenStoreRef.current.setTokens(
-        tokens.accessToken,
-        tokens.refreshToken ?? "",
-        tokens.expiresIn,
-        addr,
-      );
-      const tcwInstance = await createAndSignIn(web3Provider, {
+      const { address: addr, web3Provider } = await connectWallet({ host: OPENKEY_HOST });
+      const nonce = await requestNonce(BACKEND_URL, addr);
+      const { tcw: tcwInstance, session } = await createAndSignIn(web3Provider, {
+        nonce,
         tinycloudHosts: [TINYCLOUD_HOST],
         autoCreateSpace: true,
       });
+      const { token, expiresIn } = await verifySession(
+        BACKEND_URL,
+        session.siwe,
+        session.signature,
+      );
+      sessionStoreRef.current.setSession(token, expiresIn, addr);
       const apiClient = createApiClient(BACKEND_URL, {
-        tokenStore: tokenStoreRef.current,
-        refreshConfig: { openKeyHost: OPENKEY_HOST, clientId: OPENKEY_CLIENT_ID },
+        sessionStore: sessionStoreRef.current,
       });
       const infoRes = await fetch(`${BACKEND_URL}/api/server-info`);
       if (!infoRes.ok) throw new Error(`Server info: ${infoRes.statusText}`);
       const info: ServerInfo = await infoRes.json();
-      const token = tokenStoreRef.current.getAccessToken();
-      if (!token) throw new Error("No access token after sign-in");
       const serialized = await createDelegation(tcwInstance, info.did);
       await sendDelegation(BACKEND_URL, serialized, token);
       setAddress(addr);
@@ -210,10 +199,10 @@ export function App() {
   }, []);
 
   const handleSignOut = useCallback(async () => {
-    const token = tokenStoreRef.current.getAccessToken();
+    const token = sessionStoreRef.current.getToken();
     if (token) revokeDelegation(BACKEND_URL, token).catch(() => {});
     await tcw?.signOut?.();
-    tokenStoreRef.current.clear();
+    sessionStoreRef.current.clear();
     setAddress(null);
     setDid(null);
     setTcw(null);
@@ -306,7 +295,7 @@ export function App() {
             <SyncControl
               api={api}
               backendUrl={BACKEND_URL}
-              getAccessToken={() => tokenStoreRef.current.getAccessToken()}
+              getAccessToken={() => sessionStoreRef.current.getToken()}
               onSyncComplete={() => setRefreshKey((k) => k + 1)}
               hasFireflies={hasKey === true}
               hasGoogleMeet={hasGoogleMeet === true}
