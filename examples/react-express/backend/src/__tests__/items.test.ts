@@ -150,7 +150,7 @@ function createMockDelegatedAccess() {
 
 function mockMiddleware(delegatedAccess: any) {
   return (req: Request, _res: Response, next: NextFunction) => {
-    req.user = { sub: "test-sub" };
+    req.user = { address: "0xtest" };
     req.delegatedAccess = delegatedAccess;
     next();
   };

@@ -1,13 +1,11 @@
 import type { ApiError } from "@tinyboilerplate/core";
-import type { TokenStore, TokenRefreshConfig } from "./tokens.js";
+import type { SessionStore } from "./tokens.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
 export interface ApiClientConfig {
-  /** Token store for JWT-based auth. Sends Authorization: Bearer header. */
-  tokenStore: TokenStore;
-  /** If provided, auto-refreshes expired tokens before requests. */
-  refreshConfig?: TokenRefreshConfig;
+  /** Session store for Bearer token auth. */
+  sessionStore: SessionStore;
 }
 
 export interface ApiClient {
@@ -20,40 +18,36 @@ export interface ApiClient {
 // ── API Client ───────────────────────────────────────────────────────
 
 /**
- * Create a fetch wrapper that auto-attaches a Bearer token from the TokenStore.
- * Handles token refresh transparently.
+ * Create a fetch wrapper that auto-attaches a Bearer token from the SessionStore.
+ * On 401, clears the session — user must re-authenticate via SIWE.
  */
 export function createApiClient(backendUrl: string, config: ApiClientConfig): ApiClient {
-  const { tokenStore, refreshConfig } = config;
+  const { sessionStore } = config;
 
-  async function request<T>(path: string, init: RequestInit, isRetry = false): Promise<T> {
-    // Auto-refresh expired tokens before the request
-    if (tokenStore.isExpired() && refreshConfig) {
-      await tokenStore.refresh(refreshConfig);
+  async function request<T>(path: string, init: RequestInit): Promise<T> {
+    const token = sessionStore.getToken();
+    if (!token) {
+      throw new Error("Not authenticated. Please sign in.");
     }
 
-    const accessToken = tokenStore.getAccessToken();
-    if (!accessToken) {
-      throw new Error("Not authenticated. Please sign in.");
+    if (sessionStore.isExpired()) {
+      sessionStore.clear();
+      throw new Error("Session expired. Please sign in again.");
     }
 
     const res = await fetch(`${backendUrl}${path}`, {
       ...init,
       headers: {
         ...init.headers,
-        Authorization: `Bearer ${accessToken}`,
+        Authorization: `Bearer ${token}`,
         "X-Requested-With": "TinyBoilerplate",
       },
     });
 
-    // On 401, try refreshing the token once and retry
-    if (res.status === 401 && !isRetry && refreshConfig) {
-      try {
-        await tokenStore.refresh(refreshConfig);
-        return request<T>(path, init, true);
-      } catch {
-        throw new Error("Session expired. Please sign in again.");
-      }
+    // On 401, clear session — no auto-refresh with SIWE
+    if (res.status === 401) {
+      sessionStore.clear();
+      throw new Error("Session expired. Please sign in again.");
     }
 
     if (!res.ok) {

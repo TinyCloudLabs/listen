@@ -3,30 +3,18 @@ import { providers } from "ethers";
 
 // ── Configuration ────────────────────────────────────────────────────
 
-export interface OpenKeyConfig {
+export interface ConnectWalletConfig {
   host?: string;
   appName?: string;
-  /** OAuth client ID — required for token-based auth */
-  clientId: string;
-  /** OAuth redirect URI — must match your OpenKey app settings */
-  redirectUri: string;
   /** EIP-155 chain ID in hex, defaults to "0x1" (Ethereum mainnet) */
   chainId?: string;
 }
 
-export interface OAuthTokens {
-  accessToken: string;
-  refreshToken: string | undefined;
-  expiresIn: number;
-  idToken: string;
-}
-
-export interface SignInResult {
+export interface ConnectWalletResult {
   address: string;
   keyId: string;
   openkey: OpenKey;
   web3Provider: providers.Web3Provider;
-  tokens: OAuthTokens;
 }
 
 // ── EIP-1193 Provider ────────────────────────────────────────────────
@@ -76,45 +64,32 @@ function hexToString(hex: string): string {
   return new TextDecoder().decode(bytes);
 }
 
-// ── Sign In ──────────────────────────────────────────────────────────
+// ── Connect Wallet ──────────────────────────────────────────────────
 
 /**
- * Full OpenKey sign-in: passkey authentication + OAuth PKCE token exchange.
+ * Connect wallet via OpenKey passkey authentication.
  *
- * 1. Opens a popup for passkey authentication (connect)
- * 2. Runs OAuth PKCE flow to get verifiable tokens (oauth.connect + exchangeCode)
- * 3. Returns an ethers Web3Provider for TinyCloud signing + JWT tokens for backend auth
+ * Returns an EIP-1193-compatible provider (wrapped in ethers Web3Provider)
+ * and the wallet address. No OAuth tokens — authentication is handled
+ * separately via SIWE.
  */
-export async function openKeySignIn(config: OpenKeyConfig): Promise<SignInResult> {
+export async function connectWallet(config?: ConnectWalletConfig): Promise<ConnectWalletResult> {
   const openkey = new OpenKey({
-    host: config.host ?? "https://openkey.so",
-    appName: config.appName ?? "TinyBoilerplate",
+    host: config?.host ?? "https://openkey.so",
+    appName: config?.appName ?? "TinyBoilerplate",
   });
 
-  // 1. Passkey authentication via iframe — user authenticates, we get signing capability
-  console.log("[openkey] 1a. Calling openkey.connect()...");
+  // Passkey authentication via iframe — user authenticates, we get signing capability
+  console.log("[openkey] Calling openkey.connect()...");
   const authResult = await openkey.connect();
-  console.log("[openkey] 1a. connect() done. Address:", authResult.address);
+  console.log("[openkey] connect() done. Address:", authResult.address);
 
-  // 2. OAuth PKCE — exchange session for verifiable tokens
-  //    Passkey session persists, so the OAuth popup auto-approves instantly
-  const oauthConfig = {
-    clientId: config.clientId,
-    redirectUri: config.redirectUri,
-  };
-  console.log("[openkey] 1b. Calling oauth.connect()...");
-  const oauthResult = await openkey.oauth.connect(oauthConfig);
-  console.log("[openkey] 1b. oauth.connect() done. Got code:", !!oauthResult.code);
-  console.log("[openkey] 1c. Calling oauth.exchangeCode()...");
-  const tokenResponse = await openkey.oauth.exchangeCode(oauthResult.code, oauthConfig);
-  console.log("[openkey] 1c. exchangeCode() done. Got access_token:", !!tokenResponse.access_token);
-
-  // 3. Create EIP-1193 provider for TinyCloud SIWE signing
+  // Create EIP-1193 provider for SIWE signing
   const eip1193 = new OpenKeyEIP1193Provider(
     openkey,
     authResult.address,
     authResult.keyId,
-    config.chainId ?? "0x1",
+    config?.chainId ?? "0x1",
   );
 
   // Wrap in ethers Web3Provider for TinyCloudWeb compatibility
@@ -125,11 +100,5 @@ export async function openKeySignIn(config: OpenKeyConfig): Promise<SignInResult
     keyId: authResult.keyId,
     openkey,
     web3Provider,
-    tokens: {
-      accessToken: tokenResponse.access_token,
-      refreshToken: tokenResponse.refresh_token,
-      expiresIn: tokenResponse.expires_in,
-      idToken: tokenResponse.id_token,
-    },
   };
 }

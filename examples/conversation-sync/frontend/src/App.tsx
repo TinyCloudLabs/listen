@@ -290,7 +290,7 @@ export function App() {
 >>>>>>> 94871e9 (feat: full Fireflies pagination, SSE streaming sync, and frontend redesign)
 =======
 >>>>>>> 4ccbd94 (style: run Prettier on all conversation-sync files)
-      const tcwInstance = await createAndSignIn(web3Provider, {
+      const { tcw: tcwInstance } = await createAndSignIn(web3Provider, {
         tinycloudHosts: [TINYCLOUD_HOST],
         autoCreateSpace: true,
       });

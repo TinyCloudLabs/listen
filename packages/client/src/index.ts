@@ -1,10 +1,9 @@
 // ── Re-export everything ─────────────────────────────────────────────
 
 export {
-  openKeySignIn,
-  type OpenKeyConfig,
-  type SignInResult,
-  type OAuthTokens,
+  connectWallet,
+  type ConnectWalletConfig,
+  type ConnectWalletResult,
 } from "./openkey.js";
 
 export { createTinyCloudWeb, createAndSignIn, type TinyCloudWebConfig } from "./tinycloud.js";
@@ -23,6 +22,12 @@ export {
   type DelegationOptions,
 } from "./delegation.js";
 
-export { TokenStore, deriveApiHost, type StoredTokens, type TokenRefreshConfig } from "./tokens.js";
+export {
+  requestNonce,
+  verifySession,
+  type VerifyResponse,
+} from "./auth.js";
+
+export { SessionStore, type StoredSession } from "./tokens.js";
 
 export { createApiClient, type ApiClient, type ApiClientConfig } from "./api.js";

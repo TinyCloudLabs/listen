@@ -1,20 +1,19 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { createApiClient } from "../api.js";
-import type { TokenStore, TokenRefreshConfig } from "../tokens.js";
+import type { SessionStore } from "../tokens.js";
 
-// ── Mock TokenStore ──────────────────────────────────────────────────
+// ── Mock SessionStore ──────────────────────────────────────────────────
 
-function createMockTokenStore(overrides?: Partial<TokenStore>): TokenStore {
+function createMockSessionStore(overrides?: Partial<SessionStore>): SessionStore {
   return {
-    getAccessToken: () => "test-token",
-    getRefreshToken: () => "test-refresh",
-    hasTokens: () => true,
+    getToken: () => "test-token",
+    hasSession: () => true,
     isExpired: () => false,
-    setTokens: () => {},
+    setSession: () => {},
     clear: () => {},
-    refresh: async () => {},
+    getAddress: () => "0xtest",
     ...overrides,
-  } as TokenStore;
+  } as SessionStore;
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -46,8 +45,8 @@ describe("createApiClient", () => {
       });
     }) as typeof fetch;
 
-    const tokenStore = createMockTokenStore();
-    const client = createApiClient(backendUrl, { tokenStore });
+    const sessionStore = createMockSessionStore();
+    const client = createApiClient(backendUrl, { sessionStore });
 
     await client.get("/users/1");
 
@@ -74,8 +73,8 @@ describe("createApiClient", () => {
       });
     }) as typeof fetch;
 
-    const tokenStore = createMockTokenStore();
-    const client = createApiClient(backendUrl, { tokenStore });
+    const sessionStore = createMockSessionStore();
+    const client = createApiClient(backendUrl, { sessionStore });
 
     await client.post("/users", { name: "Alice" });
 
@@ -105,8 +104,8 @@ describe("createApiClient", () => {
       });
     }) as typeof fetch;
 
-    const tokenStore = createMockTokenStore();
-    const client = createApiClient(backendUrl, { tokenStore });
+    const sessionStore = createMockSessionStore();
+    const client = createApiClient(backendUrl, { sessionStore });
 
     await client.put("/users/1", { name: "Bob" });
 
@@ -130,8 +129,8 @@ describe("createApiClient", () => {
       return new Response(null, { status: 204 });
     }) as typeof fetch;
 
-    const tokenStore = createMockTokenStore();
-    const client = createApiClient(backendUrl, { tokenStore });
+    const sessionStore = createMockSessionStore();
+    const client = createApiClient(backendUrl, { sessionStore });
 
     await client.del("/users/1");
 
@@ -156,8 +155,8 @@ describe("createApiClient", () => {
       });
     }) as typeof fetch;
 
-    const tokenStore = createMockTokenStore();
-    const client = createApiClient(backendUrl, { tokenStore });
+    const sessionStore = createMockSessionStore();
+    const client = createApiClient(backendUrl, { sessionStore });
 
     const result = await client.get<{ id: number; name: string; active: boolean }>("/users/1");
     expect(result).toEqual(payload);
@@ -173,52 +172,36 @@ describe("createApiClient", () => {
       });
     }) as typeof fetch;
 
-    const tokenStore = createMockTokenStore();
-    const client = createApiClient(backendUrl, { tokenStore });
+    const sessionStore = createMockSessionStore();
+    const client = createApiClient(backendUrl, { sessionStore });
 
     await expect(client.get("/users/999")).rejects.toThrow("API error (404): User not found");
   });
 
-  // ── 401 auto-refresh ──────────────────────────────────────────────
+  // ── 401 clears session ─────────────────────────────────────────────
 
-  test("auto-refreshes token on 401 and retries", async () => {
-    const refreshConfig: TokenRefreshConfig = {
-      openKeyHost: "https://openkey.example.com",
-      clientId: "test-client",
-    };
-
-    let callCount = 0;
-    let refreshCalled = false;
+  test("clears session on 401 and throws", async () => {
+    let clearCalled = false;
 
     globalThis.fetch = (async () => {
-      callCount++;
-      if (callCount === 1) {
-        // First call returns 401
-        return new Response(JSON.stringify({ error: "unauthorized", message: "Token expired" }), {
-          status: 401,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-      // Retry after refresh succeeds
-      return new Response(JSON.stringify({ ok: true }), {
-        status: 200,
+      return new Response(JSON.stringify({ error: "unauthorized", message: "Token expired" }), {
+        status: 401,
         headers: { "Content-Type": "application/json" },
       });
     }) as typeof fetch;
 
-    const tokenStore = createMockTokenStore({
-      refresh: async () => {
-        refreshCalled = true;
+    const sessionStore = createMockSessionStore({
+      clear: () => {
+        clearCalled = true;
       },
-      getAccessToken: () => "refreshed-token",
     });
 
-    const client = createApiClient(backendUrl, { tokenStore, refreshConfig });
-    const result = await client.get<{ ok: boolean }>("/protected");
+    const client = createApiClient(backendUrl, { sessionStore });
 
-    expect(refreshCalled).toBe(true);
-    expect(callCount).toBe(2);
-    expect(result).toEqual({ ok: true });
+    await expect(client.get("/protected")).rejects.toThrow(
+      "Session expired. Please sign in again.",
+    );
+    expect(clearCalled).toBe(true);
   });
 
   // ── 204 No Content ────────────────────────────────────────────────
@@ -228,8 +211,8 @@ describe("createApiClient", () => {
       return new Response(null, { status: 204 });
     }) as typeof fetch;
 
-    const tokenStore = createMockTokenStore();
-    const client = createApiClient(backendUrl, { tokenStore });
+    const sessionStore = createMockSessionStore();
+    const client = createApiClient(backendUrl, { sessionStore });
 
     const result = await client.del("/users/1");
     expect(result).toBeUndefined();
@@ -237,14 +220,35 @@ describe("createApiClient", () => {
 
   // ── No token available ────────────────────────────────────────────
 
-  test("throws when no access token is available", async () => {
-    const tokenStore = createMockTokenStore({
-      getAccessToken: () => null,
+  test("throws when no session token is available", async () => {
+    const sessionStore = createMockSessionStore({
+      getToken: () => null,
       isExpired: () => true,
     });
 
-    const client = createApiClient(backendUrl, { tokenStore });
+    const client = createApiClient(backendUrl, { sessionStore });
 
     await expect(client.get("/anything")).rejects.toThrow("Not authenticated. Please sign in.");
+  });
+
+  // ── Expired session ───────────────────────────────────────────────
+
+  test("throws when session is expired", async () => {
+    let clearCalled = false;
+
+    const sessionStore = createMockSessionStore({
+      getToken: () => "expired-token",
+      isExpired: () => true,
+      clear: () => {
+        clearCalled = true;
+      },
+    });
+
+    const client = createApiClient(backendUrl, { sessionStore });
+
+    await expect(client.get("/anything")).rejects.toThrow(
+      "Session expired. Please sign in again.",
+    );
+    expect(clearCalled).toBe(true);
   });
 });

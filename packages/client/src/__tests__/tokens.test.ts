@@ -1,188 +1,90 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { TokenStore, type TokenRefreshConfig } from "../tokens.js";
+import { describe, test, expect, beforeEach } from "bun:test";
+import { SessionStore } from "../tokens.js";
 
-describe("TokenStore", () => {
-  let store: TokenStore;
+describe("SessionStore", () => {
+  let store: SessionStore;
 
   beforeEach(() => {
-    store = new TokenStore();
+    store = new SessionStore();
   });
 
-  // ── setTokens / getters ──────────────────────────────────────────────
+  // ── setSession / getters ──────────────────────────────────────────────
 
-  test("setTokens stores tokens correctly", () => {
-    store.setTokens("access-123", "refresh-456", 3600);
+  test("setSession stores session correctly", () => {
+    store.setSession("token-123", 3600);
 
-    expect(store.getAccessToken()).toBe("access-123");
-    expect(store.getRefreshToken()).toBe("refresh-456");
-    expect(store.hasTokens()).toBe(true);
+    expect(store.getToken()).toBe("token-123");
+    expect(store.hasSession()).toBe(true);
   });
 
-  test("getAccessToken returns null when no tokens are set", () => {
-    expect(store.getAccessToken()).toBeNull();
+  test("setSession stores session with address", () => {
+    store.setSession("token-123", 3600, "0xABC");
+
+    expect(store.getToken()).toBe("token-123");
+    expect(store.getAddress()).toBe("0xABC");
+    expect(store.hasSession()).toBe(true);
   });
 
-  test("getRefreshToken returns null when no tokens are set", () => {
-    expect(store.getRefreshToken()).toBeNull();
+  test("getToken returns null when no session is set", () => {
+    expect(store.getToken()).toBeNull();
   });
 
-  // ── hasTokens ────────────────────────────────────────────────────────
+  // ── hasSession ────────────────────────────────────────────────────────
 
-  test("hasTokens returns false when no tokens are set", () => {
-    expect(store.hasTokens()).toBe(false);
+  test("hasSession returns false when no session is set", () => {
+    expect(store.hasSession()).toBe(false);
   });
 
-  test("hasTokens returns true after tokens are set", () => {
-    store.setTokens("a", "r", 3600);
-    expect(store.hasTokens()).toBe(true);
+  test("hasSession returns true after session is set", () => {
+    store.setSession("t", 3600);
+    expect(store.hasSession()).toBe(true);
   });
 
   // ── isExpired ────────────────────────────────────────────────────────
 
-  test("isExpired returns false for fresh tokens", () => {
+  test("isExpired returns false for fresh session", () => {
     // 1 hour expiry — well outside the 30s buffer
-    store.setTokens("a", "r", 3600);
+    store.setSession("t", 3600);
     expect(store.isExpired()).toBe(false);
   });
 
-  test("isExpired returns true when token is within 30s buffer of expiry", () => {
+  test("isExpired returns true when session is within 30s buffer of expiry", () => {
     // Set expiry to 20 seconds — within the 30s buffer
-    store.setTokens("a", "r", 20);
+    store.setSession("t", 20);
     expect(store.isExpired()).toBe(true);
   });
 
-  test("isExpired returns true when no tokens are set", () => {
+  test("isExpired returns true when no session is set", () => {
     expect(store.isExpired()).toBe(true);
   });
 
-  test("isExpired returns true when token is already expired", () => {
+  test("isExpired returns true when session is already expired", () => {
     // 0 seconds means expires immediately
-    store.setTokens("a", "r", 0);
+    store.setSession("t", 0);
     expect(store.isExpired()).toBe(true);
   });
 
   // ── clear ────────────────────────────────────────────────────────────
 
-  test("clear removes all tokens", () => {
-    store.setTokens("a", "r", 3600);
-    expect(store.hasTokens()).toBe(true);
+  test("clear removes session", () => {
+    store.setSession("t", 3600);
+    expect(store.hasSession()).toBe(true);
 
     store.clear();
 
-    expect(store.hasTokens()).toBe(false);
-    expect(store.getAccessToken()).toBeNull();
-    expect(store.getRefreshToken()).toBeNull();
+    expect(store.hasSession()).toBe(false);
+    expect(store.getToken()).toBeNull();
     expect(store.isExpired()).toBe(true);
   });
 
-  // ── refresh ──────────────────────────────────────────────────────────
+  // ── getAddress ────────────────────────────────────────────────────────
 
-  describe("refresh", () => {
-    const refreshConfig: TokenRefreshConfig = {
-      openKeyHost: "https://openkey.example.com",
-      clientId: "test-client-id",
-    };
+  test("getAddress returns null when no session is set", () => {
+    expect(store.getAddress()).toBeNull();
+  });
 
-    let originalFetch: typeof globalThis.fetch;
-
-    beforeEach(() => {
-      originalFetch = globalThis.fetch;
-    });
-
-    afterEach(() => {
-      globalThis.fetch = originalFetch;
-    });
-
-    test("calls the token endpoint with correct params", async () => {
-      store.setTokens("old-access", "old-refresh", 3600);
-
-      let capturedUrl: string | undefined;
-      let capturedInit: RequestInit | undefined;
-
-      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-        capturedUrl = input.toString();
-        capturedInit = init;
-        return new Response(
-          JSON.stringify({
-            access_token: "new-access",
-            refresh_token: "new-refresh",
-            expires_in: 7200,
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        );
-      }) as typeof fetch;
-
-      await store.refresh(refreshConfig);
-
-      expect(capturedUrl).toBe("https://api.openkey.example.com/api/auth/oauth2/token");
-      expect(capturedInit?.method).toBe("POST");
-      expect(capturedInit?.headers).toEqual({
-        "Content-Type": "application/x-www-form-urlencoded",
-      });
-
-      const body = new URLSearchParams(capturedInit?.body as string);
-      expect(body.get("grant_type")).toBe("refresh_token");
-      expect(body.get("refresh_token")).toBe("old-refresh");
-      expect(body.get("client_id")).toBe("test-client-id");
-    });
-
-    test("updates stored tokens on success", async () => {
-      store.setTokens("old-access", "old-refresh", 3600);
-
-      globalThis.fetch = (async () => {
-        return new Response(
-          JSON.stringify({
-            access_token: "new-access",
-            refresh_token: "new-refresh",
-            expires_in: 7200,
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        );
-      }) as typeof fetch;
-
-      await store.refresh(refreshConfig);
-
-      expect(store.getAccessToken()).toBe("new-access");
-      expect(store.getRefreshToken()).toBe("new-refresh");
-      expect(store.isExpired()).toBe(false);
-    });
-
-    test("keeps old refresh token when server does not return a new one", async () => {
-      store.setTokens("old-access", "old-refresh", 3600);
-
-      globalThis.fetch = (async () => {
-        return new Response(
-          JSON.stringify({
-            access_token: "new-access",
-            // no refresh_token in response
-            expires_in: 7200,
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        );
-      }) as typeof fetch;
-
-      await store.refresh(refreshConfig);
-
-      expect(store.getAccessToken()).toBe("new-access");
-      expect(store.getRefreshToken()).toBe("old-refresh");
-    });
-
-    test("clears tokens on failure", async () => {
-      store.setTokens("old-access", "old-refresh", 3600);
-
-      globalThis.fetch = (async () => {
-        return new Response("Invalid grant", { status: 400 });
-      }) as typeof fetch;
-
-      await expect(store.refresh(refreshConfig)).rejects.toThrow("Token refresh failed");
-
-      expect(store.hasTokens()).toBe(false);
-      expect(store.getAccessToken()).toBeNull();
-    });
-
-    test("throws when no refresh token available", async () => {
-      // No tokens set at all
-      await expect(store.refresh(refreshConfig)).rejects.toThrow("No refresh token available");
-    });
+  test("getAddress returns stored address", () => {
+    store.setSession("t", 3600, "0xDEADBEEF");
+    expect(store.getAddress()).toBe("0xDEADBEEF");
   });
 });
