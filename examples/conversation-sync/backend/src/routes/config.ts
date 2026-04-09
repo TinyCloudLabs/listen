@@ -29,7 +29,7 @@ interface ConfigRoutesConfig {
 const FIREFLIES_KEY_PATH = "/app.conversations/config/fireflies-key";
 const GOOGLE_TOKENS_PATH = "/app.conversations/config/google-tokens";
 const WEBHOOK_SECRET_PATH = "/app.webhooks/config/fireflies-secret";
-const WEBHOOK_USER_SUB_PATH = "/app.webhooks/config/user-sub";
+const WEBHOOK_USER_ADDRESS_PATH = "/app.webhooks/config/user-address";
 const WEBHOOK_PENDING_PATH = "/app.webhooks/pending/fireflies";
 const GMEET_SUBSCRIPTION_KV_PATH = "/app.webhooks/config/google-meet-subscription";
 const GMEET_PENDING_KV_PATH = "/app.webhooks/pending/google-meet";
@@ -176,9 +176,9 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
 
       try {
         await backendKV.put(WEBHOOK_SECRET_PATH, secret);
-        // Store user sub so webhook handler can look up their delegation
-        if (req.user?.sub) {
-          await backendKV.put(WEBHOOK_USER_SUB_PATH, req.user.sub);
+        // Store user address so webhook handler can look up their delegation
+        if (req.user?.address) {
+          await backendKV.put(WEBHOOK_USER_ADDRESS_PATH, req.user.address);
         }
         res.json({ ok: true });
       } catch (err) {

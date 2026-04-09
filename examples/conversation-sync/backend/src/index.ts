@@ -14,11 +14,13 @@ import {
   DelegationStore,
   DelegationCache,
   createCsrfMiddleware,
+  createNonceStore,
   withSessionRefresh,
 } from "@tinyboilerplate/server";
 
 import { createAuthMiddleware } from "./middleware/auth.js";
 import { createDelegationMiddleware } from "./middleware/delegation.js";
+import { createAuthRouter } from "./routes/auth.js";
 import { createServerInfoRouter } from "./routes/server-info.js";
 import { createDelegationRouter } from "./routes/delegations.js";
 import { createConfigRouter } from "./routes/config.js";
@@ -35,16 +37,15 @@ import { parsePubSubConfig, createMeetSubscription, deleteMeetSubscription } fro
 
 // ── Environment ──────────────────────────────────────────────────────
 
-const BACKEND_PRIVATE_KEY = process.env.BACKEND_PRIVATE_KEY;
-const TINYCLOUD_HOST = process.env.TINYCLOUD_HOST ?? "https://node.tinycloud.xyz";
-const OPENKEY_ISSUER_URL = process.env.OPENKEY_ISSUER_URL ?? "https://openkey.so";
-const FRONTEND_URL = process.env.FRONTEND_URL ?? "http://localhost:5173";
-const PORT = parseInt(process.env.PORT ?? "3001", 10);
-
-if (!BACKEND_PRIVATE_KEY) {
+if (!process.env.BACKEND_PRIVATE_KEY) {
   console.error("BACKEND_PRIVATE_KEY is required. Generate one with: bun run generate-key");
   process.exit(1);
 }
+
+const BACKEND_PRIVATE_KEY: string = process.env.BACKEND_PRIVATE_KEY;
+const TINYCLOUD_HOST = process.env.TINYCLOUD_HOST ?? "https://node.tinycloud.xyz";
+const FRONTEND_URL = process.env.FRONTEND_URL ?? "https://localhost:5173";
+const PORT = parseInt(process.env.PORT ?? "3001", 10);
 
 // ── Bootstrap ────────────────────────────────────────────────────────
 
@@ -64,8 +65,9 @@ async function main() {
   const delegationStore = new DelegationStore(node);
   const delegationCache = new DelegationCache();
 
-  // 3. Create middleware
-  const authMiddleware = createAuthMiddleware(OPENKEY_ISSUER_URL);
+  // 3. Create auth infrastructure
+  const nonceStore = createNonceStore();
+  const authMiddleware = createAuthMiddleware(BACKEND_PRIVATE_KEY);
 
   const delegationMiddleware = createDelegationMiddleware({
     node,
@@ -77,34 +79,34 @@ async function main() {
   const backendKV = {
     get: (key: string) => withSessionRefresh(node, () => node.kv.get(key)),
     put: (key: string, value: string) => withSessionRefresh(node, () => node.kv.put(key, value)),
-  };
+  } as any;
 
   // Resolve delegated access for webhook processing (single-user mode)
-  const WEBHOOK_USER_SUB_PATH = "/app.webhooks/config/user-sub";
+  const WEBHOOK_USER_ADDRESS_PATH = "/app.webhooks/config/user-address";
   const tryGetDelegatedAccess = async () => {
-    const subResult = await backendKV.get(WEBHOOK_USER_SUB_PATH);
-    const sub =
-      subResult.ok && (subResult as any).data?.data ? String((subResult as any).data.data) : null;
-    if (!sub) {
+    const addrResult = await backendKV.get(WEBHOOK_USER_ADDRESS_PATH);
+    const address =
+      addrResult.ok && (addrResult as any).data?.data ? String((addrResult as any).data.data) : null;
+    if (!address) {
       console.log(
-        "[webhook] no user-sub stored — webhook secret may not have been saved with a signed-in user",
+        "[webhook] no user-address stored — webhook secret may not have been saved with a signed-in user",
       );
       return null;
     }
-    console.log(`[webhook] resolving delegation for sub=${sub}`);
+    console.log(`[webhook] resolving delegation for address=${address}`);
 
     // Check cache first
-    let access = delegationCache.get(sub);
+    let access = delegationCache.get(address);
     if (access) {
       console.log("[webhook] delegation found in cache");
       return access;
     }
 
     // Load from persistent store
-    const stored = await delegationStore.load(sub);
+    const stored = await delegationStore.load(address);
     if (!stored) {
       console.log(
-        "[webhook] no delegation in store for this sub — user needs to sign in and delegate",
+        "[webhook] no delegation in store for this address — user needs to sign in and delegate",
       );
       return null;
     }
@@ -117,7 +119,7 @@ async function main() {
     try {
       const delegation = deserializeDelegation(stored.serialized);
       access = await node.useDelegation(delegation);
-      delegationCache.set(sub, access);
+      delegationCache.set(address, access);
       console.log("[webhook] delegation activated from store");
       return access;
     } catch (err) {
@@ -147,19 +149,19 @@ async function main() {
   // Google Meet push endpoint — after JSON parsing, before CSRF (public, OIDC-verified)
   const pubSubConfig = parsePubSubConfig();
   if (pubSubConfig) {
-    const GOOGLE_MEET_USER_SUB_PATH = "/app.webhooks/config/google-meet-user-sub";
+    const GOOGLE_MEET_USER_ADDRESS_PATH = "/app.webhooks/config/google-meet-user-address";
     const tryGetGoogleMeetAccess = async () => {
-      const subResult = await backendKV.get(GOOGLE_MEET_USER_SUB_PATH);
-      const sub = subResult.ok && (subResult as any).data?.data ? String((subResult as any).data.data) : null;
-      if (!sub) return null;
-      let access = delegationCache.get(sub);
+      const addrResult = await backendKV.get(GOOGLE_MEET_USER_ADDRESS_PATH);
+      const address = addrResult.ok && (addrResult as any).data?.data ? String((addrResult as any).data.data) : null;
+      if (!address) return null;
+      let access = delegationCache.get(address);
       if (access) return access;
-      const stored = await delegationStore.load(sub);
+      const stored = await delegationStore.load(address);
       if (!stored || new Date(stored.expiresAt).getTime() <= Date.now()) return null;
       try {
         const delegation = deserializeDelegation(stored.serialized);
         access = await node.useDelegation(delegation);
-        delegationCache.set(sub, access);
+        delegationCache.set(address, access);
         return access;
       } catch {
         return null;
@@ -181,12 +183,20 @@ async function main() {
 
   app.use(createCsrfMiddleware());
 
-  // 5. Rate limiting
+  // 6. Rate limiting
   const generalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 100,
     standardHeaders: "draft-7",
     legacyHeaders: false,
+  });
+
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 30,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    message: { error: "rate_limited", message: "Too many auth requests" },
   });
 
   const delegationLimiter = rateLimit({
@@ -199,8 +209,17 @@ async function main() {
 
   app.use(generalLimiter);
 
-  // 6. Mount routes
+  // 7. Mount routes
   app.use("/api/server-info", createServerInfoRouter(did));
+
+  app.use(
+    "/api/auth",
+    authLimiter,
+    createAuthRouter({
+      nonceStore,
+      privateKey: BACKEND_PRIVATE_KEY,
+    }),
+  );
 
   app.use(
     "/api/delegations",
@@ -211,7 +230,6 @@ async function main() {
       store: delegationStore,
       cache: delegationCache,
       authMiddleware,
-      openKeyIssuerUrl: OPENKEY_ISSUER_URL,
     }),
   );
 
@@ -233,15 +251,15 @@ async function main() {
     createGoogleAuthRouter({
       authMiddleware,
       delegationMiddleware,
-      resolveDelegation: async (sub: string) => {
-        let access = delegationCache.get(sub);
+      resolveDelegation: async (address: string) => {
+        let access = delegationCache.get(address);
         if (access) return access;
-        const stored = await delegationStore.load(sub);
+        const stored = await delegationStore.load(address);
         if (!stored || new Date(stored.expiresAt).getTime() <= Date.now()) return null;
         try {
           const delegation = deserializeDelegation(stored.serialized);
           access = await node.useDelegation(delegation);
-          delegationCache.set(sub, access);
+          delegationCache.set(address, access);
           return access;
         } catch {
           return null;
@@ -299,13 +317,13 @@ async function main() {
     }),
   );
 
-  // 7. OpenAPI docs
+  // 8. OpenAPI docs
   const __dirname = dirname(fileURLToPath(import.meta.url));
   const spec = loadYaml(readFileSync(resolve(__dirname, "../openapi.yaml"), "utf-8")) as object;
   app.get("/api/openapi.json", (_req, res) => res.json(spec));
   app.use("/api/docs", apiReference({ spec: { content: spec } }));
 
-  // 8. Start server
+  // 9. Start server
   const server = app.listen(PORT, () => {
     console.log(`Backend ready. DID: ${did}`);
     console.log(`Listening on http://localhost:${PORT}`);
