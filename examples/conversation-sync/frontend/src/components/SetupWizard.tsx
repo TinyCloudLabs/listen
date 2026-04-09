@@ -215,14 +215,14 @@ export const SetupWizard: FC<SetupWizardProps> = ({
           <p style={s.stepDesc}>
             Go to{" "}
             <a
-              href="https://app.fireflies.ai/integrations"
+              href="https://app.fireflies.ai/settings/developer-settings"
               target="_blank"
               rel="noreferrer"
               style={s.link}
             >
-              app.fireflies.ai
+              app.fireflies.ai/settings/developer-settings
             </a>{" "}
-            &rarr; Integrations &rarr; Fireflies API &rarr; copy your API key.
+            and copy your API key.
           </p>
           <div style={s.btnRow}>
             <button style={s.btnGhost} onClick={() => setStep("welcome")}>

@@ -2,7 +2,7 @@ import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
 import { FirefliesClient } from "../services/fireflies-client.js";
 import { ensureSchema } from "../schema.js";
-import { syncSingleTranscript } from "../services/sync-pipeline.js";
+import { persistFullTranscript } from "../services/sync-pipeline.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -23,10 +23,6 @@ const FIREFLIES_KEY_PATH = "/app.conversations/config/fireflies-key";
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
 const SYNC_DELAY_MS = 800;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 // ── Sync Routes ──────────────────────────────────────────────────────
 
@@ -107,26 +103,25 @@ export function createSyncRouter(config: SyncRoutesConfig) {
       const newSummaries = summaries.filter((s) => !existingIds.has(s.id));
       const skipped = summaries.length - newSummaries.length;
 
-      // 7. Fetch details, normalize, and insert each new transcript
+      // 7. Persist each new transcript — no extra API call, content was in list query
       let synced = 0;
       let failed = 0;
       const errors: string[] = [];
       const conversations: Array<{ id: string; title: string; started_at: string }> = [];
 
-      for (const summary of newSummaries) {
-        const result = await syncSingleTranscript(summary.id, access, client);
+      for (const transcript of newSummaries) {
+        const result = await persistFullTranscript(transcript, access);
         if (result.status === "created") {
           synced++;
           conversations.push({
             id: result.conversationId!,
-            title: result.title ?? summary.title ?? "",
+            title: result.title ?? transcript.title ?? "",
             started_at: result.startedAt ?? "",
           });
         } else if (result.status === "error") {
           failed++;
-          errors.push(`${summary.id}: ${result.error}`);
+          errors.push(`${transcript.id}: ${result.error}`);
         }
-        // 'skipped' shouldn't happen here due to batch dedup, but handle gracefully
       }
 
       res.json({
@@ -241,19 +236,19 @@ export function createSyncRouter(config: SyncRoutesConfig) {
       for (let i = 0; i < newSummaries.length; i++) {
         if (aborted) break;
 
-        const summary = newSummaries[i];
-        const result = await syncSingleTranscript(summary.id, access, client);
+        const transcript = newSummaries[i];
+        const result = await persistFullTranscript(transcript, access);
 
         if (result.status === "created") {
           synced++;
           conversations.push({
             id: result.conversationId!,
-            title: result.title ?? summary.title ?? "",
+            title: result.title ?? transcript.title ?? "",
             started_at: result.startedAt ?? "",
           });
         } else if (result.status === "error") {
           failed++;
-          errors.push(`${summary.id}: ${result.error}`);
+          errors.push(`${transcript.id}: ${result.error}`);
         }
 
         sendEvent("progress", {
@@ -262,13 +257,8 @@ export function createSyncRouter(config: SyncRoutesConfig) {
           total: newSummaries.length,
           synced,
           failed,
-          lastTitle: summary.title,
+          lastTitle: transcript.title,
         });
-
-        // Rate limit protection between full-transcript fetches
-        if (i < newSummaries.length - 1 && !aborted) {
-          await sleep(delayMs);
-        }
       }
 
       // 7. Done
