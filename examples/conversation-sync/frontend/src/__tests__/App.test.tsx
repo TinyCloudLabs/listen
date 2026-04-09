@@ -11,8 +11,8 @@ const mockDel = vi.fn();
 const mockApiClient = { get: mockGet, post: mockPost, put: mockPut, del: mockDel };
 
 vi.mock("@tinyboilerplate/client", () => {
-  class MockTokenStore {
-    hasTokens() {
+  class MockSessionStore {
+    hasSession() {
       return true;
     }
     isExpired() {
@@ -21,21 +21,23 @@ vi.mock("@tinyboilerplate/client", () => {
     getAddress() {
       return "0xabc123";
     }
-    getAccessToken() {
+    getToken() {
       return "mock-token";
     }
-    setTokens() {}
+    setSession() {}
     clear() {}
   }
   return {
-    openKeySignIn: vi.fn(),
+    connectWallet: vi.fn(),
+    requestNonce: vi.fn(),
+    verifySession: vi.fn(),
     createAndSignIn: vi.fn(),
     createApiClient: vi.fn(() => mockApiClient),
     createDelegation: vi.fn(),
     sendDelegation: vi.fn(),
     checkDelegationStatus: vi.fn().mockResolvedValue({ status: "active" }),
     revokeDelegation: vi.fn(),
-    TokenStore: MockTokenStore,
+    SessionStore: MockSessionStore,
   };
 });
 

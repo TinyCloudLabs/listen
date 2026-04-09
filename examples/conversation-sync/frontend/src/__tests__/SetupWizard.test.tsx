@@ -195,7 +195,7 @@ describe("SetupWizard", () => {
     expect(screen.getByText(/app\.fireflies\.ai/i)).toBeInTheDocument();
     expect(screen.getByRole("link")).toHaveAttribute(
       "href",
-      "https://app.fireflies.ai/integrations",
+      "https://app.fireflies.ai/settings/developer-settings",
     );
   });
 

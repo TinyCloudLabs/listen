@@ -4,7 +4,6 @@ import type { Server } from "http";
 import type { Request, Response, NextFunction } from "express";
 import { createSyncRouter } from "../routes/sync.js";
 import type {
-  TranscriptSummary,
   FullTranscript,
   PaginationOptions,
   PaginationResult,
@@ -37,11 +36,19 @@ function createMockKV() {
 function createMockSQL() {
   const calls: Array<{ method: string; sql: string; params?: any[] }> = [];
   let dedupRows: Array<{ source_id: string }> = [];
+  const failingSourceIds = new Set<string>();
 
   return {
     _calls: calls,
     _setDedupRows(rows: Array<{ source_id: string }>) {
       dedupRows = rows;
+    },
+    /**
+     * Causes any INSERT whose params contain the given source_id to throw.
+     * Used to simulate a per-transcript persist failure in batch sync tests.
+     */
+    _failOnSourceId(id: string) {
+      failingSourceIds.add(id);
     },
     query: async (sql: string, params?: any[]) => {
       calls.push({ method: "query", sql, params });
@@ -74,6 +81,14 @@ function createMockSQL() {
 
       // INSERT statements
       if (sql.trim().startsWith("INSERT")) {
+        // Failure injection: throw if any param matches a failing source_id
+        if (params && failingSourceIds.size > 0) {
+          for (const p of params) {
+            if (typeof p === "string" && failingSourceIds.has(p)) {
+              throw new Error(`Simulated persist failure for ${p}`);
+            }
+          }
+        }
         return { ok: true, data: { changes: 1 } };
       }
 
@@ -83,19 +98,6 @@ function createMockSQL() {
 }
 
 // ── Mock Fireflies Client Factory ────────────────────────────────────
-
-function createMockTranscriptSummary(
-  overrides: Partial<TranscriptSummary> = {},
-): TranscriptSummary {
-  return {
-    id: overrides.id ?? "ff-1",
-    title: overrides.title ?? "Test Meeting",
-    date: overrides.date ?? 1711000000000,
-    duration: overrides.duration ?? 60,
-    organizer_email: overrides.organizer_email ?? "test@example.com",
-    transcript_url: overrides.transcript_url ?? "https://app.fireflies.ai/view/ff-1",
-  };
-}
 
 function createMockFullTranscript(overrides: Partial<FullTranscript> = {}): FullTranscript {
   return {
@@ -144,22 +146,23 @@ function createMockFullTranscript(overrides: Partial<FullTranscript> = {}): Full
 }
 
 function createMockClientFactory() {
-  let listResult: TranscriptSummary[] = [];
+  let listResult: FullTranscript[] = [];
   /** For paginated listing: array of batches, each batch returned per call */
-  let listBatches: TranscriptSummary[][] | null = null;
+  let listBatches: FullTranscript[][] | null = null;
   let listCallIndex = 0;
   const getResults = new Map<string, FullTranscript | Error>();
   let lastApiKey: string | null = null;
 
   return {
-    setListResult(transcripts: TranscriptSummary[]) {
+    setListResult(transcripts: FullTranscript[]) {
       listResult = transcripts;
     },
     /** Set paginated batches for listAllTranscripts tests */
-    setListBatches(batches: TranscriptSummary[][]) {
+    setListBatches(batches: FullTranscript[][]) {
       listBatches = batches;
       listCallIndex = 0;
     },
+    /** Only used by webhook-style tests that call getTranscript directly. */
     setGetResult(id: string, result: FullTranscript | Error) {
       getResults.set(id, result);
     },
@@ -182,7 +185,7 @@ function createMockClientFactory() {
           if (listBatches) {
             const knownIds = options?.knownIds;
             const mode = options?.mode ?? "incremental";
-            const all: TranscriptSummary[] = [];
+            const all: FullTranscript[] = [];
             let batchCount = 0;
             let earlyExit = false;
 
@@ -223,11 +226,11 @@ function createMockClientFactory() {
 
 // ── Test Helpers ─────────────────────────────────────────────────────
 
-const TEST_SUB = "test-sub";
+const TEST_ADDRESS = "0xTEST";
 const KV_KEY = "/app.conversations/config/fireflies-key";
 
 function mockAuthMiddleware(req: Request, _res: Response, next: NextFunction) {
-  req.user = { sub: TEST_SUB };
+  req.user = { address: TEST_ADDRESS };
   next();
 }
 
@@ -325,9 +328,9 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
     mockKV._data.set(KV_KEY, "test-api-key");
 
     const summaries = [
-      createMockTranscriptSummary({ id: "ff-1", title: "Meeting 1" }),
-      createMockTranscriptSummary({ id: "ff-2", title: "Meeting 2" }),
-      createMockTranscriptSummary({ id: "ff-3", title: "Meeting 3" }),
+      createMockFullTranscript({ id: "ff-1", title: "Meeting 1" }),
+      createMockFullTranscript({ id: "ff-2", title: "Meeting 2" }),
+      createMockFullTranscript({ id: "ff-3", title: "Meeting 3" }),
     ];
     clientFactory.setListResult(summaries);
     clientFactory.setGetResult(
@@ -371,9 +374,9 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
     mockKV._data.set(KV_KEY, "test-api-key");
 
     const summaries = [
-      createMockTranscriptSummary({ id: "ff-1", title: "Meeting 1" }),
-      createMockTranscriptSummary({ id: "ff-2", title: "Meeting 2" }),
-      createMockTranscriptSummary({ id: "ff-3", title: "Meeting 3" }),
+      createMockFullTranscript({ id: "ff-1", title: "Meeting 1" }),
+      createMockFullTranscript({ id: "ff-2", title: "Meeting 2" }),
+      createMockFullTranscript({ id: "ff-3", title: "Meeting 3" }),
     ];
     clientFactory.setListResult(summaries);
     // Only set up getTranscript for ff-2 and ff-3 — ff-1 should not be fetched
@@ -411,8 +414,8 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
     mockKV._data.set(KV_KEY, "test-api-key");
 
     const summaries = [
-      createMockTranscriptSummary({ id: "ff-1" }),
-      createMockTranscriptSummary({ id: "ff-2" }),
+      createMockFullTranscript({ id: "ff-1" }),
+      createMockFullTranscript({ id: "ff-2" }),
     ];
     clientFactory.setListResult(summaries);
 
@@ -441,21 +444,14 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
     mockKV._data.set(KV_KEY, "test-api-key");
 
     const summaries = [
-      createMockTranscriptSummary({ id: "ff-1", title: "Meeting 1" }),
-      createMockTranscriptSummary({ id: "ff-2", title: "Meeting 2" }),
-      createMockTranscriptSummary({ id: "ff-3", title: "Meeting 3" }),
+      createMockFullTranscript({ id: "ff-1", title: "Meeting 1" }),
+      createMockFullTranscript({ id: "ff-2", title: "Meeting 2" }),
+      createMockFullTranscript({ id: "ff-3", title: "Meeting 3" }),
     ];
     clientFactory.setListResult(summaries);
 
-    clientFactory.setGetResult(
-      "ff-1",
-      createMockFullTranscript({ id: "ff-1", title: "Meeting 1" }),
-    );
-    clientFactory.setGetResult("ff-2", new Error("Fireflies API timeout"));
-    clientFactory.setGetResult(
-      "ff-3",
-      createMockFullTranscript({ id: "ff-3", title: "Meeting 3" }),
-    );
+    // Simulate a persist failure on ff-2 by making SQL INSERT throw for that source_id
+    mockSQL._failOnSourceId("ff-2");
 
     mockSQL._setDedupRows([]);
 
@@ -558,7 +554,7 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
   it("writes transcript sentences to KV", async () => {
     mockKV._data.set(KV_KEY, "test-api-key");
 
-    const summaries = [createMockTranscriptSummary({ id: "ff-1" })];
+    const summaries = [createMockFullTranscript({ id: "ff-1" })];
     clientFactory.setListResult(summaries);
     clientFactory.setGetResult("ff-1", createMockFullTranscript({ id: "ff-1" }));
     mockSQL._setDedupRows([]);
@@ -590,7 +586,7 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
   it("inserts conversation and participants into SQL", async () => {
     mockKV._data.set(KV_KEY, "test-api-key");
 
-    const summaries = [createMockTranscriptSummary({ id: "ff-1" })];
+    const summaries = [createMockFullTranscript({ id: "ff-1" })];
     clientFactory.setListResult(summaries);
     clientFactory.setGetResult("ff-1", createMockFullTranscript({ id: "ff-1" }));
     mockSQL._setDedupRows([]);
@@ -626,7 +622,7 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
   it("JSON-stringifies metadata before SQL insert", async () => {
     mockKV._data.set(KV_KEY, "test-api-key");
 
-    const summaries = [createMockTranscriptSummary({ id: "ff-1" })];
+    const summaries = [createMockFullTranscript({ id: "ff-1" })];
     clientFactory.setListResult(summaries);
     clientFactory.setGetResult("ff-1", createMockFullTranscript({ id: "ff-1" }));
     mockSQL._setDedupRows([]);
@@ -757,8 +753,8 @@ describe("Sync Routes — GET /api/sync/fireflies/stream", () => {
     mockKV._data.set(KV_KEY, "test-api-key");
 
     const summaries = [
-      createMockTranscriptSummary({ id: "ff-1", title: "Meeting 1" }),
-      createMockTranscriptSummary({ id: "ff-2", title: "Meeting 2" }),
+      createMockFullTranscript({ id: "ff-1", title: "Meeting 1" }),
+      createMockFullTranscript({ id: "ff-2", title: "Meeting 2" }),
     ];
     clientFactory.setListResult(summaries);
     clientFactory.setGetResult(
@@ -787,8 +783,8 @@ describe("Sync Routes — GET /api/sync/fireflies/stream", () => {
     mockKV._data.set(KV_KEY, "test-api-key");
 
     const summaries = [
-      createMockTranscriptSummary({ id: "ff-1", title: "Meeting 1" }),
-      createMockTranscriptSummary({ id: "ff-2", title: "Meeting 2" }),
+      createMockFullTranscript({ id: "ff-1", title: "Meeting 1" }),
+      createMockFullTranscript({ id: "ff-2", title: "Meeting 2" }),
     ];
     clientFactory.setListResult(summaries);
     clientFactory.setGetResult(
@@ -813,8 +809,8 @@ describe("Sync Routes — GET /api/sync/fireflies/stream", () => {
     mockKV._data.set(KV_KEY, "test-api-key");
 
     const summaries = [
-      createMockTranscriptSummary({ id: "ff-1", title: "Meeting 1" }),
-      createMockTranscriptSummary({ id: "ff-2", title: "Meeting 2" }),
+      createMockFullTranscript({ id: "ff-1", title: "Meeting 1" }),
+      createMockFullTranscript({ id: "ff-2", title: "Meeting 2" }),
     ];
     clientFactory.setListResult(summaries);
     clientFactory.setGetResult(
@@ -858,10 +854,10 @@ describe("Sync Routes — GET /api/sync/fireflies/stream", () => {
 
     // Set up paginated batches
     const batch1 = [
-      createMockTranscriptSummary({ id: "ff-1", title: "Meeting 1" }),
-      createMockTranscriptSummary({ id: "ff-2", title: "Meeting 2" }),
+      createMockFullTranscript({ id: "ff-1", title: "Meeting 1" }),
+      createMockFullTranscript({ id: "ff-2", title: "Meeting 2" }),
     ];
-    const batch2 = [createMockTranscriptSummary({ id: "ff-3", title: "Meeting 3" })];
+    const batch2 = [createMockFullTranscript({ id: "ff-3", title: "Meeting 3" })];
     clientFactory.setListBatches([batch1, batch2]);
 
     clientFactory.setGetResult(
@@ -892,15 +888,14 @@ describe("Sync Routes — GET /api/sync/fireflies/stream", () => {
     mockKV._data.set(KV_KEY, "test-api-key");
 
     const summaries = [
-      createMockTranscriptSummary({ id: "ff-1", title: "Meeting 1" }),
-      createMockTranscriptSummary({ id: "ff-2", title: "Meeting 2" }),
+      createMockFullTranscript({ id: "ff-1", title: "Meeting 1" }),
+      createMockFullTranscript({ id: "ff-2", title: "Meeting 2" }),
     ];
     clientFactory.setListResult(summaries);
-    clientFactory.setGetResult(
-      "ff-1",
-      createMockFullTranscript({ id: "ff-1", title: "Meeting 1" }),
-    );
-    clientFactory.setGetResult("ff-2", new Error("Fireflies API timeout"));
+
+    // Simulate persist failure on ff-2
+    mockSQL._failOnSourceId("ff-2");
+
     mockSQL._setDedupRows([]);
 
     const res = await fetch(`http://localhost:${port}/api/sync/fireflies/stream`);
@@ -943,7 +938,7 @@ describe("Sync Routes — SSE pagination integration (75 meetings)", () => {
       "Release Planning",
       "Strategy Session",
     ];
-    const summaries: TranscriptSummary[] = [];
+    const summaries: FullTranscript[] = [];
     const fullTranscripts = new Map<string, FullTranscript>();
 
     for (let i = 0; i < count; i++) {
@@ -951,7 +946,7 @@ describe("Sync Routes — SSE pagination integration (75 meetings)", () => {
       const title = `${titles[i % titles.length]} #${Math.floor(i / titles.length) + 1}`;
       const date = 1711000000000 - i * 86400000; // one day apart, newest first
 
-      summaries.push(createMockTranscriptSummary({ id, title, date }));
+      summaries.push(createMockFullTranscript({ id, title, date }));
       fullTranscripts.set(
         id,
         createMockFullTranscript({
@@ -1105,17 +1100,14 @@ describe("Sync Routes — SSE pagination integration (75 meetings)", () => {
     mockKV._data.set(KV_KEY, "test-api-key");
     mockSQL._setDedupRows([]);
 
-    const { summaries, fullTranscripts } = generateMeetings(10);
+    const { summaries } = generateMeetings(10);
 
     clientFactory.setListBatches([summaries]);
 
-    // Make every 3rd transcript fail
+    // Make every 3rd transcript fail at persist time (indices 2, 5, 8)
     for (let i = 0; i < 10; i++) {
-      const id = summaries[i].id;
       if (i % 3 === 2) {
-        clientFactory.setGetResult(id, new Error(`Simulated failure for ${id}`));
-      } else {
-        clientFactory.setGetResult(id, fullTranscripts.get(id)!);
+        mockSQL._failOnSourceId(summaries[i].id);
       }
     }
 
