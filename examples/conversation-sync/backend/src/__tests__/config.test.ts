@@ -11,16 +11,11 @@ function createMockKV() {
 
   return {
     _data: data,
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 3b4de56 (chore: include remaining conversation-sync backend and shared changes)
     get: async (key: string) => {
       const val = data.get(key);
       if (val === undefined) return { ok: true, data: { data: null } };
       return { ok: true, data: { data: val } };
     },
-<<<<<<< HEAD
     put: async (key: string, value: string) => {
       data.set(key, value);
       return { ok: true };
@@ -28,21 +23,6 @@ function createMockKV() {
     delete: async (key: string) => {
       data.delete(key);
       return { ok: true };
-=======
-    get: async (key: string) => data.get(key) ?? null,
-=======
->>>>>>> 3b4de56 (chore: include remaining conversation-sync backend and shared changes)
-    put: async (key: string, value: string) => {
-      data.set(key, value);
-      return { ok: true };
-    },
-    delete: async (key: string) => {
-      data.delete(key);
-<<<<<<< HEAD
->>>>>>> 3e0b0dc (TC-1301: Add config endpoints for Fireflies API key (PUT/DELETE/GET exists))
-=======
-      return { ok: true };
->>>>>>> 3b4de56 (chore: include remaining conversation-sync backend and shared changes)
     },
   };
 }

@@ -33,23 +33,12 @@ function createMockSQL() {
 
   return {
     _calls: calls,
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 4ccbd94 (style: run Prettier on all conversation-sync files)
     _setDedupSourceIds(ids: string[]) {
       dedupRows = ids;
     },
     _setExecuteFail(fail: boolean) {
       shouldFailExecute = fail;
     },
-<<<<<<< HEAD
-=======
-    _setDedupSourceIds(ids: string[]) { dedupRows = ids; },
-    _setExecuteFail(fail: boolean) { shouldFailExecute = fail; },
->>>>>>> 100e01d (TC-1311: Extract syncSingleTranscript() from sync.ts for reuse)
-=======
->>>>>>> 4ccbd94 (style: run Prettier on all conversation-sync files)
     query: async (sql: string, params?: any[]) => {
       calls.push({ method: "query", sql, params });
 
