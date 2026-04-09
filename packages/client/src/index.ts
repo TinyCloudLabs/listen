@@ -1,10 +1,6 @@
 // ── Re-export everything ─────────────────────────────────────────────
 
-export {
-  connectWallet,
-  type ConnectWalletConfig,
-  type ConnectWalletResult,
-} from "./openkey.js";
+export { connectWallet, type ConnectWalletConfig, type ConnectWalletResult } from "./openkey.js";
 
 export { createTinyCloudWeb, createAndSignIn, type TinyCloudWebConfig } from "./tinycloud.js";
 
@@ -22,11 +18,7 @@ export {
   type DelegationOptions,
 } from "./delegation.js";
 
-export {
-  requestNonce,
-  verifySession,
-  type VerifyResponse,
-} from "./auth.js";
+export { requestNonce, verifySession, type VerifyResponse } from "./auth.js";
 
 export { SessionStore, type StoredSession } from "./tokens.js";
 

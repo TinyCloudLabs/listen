@@ -272,8 +272,7 @@ export const SyncControl: FC<SyncControlProps> = ({
       ? Math.round(((progress.current ?? 0) / progress.total) * 100)
       : 0;
 
-  const listingLabel =
-    syncSource === "google-meet" ? "Scanning Google Meet" : "Scanning Fireflies";
+  const listingLabel = syncSource === "google-meet" ? "Scanning Google Meet" : "Scanning Fireflies";
 
   // ── Render ────────────────────────────────────────────────────────
 

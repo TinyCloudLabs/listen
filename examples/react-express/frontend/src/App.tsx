@@ -119,7 +119,11 @@ export function App() {
 
       // 4. Send the SDK's SIWE message + signature to backend for verification
       console.log("[sign-in] Step 4: Verifying SIWE with backend...");
-      const { token, expiresIn } = await verifySession(BACKEND_URL, session.siwe, session.signature);
+      const { token, expiresIn } = await verifySession(
+        BACKEND_URL,
+        session.siwe,
+        session.signature,
+      );
       sessionStoreRef.current.setSession(token, expiresIn, addr);
       console.log("[sign-in] Step 4 complete. Session token received.");
 

@@ -246,9 +246,7 @@ describe("createApiClient", () => {
 
     const client = createApiClient(backendUrl, { sessionStore });
 
-    await expect(client.get("/anything")).rejects.toThrow(
-      "Session expired. Please sign in again.",
-    );
+    await expect(client.get("/anything")).rejects.toThrow("Session expired. Please sign in again.");
     expect(clearCalled).toBe(true);
   });
 });

@@ -65,7 +65,11 @@ function createApp(
     exchangeCode?: (code: string, redirectUri: string) => Promise<GoogleTokenResponse>;
     fetchGoogleUserInfo?: (accessToken: string) => Promise<{ sub: string }>;
     isWebhooksEnabled?: () => boolean;
-    createMeetSubscription?: (projectId: string, googleUserId: string, accessToken: string) => Promise<SubscriptionMetadata>;
+    createMeetSubscription?: (
+      projectId: string,
+      googleUserId: string,
+      accessToken: string,
+    ) => Promise<SubscriptionMetadata>;
     pubSubProjectId?: string;
   },
 ) {
@@ -80,9 +84,10 @@ function createApp(
         req.delegatedAccess = { kv: userKV } as any;
         next();
       },
-      resolveDelegation: async (_sub: string) => ({ kv: userKV } as any),
+      resolveDelegation: async (_sub: string) => ({ kv: userKV }) as any,
       exchangeCode: opts?.exchangeCode ?? (async () => DEFAULT_TOKEN_RESPONSE),
-      fetchGoogleUserInfo: opts?.fetchGoogleUserInfo ?? (async () => ({ sub: TEST_GOOGLE_USER_ID })),
+      fetchGoogleUserInfo:
+        opts?.fetchGoogleUserInfo ?? (async () => ({ sub: TEST_GOOGLE_USER_ID })),
       backendKV: opts?.backendKV,
       isWebhooksEnabled: opts?.isWebhooksEnabled,
       createMeetSubscription: opts?.createMeetSubscription,

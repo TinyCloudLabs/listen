@@ -106,11 +106,7 @@ const MOCK_TOKENS = {
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-function buildPubSubMessage(opts?: {
-  ceType?: string;
-  ceSubject?: string;
-  data?: object;
-}) {
+function buildPubSubMessage(opts?: { ceType?: string; ceSubject?: string; data?: object }) {
   const attributes: Record<string, string> = {
     "ce-type": opts?.ceType ?? "google.workspace.meet.transcript.v2.fileGenerated",
     "ce-subject": opts?.ceSubject ?? `//meet.googleapis.com/${TEST_TRANSCRIPT_NAME}`,
@@ -379,11 +375,12 @@ describe("Google Meet Push Handler", () => {
     const backendKV = createMockKV();
     const { app } = createApp({
       backendKV,
-      createClient: () => createMockClient({
-        getConferenceRecord: async () => {
-          throw new GoogleAuthRevokedError("Token revoked");
-        },
-      }),
+      createClient: () =>
+        createMockClient({
+          getConferenceRecord: async () => {
+            throw new GoogleAuthRevokedError("Token revoked");
+          },
+        }),
     });
     ({ server, port } = await startServer(app));
 
@@ -404,11 +401,12 @@ describe("Google Meet Push Handler", () => {
     const backendKV = createMockKV();
     const { app } = createApp({
       backendKV,
-      createClient: () => createMockClient({
-        getFullConference: async () => {
-          throw new Error("Meet API rate limited");
-        },
-      }),
+      createClient: () =>
+        createMockClient({
+          getFullConference: async () => {
+            throw new Error("Meet API rate limited");
+          },
+        }),
     });
     ({ server, port } = await startServer(app));
 

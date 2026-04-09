@@ -327,9 +327,7 @@ describe("Google Meet webhook check", () => {
     });
 
     // The dismiss button renders as × character
-    const dismissBtn = screen.getAllByRole("button").find(
-      (btn) => btn.textContent === "\u00d7",
-    );
+    const dismissBtn = screen.getAllByRole("button").find((btn) => btn.textContent === "\u00d7");
     expect(dismissBtn).toBeTruthy();
     fireEvent.click(dismissBtn!);
 

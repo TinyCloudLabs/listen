@@ -32,8 +32,15 @@ import { createGoogleMeetPushRouter } from "./routes/google-meet-webhooks.js";
 import { createGoogleMeetSyncRouter } from "./routes/google-meet-sync.js";
 import { createGoogleMeetStatusRouter } from "./routes/google-meet-status.js";
 import { createGoogleAuthRouter } from "./routes/google-auth.js";
-import { initGoogleMeetWebhooks, isGoogleMeetWebhooksEnabled } from "./services/google-meet-webhooks.js";
-import { parsePubSubConfig, createMeetSubscription, deleteMeetSubscription } from "./services/pubsub-manager.js";
+import {
+  initGoogleMeetWebhooks,
+  isGoogleMeetWebhooksEnabled,
+} from "./services/google-meet-webhooks.js";
+import {
+  parsePubSubConfig,
+  createMeetSubscription,
+  deleteMeetSubscription,
+} from "./services/pubsub-manager.js";
 
 // ── Environment ──────────────────────────────────────────────────────
 
@@ -86,7 +93,9 @@ async function main() {
   const tryGetDelegatedAccess = async () => {
     const addrResult = await backendKV.get(WEBHOOK_USER_ADDRESS_PATH);
     const address =
-      addrResult.ok && (addrResult as any).data?.data ? String((addrResult as any).data.data) : null;
+      addrResult.ok && (addrResult as any).data?.data
+        ? String((addrResult as any).data.data)
+        : null;
     if (!address) {
       console.log(
         "[webhook] no user-address stored — webhook secret may not have been saved with a signed-in user",
@@ -152,7 +161,10 @@ async function main() {
     const GOOGLE_MEET_USER_ADDRESS_PATH = "/app.webhooks/config/google-meet-user-address";
     const tryGetGoogleMeetAccess = async () => {
       const addrResult = await backendKV.get(GOOGLE_MEET_USER_ADDRESS_PATH);
-      const address = addrResult.ok && (addrResult as any).data?.data ? String((addrResult as any).data.data) : null;
+      const address =
+        addrResult.ok && (addrResult as any).data?.data
+          ? String((addrResult as any).data.data)
+          : null;
       if (!address) return null;
       let access = delegationCache.get(address);
       if (access) return access;

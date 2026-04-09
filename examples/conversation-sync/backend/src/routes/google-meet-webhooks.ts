@@ -77,7 +77,11 @@ interface PendingItem {
   receivedAt: string;
 }
 
-async function storePending(backendKV: BackendKV, conferenceRecordName: string, transcriptName?: string) {
+async function storePending(
+  backendKV: BackendKV,
+  conferenceRecordName: string,
+  transcriptName?: string,
+) {
   const existingResult = await backendKV.get(PENDING_KV_KEY);
   let pending: PendingItem[] = [];
 
@@ -200,7 +204,9 @@ export function createGoogleMeetPushRouter(config: GoogleMeetPushConfig) {
     // 1. Verify OIDC token
     const authHeader = req.headers.authorization ?? "";
     if (!verifyToken(authHeader, expectedAudience, expectedEmail)) {
-      res.status(401).json({ error: "invalid_oidc_token", message: "Invalid or missing OIDC token" });
+      res
+        .status(401)
+        .json({ error: "invalid_oidc_token", message: "Invalid or missing OIDC token" });
       return;
     }
 
@@ -289,7 +295,9 @@ export function createGoogleMeetPushRouter(config: GoogleMeetPushConfig) {
       for (const row of dedupResult.data.rows) {
         const val = Array.isArray(row) ? row[0] : (row as any).source_id;
         if (String(val) === conferenceRecordName) {
-          console.log(`[google-meet-webhook] already synced — conferenceRecordName=${conferenceRecordName}`);
+          console.log(
+            `[google-meet-webhook] already synced — conferenceRecordName=${conferenceRecordName}`,
+          );
           res.json({ status: "skipped", conferenceRecordName });
           return;
         }
@@ -325,14 +333,19 @@ export function createGoogleMeetPushRouter(config: GoogleMeetPushConfig) {
       });
     } catch (err) {
       if (err instanceof GoogleAuthRevokedError) {
-        console.log(`[google-meet-webhook] auth revoked — queuing conferenceRecordName=${conferenceRecordName}`);
+        console.log(
+          `[google-meet-webhook] auth revoked — queuing conferenceRecordName=${conferenceRecordName}`,
+        );
         await storePending(backendKV, conferenceRecordName);
         res.json({ status: "pending", reason: "auth_revoked" });
         return;
       }
 
       const errorMessage = err instanceof Error ? err.message : String(err);
-      console.error(`[google-meet-webhook] error processing conferenceRecordName=${conferenceRecordName}:`, err);
+      console.error(
+        `[google-meet-webhook] error processing conferenceRecordName=${conferenceRecordName}:`,
+        err,
+      );
       await storeFailed(backendKV, conferenceRecordName, errorMessage);
       res.json({ status: "error", conferenceRecordName, error: errorMessage });
     }
@@ -360,7 +373,9 @@ export function createGoogleMeetPushRouter(config: GoogleMeetPushConfig) {
       const tokensRaw = tokensResult.ok && tokensResult.data.data ? tokensResult.data.data : null;
 
       if (!tokensRaw) {
-        res.status(400).json({ error: "no_google_tokens", message: "Google tokens not configured" });
+        res
+          .status(400)
+          .json({ error: "no_google_tokens", message: "Google tokens not configured" });
         return;
       }
 
@@ -435,7 +450,9 @@ export function createGoogleMeetPushRouter(config: GoogleMeetPushConfig) {
       const tokensRaw = tokensResult.ok && tokensResult.data.data ? tokensResult.data.data : null;
 
       if (!tokensRaw) {
-        res.status(400).json({ error: "no_google_tokens", message: "Google tokens not configured" });
+        res
+          .status(400)
+          .json({ error: "no_google_tokens", message: "Google tokens not configured" });
         return;
       }
 
@@ -458,7 +475,11 @@ export function createGoogleMeetPushRouter(config: GoogleMeetPushConfig) {
         res.json({ status: "renewed", expiresAt: result.metadata.expiresAt });
       } else {
         // lapsed
-        res.json({ status: "lapsed", message: "Subscription expired. Please reconnect Google Meet to resume automatic syncing." });
+        res.json({
+          status: "lapsed",
+          message:
+            "Subscription expired. Please reconnect Google Meet to resume automatic syncing.",
+        });
       }
     });
   }

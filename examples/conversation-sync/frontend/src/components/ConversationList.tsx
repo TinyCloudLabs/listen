@@ -158,11 +158,7 @@ export const ConversationList: FC<ConversationListProps> = ({
                     ...(c.source === "google-meet" ? s.sourceBadgeGreen : {}),
                   }}
                 >
-                  {c.source === "fireflies"
-                    ? "FF"
-                    : c.source === "google-meet"
-                      ? "GM"
-                      : c.source}
+                  {c.source === "fireflies" ? "FF" : c.source === "google-meet" ? "GM" : c.source}
                 </span>
                 <span style={s.date}>{formatDate(c.started_at)}</span>
               </div>

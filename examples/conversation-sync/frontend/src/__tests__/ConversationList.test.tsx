@@ -109,9 +109,7 @@ describe("ConversationList", () => {
 
     await waitFor(() => {
       expect(screen.getByText(/no conversations yet/i)).toBeInTheDocument();
-      expect(
-        screen.getByText(/sync your first meetings above/i),
-      ).toBeInTheDocument();
+      expect(screen.getByText(/sync your first meetings above/i)).toBeInTheDocument();
     });
   });
 
@@ -355,7 +353,8 @@ describe("ConversationList", () => {
   });
 
   it("filters by source when filter chip is clicked", async () => {
-    const getMock = vi.fn()
+    const getMock = vi
+      .fn()
       .mockResolvedValueOnce({ conversations: CONVERSATIONS, total: 3 })
       .mockResolvedValueOnce({ conversations: [CONVERSATIONS[0]], total: 1 });
     api = mockApi({ get: getMock });

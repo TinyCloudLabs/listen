@@ -265,7 +265,11 @@ describe("ConversationDetail", () => {
   it("shows 'View transcript' for Google Meet source", async () => {
     const gmResponse = {
       ...DETAIL_RESPONSE,
-      conversation: { ...DETAIL_RESPONSE.conversation, source: "google-meet", source_url: "https://docs.google.com/document/d/123" },
+      conversation: {
+        ...DETAIL_RESPONSE.conversation,
+        source: "google-meet",
+        source_url: "https://docs.google.com/document/d/123",
+      },
     };
     api = mockApi({ get: vi.fn().mockResolvedValue(gmResponse) });
 

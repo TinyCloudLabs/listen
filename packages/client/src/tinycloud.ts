@@ -44,7 +44,9 @@ export async function createAndSignIn(
   web3Provider: providers.Web3Provider,
   config?: TinyCloudWebConfig & { nonce?: string },
 ): Promise<{ tcw: TinyCloudWeb; session: ClientSession }> {
-  const siweConfig = config?.nonce ? { ...config?.siweConfig, nonce: config.nonce } : config?.siweConfig;
+  const siweConfig = config?.nonce
+    ? { ...config?.siweConfig, nonce: config.nonce }
+    : config?.siweConfig;
   const tcw = createTinyCloudWeb(web3Provider, { ...config, siweConfig });
   const session = await tcw.signIn();
   return { tcw, session };

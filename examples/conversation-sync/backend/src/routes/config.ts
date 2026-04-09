@@ -102,15 +102,19 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
   // ── Google Meet connection routes (auth + delegation) ──────────────
 
   // ── GET /api/config/google-meet/connected — check token existence ─
-  router.get("/google-meet/connected", delegationMiddleware, async (req: Request, res: Response) => {
-    try {
-      const result = await req.delegatedAccess!.kv.get(GOOGLE_TOKENS_PATH);
-      res.json({ connected: result.ok && result.data.data != null });
-    } catch (err) {
-      console.error("[config] failed to check google-meet connection:", err);
-      res.status(500).json({ error: "check_failed", message: "Failed to check connection" });
-    }
-  });
+  router.get(
+    "/google-meet/connected",
+    delegationMiddleware,
+    async (req: Request, res: Response) => {
+      try {
+        const result = await req.delegatedAccess!.kv.get(GOOGLE_TOKENS_PATH);
+        res.json({ connected: result.ok && result.data.data != null });
+      } catch (err) {
+        console.error("[config] failed to check google-meet connection:", err);
+        res.status(500).json({ error: "check_failed", message: "Failed to check connection" });
+      }
+    },
+  );
 
   // ── DELETE /api/config/google-meet — disconnect (delete tokens + cleanup) ─
   router.delete("/google-meet", delegationMiddleware, async (req: Request, res: Response) => {
@@ -126,7 +130,9 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
       if (backendKV) {
         const metaResult = await backendKV.get(GMEET_SUBSCRIPTION_KV_PATH);
         if (metaResult.ok && metaResult.data.data) {
-          try { metadata = JSON.parse(metaResult.data.data); } catch {}
+          try {
+            metadata = JSON.parse(metaResult.data.data);
+          } catch {}
         }
       }
 

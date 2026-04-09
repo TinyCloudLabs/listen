@@ -80,7 +80,14 @@ describe("SetupWizard", () => {
     api = mockApi({ get: getMock });
     vi.spyOn(window, "open").mockReturnValue(null);
 
-    render(<SetupWizard api={api} onComplete={onComplete} onGoogleMeetComplete={googleComplete} showGoogleMeet={true} />);
+    render(
+      <SetupWizard
+        api={api}
+        onComplete={onComplete}
+        onGoogleMeetComplete={googleComplete}
+        showGoogleMeet={true}
+      />,
+    );
     fireEvent.click(screen.getByRole("button", { name: /connect google/i }));
     fireEvent.click(screen.getByRole("button", { name: /connect with google/i }));
 
@@ -89,9 +96,11 @@ describe("SetupWizard", () => {
     });
 
     // Simulate postMessage from popup
-    window.dispatchEvent(new MessageEvent("message", {
-      data: { type: "google-auth-success" },
-    }));
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: { type: "google-auth-success" },
+      }),
+    );
 
     await waitFor(() => {
       expect(screen.getByText(/google account connected/i)).toBeInTheDocument();
@@ -105,7 +114,14 @@ describe("SetupWizard", () => {
     api = mockApi({ get: getMock });
     vi.spyOn(window, "open").mockReturnValue(null);
 
-    render(<SetupWizard api={api} onComplete={onComplete} onGoogleMeetComplete={vi.fn()} showGoogleMeet={true} />);
+    render(
+      <SetupWizard
+        api={api}
+        onComplete={onComplete}
+        onGoogleMeetComplete={vi.fn()}
+        showGoogleMeet={true}
+      />,
+    );
     fireEvent.click(screen.getByRole("button", { name: /connect google/i }));
     fireEvent.click(screen.getByRole("button", { name: /connect with google/i }));
 
@@ -113,9 +129,11 @@ describe("SetupWizard", () => {
       expect(getMock).toHaveBeenCalledWith("/api/auth/google");
     });
 
-    window.dispatchEvent(new MessageEvent("message", {
-      data: { type: "google-auth-success" },
-    }));
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: { type: "google-auth-success" },
+      }),
+    );
 
     await waitFor(() => {
       expect(screen.getByText(/real-time sync is active/i)).toBeInTheDocument();
@@ -130,7 +148,14 @@ describe("SetupWizard", () => {
     api = mockApi({ get: getMock });
     vi.spyOn(window, "open").mockReturnValue(null);
 
-    render(<SetupWizard api={api} onComplete={onComplete} onGoogleMeetComplete={googleComplete} showGoogleMeet={true} />);
+    render(
+      <SetupWizard
+        api={api}
+        onComplete={onComplete}
+        onGoogleMeetComplete={googleComplete}
+        showGoogleMeet={true}
+      />,
+    );
     fireEvent.click(screen.getByRole("button", { name: /connect google/i }));
     fireEvent.click(screen.getByRole("button", { name: /connect with google/i }));
 
@@ -138,9 +163,11 @@ describe("SetupWizard", () => {
       expect(getMock).toHaveBeenCalledWith("/api/auth/google");
     });
 
-    window.dispatchEvent(new MessageEvent("message", {
-      data: { type: "google-auth-success" },
-    }));
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: { type: "google-auth-success" },
+      }),
+    );
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /start syncing/i })).toBeInTheDocument();

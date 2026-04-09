@@ -1,7 +1,11 @@
 import { describe, it, expect } from "bun:test";
 
 import { normalizeGoogleMeet } from "../adapters/google-meet.js";
-import type { FullConference, Participant, TranscriptEntry } from "../services/google-meet-client.js";
+import type {
+  FullConference,
+  Participant,
+  TranscriptEntry,
+} from "../services/google-meet-client.js";
 
 // ── Fixtures ────────────────────────────────────────────────────────
 

@@ -37,7 +37,11 @@ export const SetupWizard: FC<SetupWizardProps> = ({
   initialSource,
 }) => {
   const [step, setStep] = useState<Step>(
-    initialSource === "google-meet" ? "google-connect" : initialSource === "fireflies" ? "welcome" : "picker",
+    initialSource === "google-meet"
+      ? "google-connect"
+      : initialSource === "fireflies"
+        ? "welcome"
+        : "picker",
   );
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
@@ -184,7 +188,9 @@ export const SetupWizard: FC<SetupWizardProps> = ({
             <span style={s.checkmark}>&#10003;</span>
             <div>
               <p style={s.successTitle}>Google account connected</p>
-              <p style={s.successSub}>Real-time sync is active — new transcripts will appear automatically.</p>
+              <p style={s.successSub}>
+                Real-time sync is active — new transcripts will appear automatically.
+              </p>
             </div>
           </div>
           <button style={s.btnPrimary} onClick={() => onGoogleMeetComplete?.()}>

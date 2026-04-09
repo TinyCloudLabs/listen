@@ -12,9 +12,7 @@ export interface VerifyResponse {
  * Request a nonce from the backend for SIWE authentication.
  */
 export async function requestNonce(backendUrl: string, address: string): Promise<string> {
-  const res = await fetch(
-    `${backendUrl}/api/auth/nonce?address=${encodeURIComponent(address)}`,
-  );
+  const res = await fetch(`${backendUrl}/api/auth/nonce?address=${encodeURIComponent(address)}`);
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: "unknown", message: res.statusText }));

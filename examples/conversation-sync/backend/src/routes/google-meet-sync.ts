@@ -206,7 +206,15 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
     try {
       // 1. Read tokens
       const rawResult = await access.kv.get(GOOGLE_TOKENS_PATH);
-      console.log("[google-meet-sync] raw KV get result:", JSON.stringify({ ok: rawResult.ok, hasData: rawResult.data?.data != null, type: typeof rawResult.data?.data, preview: JSON.stringify(rawResult.data?.data)?.slice(0, 200) }));
+      console.log(
+        "[google-meet-sync] raw KV get result:",
+        JSON.stringify({
+          ok: rawResult.ok,
+          hasData: rawResult.data?.data != null,
+          type: typeof rawResult.data?.data,
+          preview: JSON.stringify(rawResult.data?.data)?.slice(0, 200),
+        }),
+      );
       const tokens = await readTokens(access);
       if (!tokens) {
         console.log("[google-meet-sync] no tokens found at", GOOGLE_TOKENS_PATH);
@@ -222,7 +230,10 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
       sendEvent("status", { phase: "listing", message: "Fetching conference list..." });
 
       // 2. List conferences
-      if (aborted) { res.end(); return; }
+      if (aborted) {
+        res.end();
+        return;
+      }
       const conferences = await client.listConferenceRecords();
 
       // 3. Collect existing source_ids for dedup

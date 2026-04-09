@@ -21,9 +21,7 @@ export function createAuthMiddleware(privateKey: string) {
       return;
     }
 
-    const token = authHeader.startsWith("Bearer ")
-      ? authHeader.slice(7)
-      : authHeader;
+    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : authHeader;
 
     if (!token) {
       res.status(401).json({

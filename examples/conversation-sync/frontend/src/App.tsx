@@ -247,7 +247,9 @@ export function App() {
               onGoogleMeetComplete={() => setHasGoogleMeet(true)}
               backendUrl={BACKEND_URL}
               showGoogleMeet={!!GOOGLE_CLIENT_ID}
-              initialSource={hasKey === true ? "google-meet" : hasGoogleMeet === true ? "fireflies" : undefined}
+              initialSource={
+                hasKey === true ? "google-meet" : hasGoogleMeet === true ? "fireflies" : undefined
+              }
             />
           )}
 
@@ -275,10 +277,13 @@ export function App() {
               <button
                 style={s.lapsedSyncBtn}
                 onClick={() => {
-                  api?.post("/api/sync/google-meet").then(() => {
-                    setRefreshKey((k) => k + 1);
-                    setGmLapsedBanner(false);
-                  }).catch(() => {});
+                  api
+                    ?.post("/api/sync/google-meet")
+                    .then(() => {
+                      setRefreshKey((k) => k + 1);
+                      setGmLapsedBanner(false);
+                    })
+                    .catch(() => {});
                 }}
               >
                 Sync Now

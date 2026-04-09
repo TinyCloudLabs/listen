@@ -165,9 +165,7 @@ describe("persistConversation", () => {
     mockSQL._setExecuteFail(true);
     const normalized = createNormalized();
 
-    expect(persistConversation(mockAccess as any, normalized)).rejects.toThrow(
-      "SQL insert failed",
-    );
+    expect(persistConversation(mockAccess as any, normalized)).rejects.toThrow("SQL insert failed");
   });
 
   // ── Test 6: serializes metadata as JSON ───────────────────────────

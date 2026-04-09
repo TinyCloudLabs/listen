@@ -78,7 +78,9 @@ describe("Google Auth Service", () => {
     it("requests meetings.space.readonly scope", () => {
       const url = buildAuthUrl("http://localhost:3001/callback", "s");
       const params = new URL(url).searchParams;
-      expect(params.get("scope")).toContain("https://www.googleapis.com/auth/meetings.space.readonly");
+      expect(params.get("scope")).toContain(
+        "https://www.googleapis.com/auth/meetings.space.readonly",
+      );
     });
 
     it("sets access_type=offline for refresh token", () => {

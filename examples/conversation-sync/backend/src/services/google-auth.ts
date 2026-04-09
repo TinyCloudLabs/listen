@@ -72,9 +72,7 @@ export async function exchangeCode(
  * Refresh an expired access token. Throws GoogleAuthRevokedError if the
  * refresh token has been revoked or is otherwise invalid.
  */
-export async function refreshAccessToken(
-  refreshToken: string,
-): Promise<GoogleTokenResponse> {
+export async function refreshAccessToken(refreshToken: string): Promise<GoogleTokenResponse> {
   const body = new URLSearchParams({
     refresh_token: refreshToken,
     client_id: process.env.GOOGLE_CLIENT_ID!,
