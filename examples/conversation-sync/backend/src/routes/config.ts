@@ -139,7 +139,7 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
       // 3. Delete Workspace Events subscription if we have both tokens and metadata
       if (metadata && tokensRaw && deleteSubscription) {
         try {
-          const tokens = JSON.parse(tokensRaw);
+          const tokens = JSON.parse(tokensRaw as string);
           await deleteSubscription(metadata, tokens.access_token);
         } catch (err) {
           console.warn("[config] failed to delete Workspace Events subscription:", err);

@@ -277,7 +277,7 @@ export function createGoogleMeetPushRouter(config: GoogleMeetPushConfig) {
 
     let tokens: { access_token: string; refresh_token?: string };
     try {
-      tokens = JSON.parse(tokensRaw);
+      tokens = JSON.parse(tokensRaw as string);
     } catch {
       console.log("[google-meet-webhook] invalid token JSON — queuing to pending");
       await storePending(backendKV, conferenceRecordName);
@@ -381,7 +381,7 @@ export function createGoogleMeetPushRouter(config: GoogleMeetPushConfig) {
 
       let tokens: { access_token: string; refresh_token?: string };
       try {
-        tokens = JSON.parse(tokensRaw);
+        tokens = JSON.parse(tokensRaw as string);
       } catch {
         res.status(400).json({ error: "no_google_tokens", message: "Invalid Google token data" });
         return;
@@ -458,7 +458,7 @@ export function createGoogleMeetPushRouter(config: GoogleMeetPushConfig) {
 
       let tokens: { access_token: string };
       try {
-        tokens = JSON.parse(tokensRaw);
+        tokens = JSON.parse(tokensRaw as string);
       } catch {
         res.status(400).json({ error: "no_google_tokens", message: "Invalid Google token data" });
         return;
