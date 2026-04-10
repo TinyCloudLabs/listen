@@ -1,0 +1,5 @@
+bun run lint
+bun run format:check
+bun run build
+bun test packages/ examples/react-express/backend examples/conversation-sync/backend
+cd examples/conversation-sync/frontend && bunx vitest run
