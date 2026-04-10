@@ -1,6 +1,6 @@
 # Agent Keys & Delegation Design
 
-Status: **MVP uses the user's own delegation. Ephemeral-keypair path is designed but not implemented.**
+Status: **MVP uses the user's own delegation. Ephemeral-keypair path is designed, buildable against today's SDKs, and deferred for scope — not blocked on upstream.**
 
 ## Goal
 
@@ -67,30 +67,47 @@ The right place to generate the keypair is inside the backend's
 `TinyCloudNode` session manager, where it already knows how to sign UCAN
 invocations.
 
-## SDK gap blocking the MVP
+## SDK surface (both halves buildable today)
 
-For the intended architecture to work end-to-end, we need two primitives
-that the currently-published SDKs do not clearly expose:
+Both primitives we need are already in the published SDKs:
 
-1. **Backend-side fresh session key creation**, returning a DID that can be
-   named in a delegation. The sdk-core `ISessionManager` interface
-   (`@tinycloud/sdk-core` v2.1.0-beta.0) has `createSessionKey(id): string`
-   and `getDID(keyId): string`, but `@tinycloud/node-sdk`'s public
-   `TinyCloudNode` surface does not re-export a way to reach these —
-   `node.useDelegation(d)` assumes the session key that matches `d.delegateDID`
-   is already registered with the node, without a public registration API.
+1. **Backend-side fresh keypair + DID** — `new TinyCloudNode()` with **no
+   config** returns a session-only node that generates a fresh Ed25519
+   keypair inside WASM and exposes `node.did` as `did:key:z6Mk…`
+   immediately. `@tinycloud/node-sdk/core.d.ts` documents this explicitly:
+
+   ```ts
+   // Session-only mode - can receive delegations
+   const bob = new TinyCloudNode();
+   console.log(bob.did); // did:key:z6Mk... - available immediately
+   ```
+
+   `useDelegation()` also explicitly supports session-only mode, with the
+   constraint that the delegation must target the node's session key DID:
+   _"Session-only mode: Uses the delegation directly (must target session
+   key DID)"_. That's exactly our flow.
 
 2. **Frontend-side `createDelegation` for an arbitrary non-self DID** —
-   `@tinycloud/web-sdk` v2.1.0-beta.0 _does_ expose this:
-   `tcw.createDelegation({ delegateDID, path, actions, expiryMs })`. So the
-   client half of the flow is already buildable; it's the server half that
-   needs SDK work.
+   `@tinycloud/web-sdk` v2.1.0-beta.0 exposes this on the `TinyCloudWeb`
+   instance: `tcw.createDelegation({ delegateDID, path, actions, expiryMs })`.
+   The `delegateDID` parameter accepts any DID string — including a fresh
+   `did:key:z6Mk…` from a session-only `TinyCloudNode` on the backend.
 
-Until the node-sdk exposes something like
-`node.createAgentSessionKey(id): Promise<{ did: string }>` followed by a
-path for `useDelegation()` to pick up that specific key, there is no way to
-land the full ephemeral-keypair flow without monkey-patching the WASM
-module, which is out of scope for this example app.
+So the ephemeral-keypair flow is buildable against today's published SDKs
+with zero upstream changes. The implementation is:
+
+```ts
+// backend/src/services/agent-sessions.ts
+const agentNode = new TinyCloudNode(); // fresh keypair, fresh did:key
+sessions.set(sessionKey, { node: agentNode, did: agentNode.did, ... });
+
+// POST /api/agents/:id/session → { agentDID: agentNode.did }
+// POST /api/agents/:id/delegation body { serialized }
+const delegation = deserializeDelegation(serialized);
+const agentAccess = await agentNode.useDelegation(delegation);
+// → DelegatedAccess whose SQL invocations are signed by the agent's
+//   session key and verified against the UCAN chain from user → agent DID.
+```
 
 ## MVP: reuse the user's delegation
 
@@ -102,8 +119,8 @@ request. This means:
   call the user made directly.
 - The agent's scope is the user's entire SQL scope. There is no extra
   confinement to agent-related tables specifically.
-- Revoking agent access = revoking the user's entire delegation. The two are
-  indistinguishable until the SDK gap above is closed.
+- Revoking agent access = revoking the user's entire delegation. The two
+  are indistinguishable until the ephemeral-keypair flow is implemented.
 
 This is explicitly documented here as a **short-term tradeoff** and the
 backend is already wired to accept and activate an `X-Agent-Delegation`
@@ -115,27 +132,37 @@ header the moment the frontend can produce one:
 - If the header is absent, it falls back to `req.delegatedAccess` — the
   user's own delegation.
 
-No frontend code change is required to start the MVP. When the SDK gap is
-closed, the fix is:
+No frontend code change is required for the MVP. When we implement the
+real flow, the plan is:
 
-1. Backend: add a `POST /api/agents/:id/session` route that creates a fresh
-   session key on the node, stashes it in an in-memory session store keyed
-   by `(userAddress, agentId)`, and returns the `agentDID`.
-2. Frontend: on agent open, call that endpoint, then
-   `tcw.createDelegation({ delegateDID: agentDID, path, actions, expiryMs: 3_600_000 })`,
-   and cache the serialized delegation in sessionStorage under
-   `agent-delegation:{agentId}`.
-3. Frontend: include `X-Agent-Delegation: <serialized>` on every
-   `/api/agents/:id/messages` POST.
-4. Backend: `resolveAgentAccess` already does the right thing — nothing to
-   change.
+1. Backend: new `backend/src/services/agent-sessions.ts` — in-memory map
+   `(userAddress, agentId) → { agentNode: TinyCloudNode, access?: DelegatedAccess, expiresAt }`
+   with a 1h TTL and periodic sweeper.
+2. Backend: `POST /api/agents/:id/session` — `new TinyCloudNode()`, stash,
+   return `{ agentDID, expiresAt }`.
+3. Backend: `POST /api/agents/:id/delegation` — body `{ serialized }`,
+   `deserializeDelegation()` → `agentNode.useDelegation()` → cache
+   `DelegatedAccess` on the session record.
+4. Backend: `POST /api/agents/:id/messages` — swap `resolveAgentAccess`
+   for `getAgentAccess(userAddress, id)`. Throw loudly if no active
+   session (no silent fallback to user delegation — per project rule).
+5. Frontend: on agent open, POST `/session` → `tcw.createDelegation({
+delegateDID: agentDID, path, actions, expiryMs: 3_600_000 })` → POST
+   `/delegation` with serialized blob. Cache session + refresh before expiry.
 
-## TODO
+Note: the existing `resolveAgentAccess` helper in
+`backend/src/routes/agents.ts` is the _wrong_ shape for this flow — it
+calls `useDelegation` on the main backend node, which would reject a
+delegation whose `delegateDID` is not the main node's session key. That
+helper needs to be replaced (not extended) when implementing the real
+flow.
 
-- [ ] Upstream fix: surface `createSessionKey` / session key registration
-      on `@tinycloud/node-sdk`'s public `TinyCloudNode` API.
-- [ ] Once the above lands, implement the four-step flow described in the
-      previous section and remove the fallback path in `resolveAgentAccess`.
+## TODO (when we implement the real flow)
+
+- [ ] Remove `resolveAgentAccess` and its `X-Agent-Delegation` header code
+      path from `routes/agents.ts` — replaced by the session-based model.
+- [ ] Implement `agent-sessions.ts` + the two new endpoints.
+- [ ] Frontend delegation activation in `AgentChat.tsx` (task 3 follow-up).
 - [ ] Audit-log every `useDelegation` activation with the agent DID and
       session ID (currently just `console.log`).
 - [ ] Narrow the delegation path from the user's full space to an
