@@ -4,6 +4,8 @@ export { connectWallet, type ConnectWalletConfig, type ConnectWalletResult } fro
 
 export { createTinyCloudWeb, createAndSignIn, type TinyCloudWebConfig } from "./tinycloud.js";
 
+export { loadAppManifest, composeManifestWithBackend } from "./manifest.js";
+
 export {
   loadPersistedSession,
   clearPersistedSession,
@@ -12,6 +14,7 @@ export {
 
 export {
   createDelegation,
+  createManifestDelegation,
   sendDelegation,
   checkDelegationStatus,
   revokeDelegation,
