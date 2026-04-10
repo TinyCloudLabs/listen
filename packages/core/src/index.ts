@@ -32,9 +32,47 @@ export interface StoredDelegation {
 
 // ── Server Info ──────────────────────────────────────────────────────
 
+/**
+ * Permission entry shape used in {@link ServerInfo.permissions}. This is
+ * deliberately kept as a plain object (no import from `@tinycloud/sdk-core`)
+ * so the `core` package has no runtime TinyCloud deps — the frontend and
+ * backend both massage this into a TinyCloud manifest `PermissionEntry`
+ * when building or consuming the manifest.
+ *
+ * `service` uses the long form (e.g. `"tinycloud.kv"`) so the frontend
+ * can pass the entries directly into a `Manifest.delegations[*].permissions`
+ * list without translation.
+ */
+export interface ServerInfoPermission {
+  service: string;
+  space: string;
+  path: string;
+  actions: string[];
+}
+
+/**
+ * Shape of `/api/server-info`. The backend advertises its identity plus
+ * the capabilities it needs the user to grant via a delegation, so the
+ * frontend can compose a manifest that includes the pre-declared
+ * delegation and drive a single-prompt sign-in.
+ */
 export interface ServerInfo {
   did: string;
   status: string;
+  /** Human-readable name for the permission modal. Optional. */
+  name?: string;
+  /**
+   * Expiry override for the backend delegation as an ms-format duration
+   * string (e.g. `"7d"`, `"1h"`). Optional — defaults to the manifest's
+   * own expiry.
+   */
+  expiry?: string;
+  /**
+   * Permissions the backend needs the user to delegate to it. Always
+   * present for backends that participate in delegation flows; omitted
+   * (or empty array) for backends that operate without delegation.
+   */
+  permissions?: ServerInfoPermission[];
 }
 
 // ── API Responses ────────────────────────────────────────────────────
