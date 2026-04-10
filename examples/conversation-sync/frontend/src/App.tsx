@@ -21,6 +21,8 @@ import { SyncControl } from "./components/SyncControl";
 import { ConversationList } from "./components/ConversationList";
 import { ConversationDetail } from "./components/ConversationDetail";
 import { LiveWriteEvents } from "./components/LiveWriteEvents";
+import { AgentKanban } from "./components/AgentKanban";
+import { AgentChat } from "./components/AgentChat";
 
 // ── Environment ─────────────────────────────────────────────────────
 
@@ -42,6 +44,8 @@ export function App() {
   const [hasGoogleMeet, setHasGoogleMeet] = useState<boolean | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
+  const [view, setView] = useState<"conversations" | "agents">("conversations");
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [pendingBanner, setPendingBanner] = useState<string | null>(null);
   const [gmLapsedBanner, setGmLapsedBanner] = useState(false);
 
@@ -239,7 +243,25 @@ export function App() {
           onSignOut={handleSignOut}
         />
 
+        {isSignedIn && (
+          <nav style={s.tabs}>
+            <button
+              style={{ ...s.tab, ...(view === "conversations" ? s.tabActive : {}) }}
+              onClick={() => setView("conversations")}
+            >
+              Conversations
+            </button>
+            <button
+              style={{ ...s.tab, ...(view === "agents" ? s.tabActive : {}) }}
+              onClick={() => setView("agents")}
+            >
+              Agents
+            </button>
+          </nav>
+        )}
+
         {isSignedIn &&
+          view === "conversations" &&
           (hasKey === false || (hasGoogleMeet === false && !!GOOGLE_CLIENT_ID)) &&
           !(hasKey === true && hasGoogleMeet === true) && (
             <SetupWizard
@@ -254,15 +276,18 @@ export function App() {
             />
           )}
 
-        {isSignedIn && (hasKey === true || hasGoogleMeet === true) && selectedConversationId && (
-          <ConversationDetail
-            api={api}
-            conversationId={selectedConversationId}
-            onBack={() => setSelectedConversationId(null)}
-          />
-        )}
+        {isSignedIn &&
+          view === "conversations" &&
+          (hasKey === true || hasGoogleMeet === true) &&
+          selectedConversationId && (
+            <ConversationDetail
+              api={api}
+              conversationId={selectedConversationId}
+              onBack={() => setSelectedConversationId(null)}
+            />
+          )}
 
-        {pendingBanner && (
+        {pendingBanner && view === "conversations" && (
           <div style={s.pendingBanner}>
             <span>{pendingBanner}</span>
             <button style={s.bannerDismiss} onClick={() => setPendingBanner(null)}>
@@ -271,7 +296,7 @@ export function App() {
           </div>
         )}
 
-        {gmLapsedBanner && (
+        {gmLapsedBanner && view === "conversations" && (
           <div style={s.lapsedBanner}>
             <span>Real-time sync was inactive. Some meetings may not have been captured.</span>
             <div style={s.lapsedActions}>
@@ -296,45 +321,61 @@ export function App() {
           </div>
         )}
 
-        {isSignedIn && (hasKey === true || hasGoogleMeet === true) && !selectedConversationId && (
-          <>
-            <SyncControl
-              api={api}
-              backendUrl={BACKEND_URL}
-              getAccessToken={() => sessionStoreRef.current.getToken()}
-              onSyncComplete={() => setRefreshKey((k) => k + 1)}
-              hasFireflies={hasKey === true}
-              hasGoogleMeet={hasGoogleMeet === true}
-            />
-            <LiveWriteEvents tcw={tcw} onWrite={() => setRefreshKey((k) => k + 1)} />
-            <ConversationList
-              api={api}
-              onSelectConversation={setSelectedConversationId}
-              refreshKey={refreshKey}
-            />
-            {hasKey && (
-              <button
-                style={s.disconnectLink}
-                onClick={async () => {
-                  await api.del("/api/config/fireflies-key");
-                  setHasKey(false);
-                }}
-              >
-                Disconnect Fireflies
-              </button>
-            )}
-            {hasGoogleMeet && (
-              <button
-                style={s.disconnectLink}
-                onClick={async () => {
-                  await api.del("/api/config/google-meet");
-                  setHasGoogleMeet(false);
-                }}
-              >
-                Disconnect Google Meet
-              </button>
-            )}
-          </>
+        {isSignedIn &&
+          view === "conversations" &&
+          (hasKey === true || hasGoogleMeet === true) &&
+          !selectedConversationId && (
+            <>
+              <SyncControl
+                api={api}
+                backendUrl={BACKEND_URL}
+                getAccessToken={() => sessionStoreRef.current.getToken()}
+                onSyncComplete={() => setRefreshKey((k) => k + 1)}
+                hasFireflies={hasKey === true}
+                hasGoogleMeet={hasGoogleMeet === true}
+              />
+              <LiveWriteEvents tcw={tcw} onWrite={() => setRefreshKey((k) => k + 1)} />
+              <ConversationList
+                api={api}
+                onSelectConversation={setSelectedConversationId}
+                refreshKey={refreshKey}
+              />
+              {hasKey && (
+                <button
+                  style={s.disconnectLink}
+                  onClick={async () => {
+                    await api.del("/api/config/fireflies-key");
+                    setHasKey(false);
+                  }}
+                >
+                  Disconnect Fireflies
+                </button>
+              )}
+              {hasGoogleMeet && (
+                <button
+                  style={s.disconnectLink}
+                  onClick={async () => {
+                    await api.del("/api/config/google-meet");
+                    setHasGoogleMeet(false);
+                  }}
+                >
+                  Disconnect Google Meet
+                </button>
+              )}
+            </>
+          )}
+
+        {isSignedIn && view === "agents" && !selectedAgentId && (
+          <AgentKanban
+            api={api}
+            backendUrl={BACKEND_URL}
+            getAccessToken={() => sessionStoreRef.current.getToken()}
+            onSelectAgent={setSelectedAgentId}
+          />
+        )}
+
+        {isSignedIn && view === "agents" && selectedAgentId && (
+          <AgentChat api={api} agentId={selectedAgentId} onBack={() => setSelectedAgentId(null)} />
         )}
       </main>
 
@@ -394,6 +435,28 @@ const s: Record<string, React.CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     gap: 16,
+  },
+  tabs: {
+    display: "flex",
+    gap: 4,
+    borderBottom: "1px solid #e2e4e9",
+    marginBottom: -8,
+  },
+  tab: {
+    fontFamily: FONT,
+    fontSize: 13,
+    fontWeight: 600,
+    color: "#6b7280",
+    background: "transparent",
+    border: "none",
+    borderBottom: "2px solid transparent",
+    padding: "8px 14px",
+    cursor: "pointer",
+    marginBottom: -1,
+  },
+  tabActive: {
+    color: "#6366f1",
+    borderBottom: "2px solid #6366f1",
   },
   pendingBanner: {
     display: "flex",
