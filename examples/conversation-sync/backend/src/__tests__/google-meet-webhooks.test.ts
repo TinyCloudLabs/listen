@@ -1,13 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach, afterAll, mock, spyOn } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 
-// Import the real exports before mocking the module so we can restore them
-// after this file's tests complete. `mock.module` in Bun persists across test
-// files, and without restoration it would leak this stub into sibling files
-// that import the real pubsub-manager (e.g. pubsub-manager.test.ts).
-import {
-  parsePubSubConfig,
-  ensurePubSubInfra as realEnsurePubSubInfra,
-} from "../services/pubsub-manager";
+// Import the real parsePubSubConfig before mocking the module
+import { parsePubSubConfig } from "../services/pubsub-manager";
 
 // Mock ensurePubSubInfra but keep real parsePubSubConfig
 const mockEnsurePubSubInfra = mock(async (_config?: any, _client?: any) => {});
@@ -41,16 +35,6 @@ describe("google-meet-webhooks startup integration", () => {
   const originalEnv = { ...process.env };
   let consoleWarnSpy: ReturnType<typeof spyOn>;
   let consoleLogSpy: ReturnType<typeof spyOn>;
-
-  // Restore the real module exports once this file's tests are done so the
-  // mocked `ensurePubSubInfra` does not leak into pubsub-manager.test.ts or
-  // any other file that imports ../services/pubsub-manager later in the run.
-  afterAll(() => {
-    mock.module("../services/pubsub-manager", () => ({
-      parsePubSubConfig,
-      ensurePubSubInfra: realEnsurePubSubInfra,
-    }));
-  });
 
   beforeEach(() => {
     _resetForTesting();

@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
-import { parsePubSubConfig, ensurePubSubInfra } from "../services/pubsub-manager";
+// Import with the explicit .ts extension so this import gets a separate
+// module cache key from the `mock.module("../services/pubsub-manager", ...)`
+// call in google-meet-webhooks.test.ts. Otherwise, when that file runs first
+// on Linux CI, pubsub-manager.test.ts ends up importing the mocked no-op
+// `ensurePubSubInfra` and 5 tests here fail.
+import { parsePubSubConfig, ensurePubSubInfra } from "../services/pubsub-manager.ts";
 
 // --- Fixtures ---
 
