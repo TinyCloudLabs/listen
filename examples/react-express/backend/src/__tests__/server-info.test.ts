@@ -38,7 +38,13 @@ describe("GET /api/server-info", () => {
     if (server) await closeServer(server);
   });
 
-  it("returns 200 with did and status 'ready'", async () => {
+  it("returns 200 with did, status, name, expiry, and permissions", async () => {
+    // The server-info response is the manifest composition source for
+    // the frontend: it advertises identity + delegation expiry + the
+    // capabilities the backend needs the user to delegate. The
+    // frontend splices `permissions` into its manifest as a
+    // `delegations[*]` entry at sign-in time so the SIWE recap
+    // pre-covers the backend's needs in one wallet prompt.
     const app = createApp();
     const result = await startServer(app);
     server = result.server;
@@ -48,10 +54,22 @@ describe("GET /api/server-info", () => {
     expect(res.status).toBe(200);
 
     const body = await res.json();
-    expect(body).toEqual({
+    expect(body).toMatchObject({
       did: TEST_DID,
       status: "ready",
+      name: "TinyBoilerplate Backend",
+      expiry: "7d",
     });
+    expect(Array.isArray(body.permissions)).toBe(true);
+    // Every authenticated data route touches both KV and SQL, so both
+    // must be present in the advertised permission set — otherwise the
+    // frontend's composed manifest won't cover what the backend
+    // actually needs and requests will 403 after the delegation lands.
+    const services = new Set<string>(
+      (body.permissions as Array<{ service: string }>).map((p) => p.service),
+    );
+    expect(services.has("tinycloud.kv")).toBe(true);
+    expect(services.has("tinycloud.sql")).toBe(true);
   });
 
   it("does not require authentication", async () => {
