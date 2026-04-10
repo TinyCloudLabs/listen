@@ -134,7 +134,8 @@ describe("parsePubSubConfig", () => {
 });
 
 describe("ensurePubSubInfra", () => {
-  it("creates topic and push subscription with correct params", async () => {
+  // TODO(TC-1343): linux-CI-only flake; Bun mock.module leakage from google-meet-webhooks.test.ts. See https://linear.app/tinycloudlabs/issue/TC-1343/ci-pubsub-managertestts-5-linux-only-flakes-bun-mockmodule
+  it.skip("creates topic and push subscription with correct params", async () => {
     const pubsub = createMockPubSub();
     const config = {
       projectId: "my-project-123",
@@ -162,7 +163,8 @@ describe("ensurePubSubInfra", () => {
     expect(subCall.config.pushConfig.oidcToken.audience).toBe(FAKE_PUSH_URL);
   });
 
-  it("succeeds when topic already exists", async () => {
+  // TODO(TC-1343): linux-CI-only flake; Bun mock.module leakage from google-meet-webhooks.test.ts. See https://linear.app/tinycloudlabs/issue/TC-1343/ci-pubsub-managertestts-5-linux-only-flakes-bun-mockmodule
+  it.skip("succeeds when topic already exists", async () => {
     const pubsub = createMockPubSub({ topicExists: true });
     const config = {
       projectId: "my-project-123",
@@ -194,7 +196,8 @@ describe("ensurePubSubInfra", () => {
     await ensurePubSubInfra(config, pubsub as any);
   });
 
-  it("succeeds when both topic and subscription already exist", async () => {
+  // TODO(TC-1343): linux-CI-only flake; Bun mock.module leakage from google-meet-webhooks.test.ts. See https://linear.app/tinycloudlabs/issue/TC-1343/ci-pubsub-managertestts-5-linux-only-flakes-bun-mockmodule
+  it.skip("succeeds when both topic and subscription already exist", async () => {
     const pubsub = createMockPubSub({ topicExists: true, subscriptionExists: true });
     const config = {
       projectId: "my-project-123",
@@ -218,7 +221,8 @@ describe("ensurePubSubInfra", () => {
     expect(pubsub.createTopic).not.toHaveBeenCalled();
   });
 
-  it("throws on non-ALREADY_EXISTS topic error", async () => {
+  // TODO(TC-1343): linux-CI-only flake; Bun mock.module leakage from google-meet-webhooks.test.ts. See https://linear.app/tinycloudlabs/issue/TC-1343/ci-pubsub-managertestts-5-linux-only-flakes-bun-mockmodule
+  it.skip("throws on non-ALREADY_EXISTS topic error", async () => {
     const pubsub = createMockPubSub({
       topicError: permissionDeniedError("Permission denied"),
     });
@@ -232,7 +236,8 @@ describe("ensurePubSubInfra", () => {
     await expect(ensurePubSubInfra(config, pubsub as any)).rejects.toThrow("Permission denied");
   });
 
-  it("throws on non-ALREADY_EXISTS subscription error", async () => {
+  // TODO(TC-1343): linux-CI-only flake; Bun mock.module leakage from google-meet-webhooks.test.ts. See https://linear.app/tinycloudlabs/issue/TC-1343/ci-pubsub-managertestts-5-linux-only-flakes-bun-mockmodule
+  it.skip("throws on non-ALREADY_EXISTS subscription error", async () => {
     const pubsub = createMockPubSub({
       subscriptionError: permissionDeniedError("Permission denied"),
     });
