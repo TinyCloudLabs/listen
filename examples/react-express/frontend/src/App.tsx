@@ -182,6 +182,10 @@ export function App() {
           "Backend /api/server-info did not advertise any permissions — cannot build delegation",
         );
       }
+      // DIAGNOSTIC: dump the signed SIWE so we can inspect the recap
+      console.log("[diagnostic] session.siwe:\n" + session.siwe);
+      console.log("[diagnostic] backendPermissions:", backendPermissions);
+      console.log("[diagnostic] composed manifest:", composed);
       const { serialized, prompted } = await createManifestDelegation(
         tcwInstance,
         info.did,
