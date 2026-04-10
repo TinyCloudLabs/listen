@@ -46,13 +46,31 @@ describe("schema", () => {
       expect(allSql).toContain("CREATE TABLE IF NOT EXISTS participant");
     });
 
-    it("executes exactly 2 CREATE TABLE statements", async () => {
+    it("executes CREATE TABLE for agent table", async () => {
       await ensureSchema(access);
 
       const calls = access.sql.execute.mock.calls;
-      expect(calls.length).toBe(2);
+      const allSql = calls.map((c: any) => c[0]).join("\n");
+      expect(allSql).toContain("CREATE TABLE IF NOT EXISTS agent");
+    });
+
+    it("executes CREATE TABLE for agent_message table", async () => {
+      await ensureSchema(access);
+
+      const calls = access.sql.execute.mock.calls;
+      const allSql = calls.map((c: any) => c[0]).join("\n");
+      expect(allSql).toContain("CREATE TABLE IF NOT EXISTS agent_message");
+    });
+
+    it("executes exactly 4 CREATE TABLE statements", async () => {
+      await ensureSchema(access);
+
+      const calls = access.sql.execute.mock.calls;
+      expect(calls.length).toBe(4);
       expect(calls[0][0]).toContain("CREATE TABLE IF NOT EXISTS conversation");
       expect(calls[1][0]).toContain("CREATE TABLE IF NOT EXISTS participant");
+      expect(calls[2][0]).toContain("CREATE TABLE IF NOT EXISTS agent");
+      expect(calls[3][0]).toContain("CREATE TABLE IF NOT EXISTS agent_message");
     });
 
     it("no-ops on subsequent calls with the same access", async () => {

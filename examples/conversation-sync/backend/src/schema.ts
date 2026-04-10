@@ -35,6 +35,24 @@ const SCHEMA_STATEMENTS = [
     email           TEXT,
     speaker_label   TEXT
   )`,
+  `CREATE TABLE IF NOT EXISTS agent (
+    id              TEXT PRIMARY KEY,
+    title           TEXT NOT NULL,
+    system_prompt   TEXT,
+    model           TEXT,
+    archived        INTEGER NOT NULL DEFAULT 0,
+    last_message_at TEXT,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS agent_message (
+    id          TEXT PRIMARY KEY,
+    agent_id    TEXT NOT NULL,
+    role        TEXT NOT NULL,
+    content     TEXT NOT NULL,
+    tool_calls  TEXT,
+    created_at  TEXT NOT NULL
+  )`,
 ];
 
 /**
@@ -60,14 +78,17 @@ export async function ensureSchema(access: DelegatedAccess): Promise<void> {
         continue;
       }
       // "not authorized" on CREATE TABLE IF NOT EXISTS likely means
-      // the table already exists and the authorizer blocks redundant DDL
+      // the table already exists and the authorizer blocks redundant DDL.
+      // Verify by extracting the target table name and running a SELECT.
       if (msg.includes("not authorized")) {
-        // Verify by trying a SELECT — if it works, table exists
-        const check = await access.sql.query("SELECT 1 FROM conversation LIMIT 1");
-        if (check.ok) {
-          console.log("[schema] Tables exist (verified via SELECT), skipping DDL");
-          schemaInitialized.set(access, true);
-          return;
+        const match = sql.match(/CREATE TABLE IF NOT EXISTS\s+(\w+)/i);
+        const tableName = match?.[1];
+        if (tableName) {
+          const check = await access.sql.query(`SELECT 1 FROM ${tableName} LIMIT 1`);
+          if (check.ok) {
+            console.log(`[schema] Table ${tableName} exists (verified via SELECT), skipping DDL`);
+            continue;
+          }
         }
       }
       throw new Error(`Failed to initialize conversations schema: ${msg}`);
