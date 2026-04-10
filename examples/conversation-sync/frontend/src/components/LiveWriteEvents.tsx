@@ -212,9 +212,7 @@ export const LiveWriteEvents: FC<LiveWriteEventsProps> = ({ tcw, onWrite }) => {
 
       {events.length === 0 ? (
         <p style={s.mutedNote}>
-          {status === "live" || status === "connecting"
-            ? "Waiting for writes…"
-            : "No events yet."}
+          {status === "live" || status === "connecting" ? "Waiting for writes…" : "No events yet."}
         </p>
       ) : (
         <ul style={s.list}>
