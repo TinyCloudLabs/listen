@@ -27,6 +27,7 @@ import { createConfigRouter } from "./routes/config.js";
 import { createFirefliesRouter } from "./routes/fireflies.js";
 import { createSyncRouter } from "./routes/sync.js";
 import { createConversationsRouter } from "./routes/conversations.js";
+import { createAgentsRouter } from "./routes/agents.js";
 import { createWebhookRouter } from "./routes/webhooks.js";
 import { createGoogleMeetPushRouter } from "./routes/google-meet-webhooks.js";
 import { createGoogleMeetSyncRouter } from "./routes/google-meet-sync.js";
@@ -326,6 +327,16 @@ async function main() {
     createConversationsRouter({
       authMiddleware,
       delegationMiddleware,
+    }),
+  );
+
+  // Agents routes (agent CRUD + chat)
+  app.use(
+    "/api/agents",
+    createAgentsRouter({
+      authMiddleware,
+      delegationMiddleware,
+      node,
     }),
   );
 
