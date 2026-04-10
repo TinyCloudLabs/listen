@@ -1,20 +1,15 @@
 import type { Request, Response, NextFunction } from "express";
-import { createJWTVerifier } from "@tinyboilerplate/server";
+import { verifySessionToken } from "@tinyboilerplate/server";
 
 // ── Auth Middleware ──────────────────────────────────────────────────
 
 /**
- * JWT-based auth middleware.
+ * Session token auth middleware.
  *
- * Verifies the OpenKey access token via JWKS (or userinfo fallback).
- * Sets req.user with the verified `sub` claim.
- *
- * The wallet address is NOT resolved here — it comes from the delegation
- * itself (delegation.ownerAddress) when a delegation is first submitted.
+ * Verifies the session JWT (signed by this backend with BACKEND_PRIVATE_KEY).
+ * Sets req.user with the verified wallet address.
  */
-export function createAuthMiddleware(openKeyIssuerUrl: string) {
-  const verify = createJWTVerifier(openKeyIssuerUrl);
-
+export function createAuthMiddleware(privateKey: string) {
   return async (req: Request, res: Response, next: NextFunction) => {
     const authHeader = req.headers.authorization;
 
@@ -26,9 +21,19 @@ export function createAuthMiddleware(openKeyIssuerUrl: string) {
       return;
     }
 
+    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : authHeader;
+
+    if (!token) {
+      res.status(401).json({
+        error: "missing_token",
+        message: "Bearer token is required",
+      });
+      return;
+    }
+
     try {
-      const { claims } = await verify(authHeader);
-      req.user = { sub: claims.sub };
+      const { address } = await verifySessionToken(token, privateKey);
+      req.user = { address };
       next();
     } catch (err) {
       console.error("[auth] token verification failed:", err);

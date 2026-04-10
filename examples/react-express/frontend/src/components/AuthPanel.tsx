@@ -26,7 +26,7 @@ export const AuthPanel: FC<AuthPanelProps> = ({
       {!isSignedIn ? (
         <>
           <p style={styles.description}>
-            Sign in with OpenKey to connect your wallet and create a TinyCloud session.
+            Connect your wallet via OpenKey and sign in with Ethereum (SIWE).
           </p>
           <button
             onClick={onSignIn}
@@ -36,7 +36,7 @@ export const AuthPanel: FC<AuthPanelProps> = ({
               ...(loading ? styles.buttonDisabled : {}),
             }}
           >
-            {loading ? "Signing in..." : "Sign in with OpenKey"}
+            {loading ? "Signing in..." : "Connect & Sign In"}
           </button>
         </>
       ) : (

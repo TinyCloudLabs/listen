@@ -29,7 +29,7 @@ interface ConfigRoutesConfig {
 const FIREFLIES_KEY_PATH = "/app.conversations/config/fireflies-key";
 const GOOGLE_TOKENS_PATH = "/app.conversations/config/google-tokens";
 const WEBHOOK_SECRET_PATH = "/app.webhooks/config/fireflies-secret";
-const WEBHOOK_USER_SUB_PATH = "/app.webhooks/config/user-sub";
+const WEBHOOK_USER_ADDRESS_PATH = "/app.webhooks/config/user-address";
 const WEBHOOK_PENDING_PATH = "/app.webhooks/pending/fireflies";
 const GMEET_SUBSCRIPTION_KV_PATH = "/app.webhooks/config/google-meet-subscription";
 const GMEET_PENDING_KV_PATH = "/app.webhooks/pending/google-meet";
@@ -102,15 +102,19 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
   // ── Google Meet connection routes (auth + delegation) ──────────────
 
   // ── GET /api/config/google-meet/connected — check token existence ─
-  router.get("/google-meet/connected", delegationMiddleware, async (req: Request, res: Response) => {
-    try {
-      const result = await req.delegatedAccess!.kv.get(GOOGLE_TOKENS_PATH);
-      res.json({ connected: result.ok && result.data.data != null });
-    } catch (err) {
-      console.error("[config] failed to check google-meet connection:", err);
-      res.status(500).json({ error: "check_failed", message: "Failed to check connection" });
-    }
-  });
+  router.get(
+    "/google-meet/connected",
+    delegationMiddleware,
+    async (req: Request, res: Response) => {
+      try {
+        const result = await req.delegatedAccess!.kv.get(GOOGLE_TOKENS_PATH);
+        res.json({ connected: result.ok && result.data.data != null });
+      } catch (err) {
+        console.error("[config] failed to check google-meet connection:", err);
+        res.status(500).json({ error: "check_failed", message: "Failed to check connection" });
+      }
+    },
+  );
 
   // ── DELETE /api/config/google-meet — disconnect (delete tokens + cleanup) ─
   router.delete("/google-meet", delegationMiddleware, async (req: Request, res: Response) => {
@@ -126,7 +130,9 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
       if (backendKV) {
         const metaResult = await backendKV.get(GMEET_SUBSCRIPTION_KV_PATH);
         if (metaResult.ok && metaResult.data.data) {
-          try { metadata = JSON.parse(metaResult.data.data); } catch {}
+          try {
+            metadata = JSON.parse(metaResult.data.data);
+          } catch {}
         }
       }
 
@@ -176,9 +182,9 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
 
       try {
         await backendKV.put(WEBHOOK_SECRET_PATH, secret);
-        // Store user sub so webhook handler can look up their delegation
-        if (req.user?.sub) {
-          await backendKV.put(WEBHOOK_USER_SUB_PATH, req.user.sub);
+        // Store user address so webhook handler can look up their delegation
+        if (req.user?.address) {
+          await backendKV.put(WEBHOOK_USER_ADDRESS_PATH, req.user.address);
         }
         res.json({ ok: true });
       } catch (err) {

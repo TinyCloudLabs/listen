@@ -13,7 +13,6 @@ interface DelegationRoutesConfig {
   store: DelegationStore;
   cache: DelegationCache;
   authMiddleware: RequestHandler;
-  openKeyIssuerUrl?: string;
 }
 
 // ── Delegation Routes ────────────────────────────────────────────────
@@ -31,7 +30,7 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
       res.status(401).json({ error: "unauthenticated", message: "Authentication required" });
       return;
     }
-    const { sub } = req.user;
+    const { address } = req.user;
     const { serialized } = req.body;
 
     if (!serialized || typeof serialized !== "string") {
@@ -46,18 +45,6 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
       // Deserialize and validate the delegation
       const delegation = deserializeDelegation(serialized);
 
-      // Verify that the delegation was created by the authenticated user.
-      // We trust the JWT sub claim (set by authMiddleware) as the user identity.
-      // The ownerAddress on the delegation is informational — the real auth
-      // guarantee comes from the JWT token verification above.
-      if (!req.user?.sub) {
-        res.status(401).json({
-          error: "unauthenticated",
-          message: "Authentication required",
-        });
-        return;
-      }
-
       // Activate the delegation to verify it works
       const access = await node.useDelegation(delegation);
 
@@ -69,15 +56,15 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
           ).toISOString()
         : new Date(Date.now() + DEFAULT_DELEGATION_EXPIRY_MS).toISOString();
 
-      // Store the delegation keyed by JWT sub (not client-supplied address)
-      await store.store(sub, serialized, {
+      // Store the delegation keyed by address
+      await store.store(address, serialized, {
         expiresAt,
         actions: delegation.actions ?? [],
         path: delegation.path ?? "",
       });
 
-      // Cache the active DelegatedAccess keyed by sub
-      cache.set(sub, access);
+      // Cache the active DelegatedAccess keyed by address
+      cache.set(address, access);
 
       res.json({
         status: "active",
@@ -98,11 +85,11 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
       res.status(401).json({ error: "unauthenticated", message: "Authentication required" });
       return;
     }
-    const { sub } = req.user;
+    const { address } = req.user;
 
     try {
-      await store.remove(sub);
-      cache.evict(sub);
+      await store.remove(address);
+      cache.evict(address);
 
       res.json({
         status: "none",
@@ -123,10 +110,10 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
       res.status(401).json({ error: "unauthenticated", message: "Authentication required" });
       return;
     }
-    const { sub } = req.user;
+    const { address } = req.user;
 
     try {
-      const stored = await store.load(sub);
+      const stored = await store.load(address);
 
       if (!stored) {
         res.json({
@@ -140,8 +127,8 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
 
       if (isExpired) {
         // Clean up expired delegation
-        await store.remove(sub);
-        cache.evict(sub);
+        await store.remove(address);
+        cache.evict(address);
 
         res.json({
           status: "expired",

@@ -69,7 +69,7 @@ function createApp(
     createGoogleAuthRouter({
       authMiddleware: mockAuthMiddleware,
       delegationMiddleware: createMockDelegationMiddleware(mockKV),
-      resolveDelegation: async (_sub: string) => ({ kv: mockKV } as any),
+      resolveDelegation: async (_sub: string) => ({ kv: mockKV }) as any,
       exchangeCode: opts?.exchangeCode ?? (async () => DEFAULT_TOKEN_RESPONSE),
     }),
   );
@@ -194,10 +194,9 @@ describe("Google Auth Routes", () => {
     });
 
     it("returns 400 when state is missing", async () => {
-      const res = await fetch(
-        `http://localhost:${port}/api/auth/google/callback?code=test-code`,
-        { redirect: "manual" },
-      );
+      const res = await fetch(`http://localhost:${port}/api/auth/google/callback?code=test-code`, {
+        redirect: "manual",
+      });
       expect(res.status).toBe(400);
     });
 
@@ -272,13 +271,11 @@ describe("Google Auth Routes", () => {
     it("returns 501 for callback when GOOGLE_CLIENT_ID not set", async () => {
       delete process.env.GOOGLE_CLIENT_ID;
 
-      const res = await fetch(
-        `http://localhost:${port}/api/auth/google/callback?code=x&state=y`,
-        { redirect: "manual" },
-      );
+      const res = await fetch(`http://localhost:${port}/api/auth/google/callback?code=x&state=y`, {
+        redirect: "manual",
+      });
 
       expect(res.status).toBe(501);
     });
   });
-
 });

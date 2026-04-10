@@ -20,9 +20,7 @@ export const normalizeGoogleMeet: NormalizeFn<FullConference> = (raw) => {
 
   let durationSecs: number | null = null;
   if (endedAt) {
-    durationSecs = Math.round(
-      (new Date(endedAt).getTime() - new Date(startedAt).getTime()) / 1000,
-    );
+    durationSecs = Math.round((new Date(endedAt).getTime() - new Date(startedAt).getTime()) / 1000);
   }
 
   // Title fallback: "Google Meet — {date}"

@@ -14,12 +14,14 @@ const FAKE_PUSH_URL = "https://abc.ngrok-free.app/api/webhooks/google-meet";
 
 // --- Mock PubSub client ---
 
-function createMockPubSub(options: {
-  topicExists?: boolean;
-  subscriptionExists?: boolean;
-  topicError?: Error;
-  subscriptionError?: Error;
-} = {}) {
+function createMockPubSub(
+  options: {
+    topicExists?: boolean;
+    subscriptionExists?: boolean;
+    topicError?: Error;
+    subscriptionError?: Error;
+  } = {},
+) {
   const createSubscriptionArgs: unknown[] = [];
 
   const mockSubscription = {

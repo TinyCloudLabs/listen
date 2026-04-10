@@ -226,9 +226,7 @@ describe("GoogleMeetClient", () => {
       await client.listTranscripts("conferenceRecords/abc123");
 
       const [url] = lastFetchCall();
-      expect(url).toContain(
-        "https://meet.googleapis.com/v2/conferenceRecords/abc123/transcripts",
-      );
+      expect(url).toContain("https://meet.googleapis.com/v2/conferenceRecords/abc123/transcripts");
     });
 
     it("returns transcripts from response", async () => {
@@ -269,7 +267,9 @@ describe("GoogleMeetClient", () => {
       );
       mockFetch.mockResolvedValueOnce(
         jsonResponse({
-          transcriptEntries: [{ ...ENTRY, name: "conferenceRecords/abc123/transcripts/def456/entries/entry2" }],
+          transcriptEntries: [
+            { ...ENTRY, name: "conferenceRecords/abc123/transcripts/def456/entries/entry2" },
+          ],
         }),
       );
 
@@ -350,15 +350,15 @@ describe("GoogleMeetClient", () => {
       };
 
       mockFetch.mockResolvedValueOnce(jsonResponse({ participants: [PARTICIPANT] }));
-      mockFetch.mockResolvedValueOnce(
-        jsonResponse({ transcripts: [TRANSCRIPT, transcript2] }),
-      );
+      mockFetch.mockResolvedValueOnce(jsonResponse({ transcripts: [TRANSCRIPT, transcript2] }));
       // entries for transcript 1
       mockFetch.mockResolvedValueOnce(jsonResponse({ transcriptEntries: [ENTRY] }));
       // entries for transcript 2
       mockFetch.mockResolvedValueOnce(
         jsonResponse({
-          transcriptEntries: [{ ...ENTRY, name: "entries/from-t2", text: "From second transcript" }],
+          transcriptEntries: [
+            { ...ENTRY, name: "entries/from-t2", text: "From second transcript" },
+          ],
         }),
       );
 

@@ -161,11 +161,7 @@ export class GoogleMeetClient {
     return results;
   }
 
-  private async fetchWithRetry(
-    url: string,
-    retryCount = 0,
-    hasRefreshed = false,
-  ): Promise<any> {
+  private async fetchWithRetry(url: string, retryCount = 0, hasRefreshed = false): Promise<any> {
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${this.accessToken}` },
     });

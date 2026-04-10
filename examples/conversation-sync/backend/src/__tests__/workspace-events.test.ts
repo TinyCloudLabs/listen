@@ -27,7 +27,12 @@ function makeMetadata(overrides: Partial<SubscriptionMetadata> = {}): Subscripti
 // --- Fetch mock helpers ---
 
 const originalFetch = globalThis.fetch;
-let fetchCalls: Array<{ url: string; method: string; headers?: Record<string, string>; body?: any }>;
+let fetchCalls: Array<{
+  url: string;
+  method: string;
+  headers?: Record<string, string>;
+  body?: any;
+}>;
 
 function mockFetchSequence(responses: Array<{ status: number; body: any }>) {
   fetchCalls = [];
@@ -149,9 +154,7 @@ describe("createMeetSubscription", () => {
   });
 
   it("throws on API error response", async () => {
-    mockFetchSequence([
-      { status: 403, body: { error: { message: "Permission denied" } } },
-    ]);
+    mockFetchSequence([{ status: 403, body: { error: { message: "Permission denied" } } }]);
 
     await expect(
       createMeetSubscription(PROJECT_ID, GOOGLE_USER_ID, ACCESS_TOKEN, 0),
@@ -258,13 +261,11 @@ describe("checkAndRenewSubscription", () => {
       expiresAt: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString(), // 6 hours
     });
 
-    mockFetchSequence([
-      { status: 401, body: { error: { message: "Token expired" } } },
-    ]);
+    mockFetchSequence([{ status: 401, body: { error: { message: "Token expired" } } }]);
 
-    await expect(
-      checkAndRenewSubscription(metadata, ACCESS_TOKEN, 0),
-    ).rejects.toThrow("Failed to renew subscription: 401");
+    await expect(checkAndRenewSubscription(metadata, ACCESS_TOKEN, 0)).rejects.toThrow(
+      "Failed to renew subscription: 401",
+    );
   });
 
   it("returns 'lapsed' when expiry is exactly now", async () => {
@@ -286,9 +287,7 @@ describe("deleteMeetSubscription", () => {
   it("deletes subscription successfully", async () => {
     const metadata = makeMetadata();
 
-    mockFetchSequence([
-      { status: 200, body: {} },
-    ]);
+    mockFetchSequence([{ status: 200, body: {} }]);
 
     await deleteMeetSubscription(metadata, ACCESS_TOKEN);
 
@@ -301,9 +300,7 @@ describe("deleteMeetSubscription", () => {
   it("treats 404 as success (already deleted)", async () => {
     const metadata = makeMetadata();
 
-    mockFetchSequence([
-      { status: 404, body: { error: { message: "Not found" } } },
-    ]);
+    mockFetchSequence([{ status: 404, body: { error: { message: "Not found" } } }]);
 
     // Should not throw
     await deleteMeetSubscription(metadata, ACCESS_TOKEN);
@@ -312,12 +309,10 @@ describe("deleteMeetSubscription", () => {
   it("throws on other API errors", async () => {
     const metadata = makeMetadata();
 
-    mockFetchSequence([
-      { status: 500, body: { error: { message: "Internal server error" } } },
-    ]);
+    mockFetchSequence([{ status: 500, body: { error: { message: "Internal server error" } } }]);
 
-    await expect(
-      deleteMeetSubscription(metadata, ACCESS_TOKEN),
-    ).rejects.toThrow("Failed to delete subscription: 500");
+    await expect(deleteMeetSubscription(metadata, ACCESS_TOKEN)).rejects.toThrow(
+      "Failed to delete subscription: 500",
+    );
   });
 });

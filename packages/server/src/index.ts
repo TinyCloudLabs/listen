@@ -14,12 +14,13 @@ export { DelegationCache } from "./delegation-cache.js";
 export type { DelegatedAccess } from "@tinycloud/node-sdk";
 
 export {
-  createJWTVerifier,
-  fetchUserInfo,
-  type JWTClaims,
-  type VerifyResult,
-  type UserInfo,
-  type JWTVerifierConfig,
+  createNonceStore,
+  verifySIWE,
+  issueSessionToken,
+  verifySessionToken,
+  type NonceStore,
+  type NonceEntry,
+  type SessionTokenPayload,
 } from "./auth.js";
 
 export { createCsrfMiddleware, type CsrfConfig } from "./csrf.js";

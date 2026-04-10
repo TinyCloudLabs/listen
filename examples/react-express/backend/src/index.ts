@@ -13,10 +13,12 @@ import {
   DelegationStore,
   DelegationCache,
   createCsrfMiddleware,
+  createNonceStore,
 } from "@tinyboilerplate/server";
 
 import { createAuthMiddleware } from "./middleware/auth.js";
 import { createDelegationMiddleware } from "./middleware/delegation.js";
+import { createAuthRouter } from "./routes/auth.js";
 import { createServerInfoRouter } from "./routes/server-info.js";
 import { createDelegationRouter } from "./routes/delegations.js";
 import { createItemsRouter } from "./routes/items.js";
@@ -25,7 +27,6 @@ import { createItemsRouter } from "./routes/items.js";
 
 const BACKEND_PRIVATE_KEY = process.env.BACKEND_PRIVATE_KEY;
 const TINYCLOUD_HOST = process.env.TINYCLOUD_HOST ?? "https://node.tinycloud.xyz";
-const OPENKEY_ISSUER_URL = process.env.OPENKEY_ISSUER_URL ?? "https://openkey.so";
 const FRONTEND_URL = process.env.FRONTEND_URL ?? "https://localhost:5173";
 const PORT = parseInt(process.env.PORT ?? "3001", 10);
 
@@ -48,8 +49,9 @@ async function main() {
   const delegationStore = new DelegationStore(node);
   const delegationCache = new DelegationCache();
 
-  // 3. Create middleware
-  const authMiddleware = createAuthMiddleware(OPENKEY_ISSUER_URL);
+  // 3. Create auth infrastructure
+  const nonceStore = createNonceStore();
+  const authMiddleware = createAuthMiddleware(BACKEND_PRIVATE_KEY);
 
   const delegationMiddleware = createDelegationMiddleware({
     node,
@@ -71,6 +73,14 @@ async function main() {
     legacyHeaders: false,
   });
 
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 30,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    message: { error: "rate_limited", message: "Too many auth requests" },
+  });
+
   const delegationLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 10,
@@ -85,6 +95,15 @@ async function main() {
   app.use("/api/server-info", createServerInfoRouter(did));
 
   app.use(
+    "/api/auth",
+    authLimiter,
+    createAuthRouter({
+      nonceStore,
+      privateKey: BACKEND_PRIVATE_KEY,
+    }),
+  );
+
+  app.use(
     "/api/delegations",
     delegationLimiter,
     createDelegationRouter({
@@ -93,7 +112,6 @@ async function main() {
       store: delegationStore,
       cache: delegationCache,
       authMiddleware,
-      openKeyIssuerUrl: OPENKEY_ISSUER_URL,
     }),
   );
 

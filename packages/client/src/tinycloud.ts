@@ -1,4 +1,5 @@
 import { TinyCloudWeb, BrowserSessionStorage } from "@tinycloud/web-sdk";
+import type { ClientSession, SiweConfig } from "@tinycloud/web-sdk";
 import type { providers } from "ethers";
 
 // ── Configuration ────────────────────────────────────────────────────
@@ -6,6 +7,7 @@ import type { providers } from "ethers";
 export interface TinyCloudWebConfig {
   tinycloudHosts?: string[];
   autoCreateSpace?: boolean;
+  siweConfig?: SiweConfig;
 }
 
 // ── TinyCloudWeb Instance ────────────────────────────────────────────
@@ -22,6 +24,7 @@ export function createTinyCloudWeb(
     tinycloudHosts: config?.tinycloudHosts ?? ["https://node.tinycloud.xyz"],
     autoCreateSpace: config?.autoCreateSpace ?? true,
     sessionStorage: new BrowserSessionStorage(),
+    siweConfig: config?.siweConfig,
   });
 
   // Set provider for createDelegation() signing (SDK bug workaround)
@@ -33,14 +36,18 @@ export function createTinyCloudWeb(
 /**
  * Create a TinyCloudWeb instance and sign in.
  *
- * Takes an ethers Web3Provider (from openKeySignIn) and returns
- * a signed-in TinyCloudWeb instance ready for KV/delegation operations.
+ * Accepts an optional `nonce` to pass through to the SDK's SIWE message
+ * construction. The SDK's signIn() returns a ClientSession containing
+ * the signed SIWE message and signature.
  */
 export async function createAndSignIn(
   web3Provider: providers.Web3Provider,
-  config?: TinyCloudWebConfig,
-): Promise<TinyCloudWeb> {
-  const tcw = createTinyCloudWeb(web3Provider, config);
-  await tcw.signIn();
-  return tcw;
+  config?: TinyCloudWebConfig & { nonce?: string },
+): Promise<{ tcw: TinyCloudWeb; session: ClientSession }> {
+  const siweConfig = config?.nonce
+    ? { ...config?.siweConfig, nonce: config.nonce }
+    : config?.siweConfig;
+  const tcw = createTinyCloudWeb(web3Provider, { ...config, siweConfig });
+  const session = await tcw.signIn();
+  return { tcw, session };
 }

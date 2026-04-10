@@ -18,7 +18,7 @@ interface BackendKV {
 interface GoogleAuthRoutesConfig {
   authMiddleware: RequestHandler;
   delegationMiddleware: RequestHandler;
-  resolveDelegation: (sub: string) => Promise<any>;
+  resolveDelegation: (address: string) => Promise<any>;
   /** Injectable for testing */
   buildAuthUrl?: (redirectUri: string, state: string) => string;
   exchangeCode?: (code: string, redirectUri: string) => Promise<GoogleTokenResponse>;
@@ -28,13 +28,17 @@ interface GoogleAuthRoutesConfig {
   /** Whether Google Meet webhooks are enabled */
   isWebhooksEnabled?: () => boolean;
   /** Create a Workspace Events subscription */
-  createMeetSubscription?: (projectId: string, googleUserId: string, accessToken: string) => Promise<SubscriptionMetadata>;
+  createMeetSubscription?: (
+    projectId: string,
+    googleUserId: string,
+    accessToken: string,
+  ) => Promise<SubscriptionMetadata>;
   /** GCP project ID for Pub/Sub topic path */
   pubSubProjectId?: string;
 }
 
 interface StateEntry {
-  sub: string;
+  address: string;
   createdAt: number;
 }
 
@@ -42,7 +46,7 @@ interface StateEntry {
 
 const GOOGLE_TOKENS_PATH = "/app.conversations/config/google-tokens";
 const SUBSCRIPTION_KV_PATH = "/app.webhooks/config/google-meet-subscription";
-const USER_SUB_KV_PATH = "/app.webhooks/config/google-meet-user-sub";
+const USER_ADDRESS_KV_PATH = "/app.webhooks/config/google-meet-user-address";
 const STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 const GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo";
@@ -106,7 +110,7 @@ export function createGoogleAuthRouter(config: GoogleAuthRoutesConfig) {
     cleanExpiredStates();
 
     const state = randomUUID();
-    pendingStates.set(state, { sub: req.user!.sub, createdAt: Date.now() });
+    pendingStates.set(state, { address: req.user!.address, createdAt: Date.now() });
 
     const redirectUri = `${req.protocol}://${req.get("host")}/api/auth/google/callback`;
     const authUrl = buildAuthUrl(redirectUri, state);
@@ -116,7 +120,10 @@ export function createGoogleAuthRouter(config: GoogleAuthRoutesConfig) {
 
   // ── GET /callback — receive Google redirect (public) ─────────────
   router.get("/callback", async (req: Request, res: Response) => {
-    console.log("[google-auth] callback hit, query:", { code: !!req.query.code, state: !!req.query.state });
+    console.log("[google-auth] callback hit, query:", {
+      code: !!req.query.code,
+      state: !!req.query.state,
+    });
     if (!requireGoogleConfig(req, res)) return;
 
     const { code, state } = req.query;
@@ -136,7 +143,7 @@ export function createGoogleAuthRouter(config: GoogleAuthRoutesConfig) {
       return;
     }
     pendingStates.delete(state); // consume — single use
-    console.log("[google-auth] state valid for sub:", stateEntry.sub);
+    console.log("[google-auth] state valid for address:", stateEntry.address);
 
     const redirectUri = `${req.protocol}://${req.get("host")}/api/auth/google/callback`;
     console.log("[google-auth] redirect URI for exchange:", redirectUri);
@@ -154,14 +161,17 @@ export function createGoogleAuthRouter(config: GoogleAuthRoutesConfig) {
         googleUserId = userInfo.sub;
         console.log("[google-auth] got Google user ID:", googleUserId);
       } catch (err) {
-        console.warn("[google-auth] failed to fetch userinfo, continuing without googleUserId:", err);
+        console.warn(
+          "[google-auth] failed to fetch userinfo, continuing without googleUserId:",
+          err,
+        );
       }
 
       // Resolve user's delegated access to store tokens in their KV
-      console.log("[google-auth] resolving delegation for sub:", stateEntry.sub);
-      const access = await resolveDelegation(stateEntry.sub);
+      console.log("[google-auth] resolving delegation for address:", stateEntry.address);
+      const access = await resolveDelegation(stateEntry.address);
       if (!access) {
-        console.log("[google-auth] delegation not found for sub:", stateEntry.sub);
+        console.log("[google-auth] delegation not found for address:", stateEntry.address);
         res.status(200).send(errorHtml("Delegation not found. Please sign in again."));
         return;
       }
@@ -173,15 +183,28 @@ export function createGoogleAuthRouter(config: GoogleAuthRoutesConfig) {
       console.log("[google-auth] KV put result:", JSON.stringify(putResult));
 
       // Create Workspace Events subscription if webhooks are enabled
-      if (googleUserId && isWebhooksEnabled?.() && createMeetSubscription && backendKV && pubSubProjectId) {
+      if (
+        googleUserId &&
+        isWebhooksEnabled?.() &&
+        createMeetSubscription &&
+        backendKV &&
+        pubSubProjectId
+      ) {
         try {
           console.log("[google-auth] creating Workspace Events subscription...");
-          const metadata = await createMeetSubscription(pubSubProjectId, googleUserId, tokens.access_token);
+          const metadata = await createMeetSubscription(
+            pubSubProjectId,
+            googleUserId,
+            tokens.access_token,
+          );
           await backendKV.put(SUBSCRIPTION_KV_PATH, JSON.stringify(metadata));
-          await backendKV.put(USER_SUB_KV_PATH, stateEntry.sub);
+          await backendKV.put(USER_ADDRESS_KV_PATH, stateEntry.address);
           console.log("[google-auth] subscription created:", metadata.subscriptionName);
         } catch (err) {
-          console.warn("[google-auth] failed to create subscription, manual sync still available:", err);
+          console.warn(
+            "[google-auth] failed to create subscription, manual sync still available:",
+            err,
+          );
         }
       }
 

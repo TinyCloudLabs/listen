@@ -38,7 +38,9 @@ export function parsePubSubConfig(): PubSubConfig | null {
   const pushUrl = process.env.GOOGLE_PUBSUB_PUSH_URL;
 
   if (!keyJson || !pushUrl) {
-    console.warn("[pubsub] Missing GOOGLE_SERVICE_ACCOUNT_KEY or GOOGLE_PUBSUB_PUSH_URL — Pub/Sub disabled");
+    console.warn(
+      "[pubsub] Missing GOOGLE_SERVICE_ACCOUNT_KEY or GOOGLE_PUBSUB_PUSH_URL — Pub/Sub disabled",
+    );
     return null;
   }
 
@@ -54,7 +56,9 @@ export function parsePubSubConfig(): PubSubConfig | null {
   const serviceAccountEmail = credentials.client_email;
 
   if (typeof projectId !== "string" || typeof serviceAccountEmail !== "string") {
-    console.warn("[pubsub] Service account JSON missing project_id or client_email — Pub/Sub disabled");
+    console.warn(
+      "[pubsub] Service account JSON missing project_id or client_email — Pub/Sub disabled",
+    );
     return null;
   }
 
@@ -228,17 +232,14 @@ export async function checkAndRenewSubscription(
   }
 
   // Within 24h — renew via PATCH
-  const res = await fetch(
-    `${WORKSPACE_EVENTS_API}/${metadata.subscriptionName}?updateMask=ttl`,
-    {
-      method: "PATCH",
-      headers: {
-        Authorization: `Bearer ${userAccessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ ttl: SUBSCRIPTION_TTL }),
+  const res = await fetch(`${WORKSPACE_EVENTS_API}/${metadata.subscriptionName}?updateMask=ttl`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${userAccessToken}`,
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify({ ttl: SUBSCRIPTION_TTL }),
+  });
 
   if (!res.ok) {
     const text = await res.text();

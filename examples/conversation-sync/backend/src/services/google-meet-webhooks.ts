@@ -24,7 +24,9 @@ export function _resetForTesting(): void {
 export async function initGoogleMeetWebhooks(): Promise<void> {
   const config = parsePubSubConfig();
   if (!config) {
-    console.warn("[webhooks] Google Meet webhooks disabled — missing or invalid Pub/Sub configuration");
+    console.warn(
+      "[webhooks] Google Meet webhooks disabled — missing or invalid Pub/Sub configuration",
+    );
     return;
   }
 

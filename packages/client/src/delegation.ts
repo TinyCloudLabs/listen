@@ -40,13 +40,13 @@ export async function createDelegation(
 export async function sendDelegation(
   backendUrl: string,
   serialized: string,
-  accessToken: string,
+  sessionToken: string,
 ): Promise<DelegationResponse> {
   const res = await fetch(`${backendUrl}/api/delegations`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
+      Authorization: `Bearer ${sessionToken}`,
       "X-Requested-With": "TinyBoilerplate",
     },
     body: JSON.stringify({ serialized }),
@@ -64,11 +64,11 @@ export async function sendDelegation(
 
 export async function checkDelegationStatus(
   backendUrl: string,
-  accessToken: string,
+  sessionToken: string,
 ): Promise<DelegationResponse> {
   const res = await fetch(`${backendUrl}/api/delegations/status`, {
     headers: {
-      Authorization: `Bearer ${accessToken}`,
+      Authorization: `Bearer ${sessionToken}`,
       "X-Requested-With": "TinyBoilerplate",
     },
   });
@@ -83,11 +83,11 @@ export async function checkDelegationStatus(
 
 // ── Revoke Delegation ────────────────────────────────────────────────
 
-export async function revokeDelegation(backendUrl: string, accessToken: string): Promise<void> {
+export async function revokeDelegation(backendUrl: string, sessionToken: string): Promise<void> {
   const res = await fetch(`${backendUrl}/api/delegations`, {
     method: "DELETE",
     headers: {
-      Authorization: `Bearer ${accessToken}`,
+      Authorization: `Bearer ${sessionToken}`,
       "X-Requested-With": "TinyBoilerplate",
     },
   });

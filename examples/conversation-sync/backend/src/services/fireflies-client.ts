@@ -16,15 +16,6 @@ export interface FirefliesUser {
   is_admin: boolean;
 }
 
-export interface TranscriptSummary {
-  id: string;
-  title: string;
-  date: number;
-  duration: number;
-  organizer_email: string;
-  transcript_url: string;
-}
-
 export interface Speaker {
   id: string;
   name: string;
@@ -95,6 +86,39 @@ const LIST_TRANSCRIPTS_QUERY = `query ListTranscripts($limit: Int, $skip: Int) {
     duration
     organizer_email
     transcript_url
+    speakers {
+      id
+      name
+    }
+    meeting_attendees {
+      displayName
+      email
+    }
+    sentences {
+      index
+      speaker_id
+      speaker_name
+      text
+      raw_text
+      start_time
+      end_time
+      ai_filters {
+        task
+        pricing
+        metric
+        question
+        date_and_time
+        sentiment
+      }
+    }
+    summary {
+      keywords
+      action_items
+      overview
+      shorthand_bullet
+      meeting_type
+    }
+    audio_url
   }
 }`;
 
@@ -158,7 +182,7 @@ export interface PaginationOptions {
 }
 
 export interface PaginationResult {
-  transcripts: TranscriptSummary[];
+  transcripts: FullTranscript[];
   batchCount: number;
   earlyExit: boolean;
 }
@@ -177,9 +201,14 @@ export class FirefliesClient {
     return this.request<{ user: FirefliesUser }>(GET_USER_QUERY).then((data) => data.user);
   }
 
-  /** List transcripts with optional pagination. */
-  async listTranscripts(limit?: number, skip?: number): Promise<TranscriptSummary[]> {
-    return this.request<{ transcripts: TranscriptSummary[] }>(LIST_TRANSCRIPTS_QUERY, {
+  /**
+   * List transcripts with full content in a single query.
+   *
+   * Returns FullTranscript[] — sentences, summary, speakers, attendees all included.
+   * One API call per batch instead of one-per-transcript detail fetch.
+   */
+  async listTranscripts(limit?: number, skip?: number): Promise<FullTranscript[]> {
+    return this.request<{ transcripts: FullTranscript[] }>(LIST_TRANSCRIPTS_QUERY, {
       limit,
       skip,
     }).then((data) => data.transcripts);
@@ -206,7 +235,7 @@ export class FirefliesClient {
     const delayMs = options?.delayMs ?? 800;
     const onProgress = options?.onProgress;
 
-    const all: TranscriptSummary[] = [];
+    const all: FullTranscript[] = [];
     let skip = 0;
     let batchCount = 0;
     let earlyExit = false;

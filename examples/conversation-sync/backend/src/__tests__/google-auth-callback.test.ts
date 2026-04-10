@@ -31,15 +31,15 @@ function createMockKV() {
 
 // ── Test Helpers ─────────────────────────────────────────────────────
 
-const TEST_SUB = "test-user-sub";
+const TEST_ADDRESS = "0xtest-user-address";
 const TOKENS_KV_PATH = "/app.conversations/config/google-tokens";
 const SUBSCRIPTION_KV_PATH = "/app.webhooks/config/google-meet-subscription";
-const USER_SUB_KV_PATH = "/app.webhooks/config/google-meet-user-sub";
+const USER_ADDRESS_KV_PATH = "/app.webhooks/config/google-meet-user-address";
 
 const TEST_GOOGLE_USER_ID = "google-user-12345";
 
 function mockAuthMiddleware(req: Request, _res: Response, next: NextFunction) {
-  req.user = { sub: TEST_SUB };
+  req.user = { address: TEST_ADDRESS };
   next();
 }
 
@@ -65,7 +65,11 @@ function createApp(
     exchangeCode?: (code: string, redirectUri: string) => Promise<GoogleTokenResponse>;
     fetchGoogleUserInfo?: (accessToken: string) => Promise<{ sub: string }>;
     isWebhooksEnabled?: () => boolean;
-    createMeetSubscription?: (projectId: string, googleUserId: string, accessToken: string) => Promise<SubscriptionMetadata>;
+    createMeetSubscription?: (
+      projectId: string,
+      googleUserId: string,
+      accessToken: string,
+    ) => Promise<SubscriptionMetadata>;
     pubSubProjectId?: string;
   },
 ) {
@@ -80,9 +84,10 @@ function createApp(
         req.delegatedAccess = { kv: userKV } as any;
         next();
       },
-      resolveDelegation: async (_sub: string) => ({ kv: userKV } as any),
+      resolveDelegation: async (_sub: string) => ({ kv: userKV }) as any,
       exchangeCode: opts?.exchangeCode ?? (async () => DEFAULT_TOKEN_RESPONSE),
-      fetchGoogleUserInfo: opts?.fetchGoogleUserInfo ?? (async () => ({ sub: TEST_GOOGLE_USER_ID })),
+      fetchGoogleUserInfo:
+        opts?.fetchGoogleUserInfo ?? (async () => ({ sub: TEST_GOOGLE_USER_ID })),
       backendKV: opts?.backendKV,
       isWebhooksEnabled: opts?.isWebhooksEnabled,
       createMeetSubscription: opts?.createMeetSubscription,
@@ -198,7 +203,7 @@ describe("Google Auth Callback — userinfo + subscription", () => {
     expect(subMeta.googleUserId).toBe(TEST_GOOGLE_USER_ID);
   });
 
-  it("stores user sub in backend KV for push handler delegation lookup", async () => {
+  it("stores user address in backend KV for push handler delegation lookup", async () => {
     const app = createApp(userKV, {
       backendKV,
       isWebhooksEnabled: () => true,
@@ -209,8 +214,8 @@ describe("Google Auth Callback — userinfo + subscription", () => {
 
     await initiateAndCallback(port);
 
-    const storedSub = backendKV._data.get(USER_SUB_KV_PATH);
-    expect(storedSub).toBe(TEST_SUB);
+    const storedAddress = backendKV._data.get(USER_ADDRESS_KV_PATH);
+    expect(storedAddress).toBe(TEST_ADDRESS);
   });
 
   it("passes correct args to createMeetSubscription", async () => {

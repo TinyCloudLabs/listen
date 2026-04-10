@@ -1,122 +1,151 @@
-import { createRemoteJWKSet, jwtVerify } from "jose";
-import type { JWTPayload, JWTVerifyResult } from "jose";
-import { JWSSignatureVerificationFailed, JWTClaimValidationFailed, JWTExpired } from "jose/errors";
-import { deriveApiHost } from "@tinyboilerplate/core";
+import { randomBytes } from "crypto";
+import { SignJWT, jwtVerify } from "jose";
 
 // ── Types ────────────────────────────────────────────────────────────
 
-export interface JWTClaims extends JWTPayload {
-  sub: string;
-  [key: string]: unknown;
+export interface NonceEntry {
+  nonce: string;
+  address: string;
+  createdAt: number;
 }
 
-export interface VerifyResult {
-  claims: JWTClaims;
-  token: string;
+export interface NonceStore {
+  generate(address: string): string;
+  validate(address: string, nonce: string): boolean;
 }
 
-export interface UserInfo {
-  sub: string;
-  address?: string;
-  email?: string;
-  [key: string]: unknown;
+export interface SessionTokenPayload {
+  address: string;
 }
 
-export interface JWTVerifierConfig {
-  /** Expected issuer (e.g., "https://openkey.so") */
-  issuer?: string;
-  /** Expected audience (your client ID or app identifier) */
-  audience?: string;
-}
+// ── Nonce Store ─────────────────────────────────────────────────────
 
-// ── JWT Verifier ─────────────────────────────────────────────────────
+const NONCE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
- * Create a token verification function.
+ * Create an in-memory nonce store for SIWE authentication.
  *
- * Supports two modes:
- * 1. JWT verification via JWKS (standard OAuth2 JWT access tokens)
- * 2. Opaque token verification via userinfo endpoint (better-auth session tokens)
- *
- * Tries JWT first, falls back to userinfo if the token isn't a JWT.
- *
- * Accepts either the frontend host (https://openkey.so) or API host
- * (https://api.openkey.so) — the API host is derived automatically.
+ * Nonces are:
+ * - Cryptographically random (32 bytes hex)
+ * - Bound to a specific address
+ * - Single-use (deleted after validation)
+ * - Short-lived (5 minute TTL)
  */
-export function createJWTVerifier(openKeyIssuerUrl: string, config?: JWTVerifierConfig) {
-  const apiHost = deriveApiHost(openKeyIssuerUrl);
-  const jwksUrl = new URL("/api/auth/jwks", apiHost);
-  const jwks = createRemoteJWKSet(jwksUrl);
+export function createNonceStore(): NonceStore {
+  const store = new Map<string, NonceEntry>();
 
-  const issuer = config?.issuer ?? openKeyIssuerUrl;
-  const audience = config?.audience;
-
-  async function verify(authHeaderOrToken: string): Promise<VerifyResult> {
-    const token = authHeaderOrToken.startsWith("Bearer ")
-      ? authHeaderOrToken.slice(7)
-      : authHeaderOrToken;
-
-    if (!token) {
-      throw new Error("No token provided");
-    }
-
-    // Try JWT verification first
-    if (token.split(".").length === 3) {
-      try {
-        const verifyOptions: Parameters<typeof jwtVerify>[2] = { issuer };
-        if (audience) verifyOptions.audience = audience;
-
-        const result: JWTVerifyResult = await jwtVerify(token, jwks, verifyOptions);
-        const claims = result.payload as JWTClaims;
-        if (!claims.sub) throw new Error("JWT missing 'sub' claim");
-        return { claims, token };
-      } catch (err) {
-        // Re-throw only when the token IS a valid JWT that failed a security check.
-        // Other errors (JWKSNoMatchingKey, JWSInvalid, JWKSTimeout) fall through
-        // to userinfo — the token may be a better-auth session token, not a JWT.
-        if (
-          err instanceof JWSSignatureVerificationFailed ||
-          err instanceof JWTExpired ||
-          err instanceof JWTClaimValidationFailed
-        ) {
-          throw err;
-        }
-        // Fall through to userinfo validation
+  // Periodic cleanup of expired nonces
+  const cleanupInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [key, entry] of store) {
+      if (now - entry.createdAt > NONCE_TTL_MS) {
+        store.delete(key);
       }
     }
+  }, 60_000);
+  cleanupInterval.unref();
 
-    // Opaque token — validate via userinfo endpoint
-    const userInfo = await fetchUserInfo(apiHost, token);
-    if (!userInfo.sub) {
-      throw new Error("Token validation failed: no sub in userinfo");
-    }
-    return {
-      claims: { sub: userInfo.sub, iss: apiHost } as JWTClaims,
-      token,
-    };
-  }
+  return {
+    generate(address: string): string {
+      const normalizedAddress = address.toLowerCase();
+      const nonce = randomBytes(32).toString("hex");
+      const key = `${normalizedAddress}:${nonce}`;
 
-  return verify;
+      store.set(key, {
+        nonce,
+        address: normalizedAddress,
+        createdAt: Date.now(),
+      });
+
+      return nonce;
+    },
+
+    validate(address: string, nonce: string): boolean {
+      const normalizedAddress = address.toLowerCase();
+      const key = `${normalizedAddress}:${nonce}`;
+      const entry = store.get(key);
+
+      if (!entry) return false;
+
+      // Delete immediately — single use
+      store.delete(key);
+
+      // Check TTL
+      if (Date.now() - entry.createdAt > NONCE_TTL_MS) {
+        return false;
+      }
+
+      return true;
+    },
+  };
 }
 
-// ── User Info ────────────────────────────────────────────────────────
+// ── SIWE Verification ───────────────────────────────────────────────
 
 /**
- * Fetch the authenticated user's profile from the OpenKey userinfo endpoint.
- * Requires a valid access token.
+ * Verify a SIWE message and signature using the `siwe` package.
+ * Returns the recovered address and nonce from the message.
  */
-export async function fetchUserInfo(openKeyUrl: string, accessToken: string): Promise<UserInfo> {
-  const url = deriveApiHost(openKeyUrl);
-  const res = await fetch(`${url}/api/auth/oauth2/userinfo`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
+export async function verifySIWE(
+  message: string,
+  signature: string,
+): Promise<{ address: string; nonce: string }> {
+  // Dynamic import to avoid requiring siwe at module load time
+  const { SiweMessage } = await import("siwe");
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new Error(`Failed to fetch user info: ${text}`);
+  const siweMessage = new SiweMessage(message);
+  const result = await siweMessage.verify({ signature });
+
+  if (!result.success) {
+    throw new Error("SIWE signature verification failed");
   }
 
-  return res.json() as Promise<UserInfo>;
+  return {
+    address: result.data.address,
+    nonce: result.data.nonce,
+  };
+}
+
+// ── Session Token ───────────────────────────────────────────────────
+
+/**
+ * Issue a session JWT signed with HS256.
+ * Subject is the wallet address.
+ */
+export async function issueSessionToken(
+  address: string,
+  privateKey: string,
+): Promise<{ token: string; expiresIn: number }> {
+  const secret = new TextEncoder().encode(privateKey);
+  const expiresIn = 24 * 60 * 60; // 24 hours in seconds
+
+  const token = await new SignJWT({ address: address.toLowerCase() })
+    .setProtectedHeader({ alg: "HS256" })
+    .setSubject(address.toLowerCase())
+    .setIssuedAt()
+    .setExpirationTime("24h")
+    .sign(secret);
+
+  return { token, expiresIn };
+}
+
+/**
+ * Verify a session JWT issued by this backend.
+ * Returns the wallet address from the token.
+ */
+export async function verifySessionToken(
+  token: string,
+  privateKey: string,
+): Promise<{ address: string }> {
+  const secret = new TextEncoder().encode(privateKey);
+
+  const { payload } = await jwtVerify(token, secret, {
+    algorithms: ["HS256"],
+  });
+
+  if (!payload.sub) {
+    throw new Error("Session token missing 'sub' claim");
+  }
+
+  return { address: payload.sub };
 }
