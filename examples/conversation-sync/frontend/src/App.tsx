@@ -20,6 +20,7 @@ import { SetupWizard } from "./components/SetupWizard";
 import { SyncControl } from "./components/SyncControl";
 import { ConversationList } from "./components/ConversationList";
 import { ConversationDetail } from "./components/ConversationDetail";
+import { LiveWriteEvents } from "./components/LiveWriteEvents";
 
 // ── Environment ─────────────────────────────────────────────────────
 
@@ -305,6 +306,7 @@ export function App() {
               hasFireflies={hasKey === true}
               hasGoogleMeet={hasGoogleMeet === true}
             />
+            <LiveWriteEvents tcw={tcw} onWrite={() => setRefreshKey((k) => k + 1)} />
             <ConversationList
               api={api}
               onSelectConversation={setSelectedConversationId}
