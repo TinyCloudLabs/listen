@@ -71,10 +71,17 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
         expiresAt,
       });
     } catch (err) {
+      // DIAGNOSTIC: surface the full error to the client temporarily so we
+      // can debug UCAN deserialization / activation failures. Revert before
+      // merging.
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const errStack = err instanceof Error ? err.stack : undefined;
       console.error("[delegations] failed to process delegation:", err);
       res.status(400).json({
         error: "invalid_delegation",
         message: "Failed to process delegation",
+        detail: errMsg,
+        stack: errStack,
       });
     }
   });
