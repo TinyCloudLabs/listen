@@ -41,6 +41,7 @@ const SCHEMA_STATEMENTS = [
     system_prompt   TEXT,
     model           TEXT,
     archived        INTEGER NOT NULL DEFAULT 0,
+    session_id      TEXT,
     last_message_at TEXT,
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL

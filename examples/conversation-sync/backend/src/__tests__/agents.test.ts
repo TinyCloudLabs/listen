@@ -18,6 +18,7 @@ interface AgentRecord {
   system_prompt: string | null;
   model: string | null;
   archived: number;
+  session_id: string | null;
   last_message_at: string | null;
   created_at: string;
   updated_at: string;
@@ -83,6 +84,7 @@ function createMockAccess() {
         system_prompt,
         model,
         archived: 0,
+        session_id: null,
         last_message_at: null,
         created_at,
         updated_at,
