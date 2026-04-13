@@ -4,6 +4,11 @@ import type { Server } from "http";
 import type { Request, Response, NextFunction } from "express";
 import { createAgentsRouter, classifyLane } from "../routes/agents.js";
 import type { AgentTurnInput, AgentTurnResult } from "../services/agent-runner.js";
+import {
+  AgentSessionStore,
+  type AgentNodeHandle,
+  type CreateAgentNode,
+} from "../services/agent-sessions.js";
 
 // ── Mock DelegatedAccess ─────────────────────────────────────────────
 
@@ -136,10 +141,44 @@ function createMockAccess() {
 
 // ── Test app wiring ──────────────────────────────────────────────────
 
+/**
+ * Build a stub AgentSessionStore whose `createAgentNode` factory
+ * returns a hand-rolled AgentNodeHandle — each fresh session gets a
+ * unique `did:key:z6Mktest-<n>` (so tests can assert the DID changes)
+ * and `useDelegation` returns the same mocked DelegatedAccess used for
+ * the outer delegationMiddleware. No real WASM is loaded.
+ */
+function createStubSessionStore(access: unknown): {
+  store: AgentSessionStore;
+  createAgentNode: CreateAgentNode;
+  mintedDIDs: string[];
+} {
+  const mintedDIDs: string[] = [];
+  let counter = 0;
+  const createAgentNode: CreateAgentNode = async () => {
+    counter += 1;
+    const did = `did:key:z6Mktest-${counter}`;
+    mintedDIDs.push(did);
+    const handle: AgentNodeHandle = {
+      did,
+      useDelegation: async (_serialized: string) => access as any,
+    };
+    return handle;
+  };
+  const store = new AgentSessionStore({ createAgentNode, sweepIntervalMs: 60_000 });
+  return { store, createAgentNode, mintedDIDs };
+}
+
+interface TestAppHandle {
+  app: express.Express;
+  sessionStore: AgentSessionStore;
+  mintedDIDs: string[];
+}
+
 function createApp(
   access: ReturnType<typeof createMockAccess>,
   runAgentTurn?: (input: AgentTurnInput) => Promise<AgentTurnResult>,
-) {
+): TestAppHandle {
   const authMiddleware = (req: Request, _res: Response, next: NextFunction) => {
     req.user = { address: "0xtest" };
     next();
@@ -148,6 +187,7 @@ function createApp(
     req.delegatedAccess = access as any;
     next();
   };
+  const { store: sessionStore, mintedDIDs } = createStubSessionStore(access);
   const app = express();
   app.use(express.json());
   app.use(
@@ -157,9 +197,29 @@ function createApp(
       delegationMiddleware,
       node: {} as any,
       runAgentTurn,
+      sessionStore,
     }),
   );
-  return app;
+  return { app, sessionStore, mintedDIDs };
+}
+
+/** Open an agent session + activate a stub delegation. Used in tests
+ *  that exercise the message endpoint, which now requires both. */
+async function openSessionAndDelegate(port: number, agentId: string): Promise<void> {
+  const session = await fetch(`http://localhost:${port}/api/agents/${agentId}/session`, {
+    method: "POST",
+  });
+  if (session.status !== 200) {
+    throw new Error(`open session failed: ${session.status}`);
+  }
+  const del = await fetch(`http://localhost:${port}/api/agents/${agentId}/delegation`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ serialized: "stub-serialized-delegation" }),
+  });
+  if (del.status !== 200) {
+    throw new Error(`activate delegation failed: ${del.status}`);
+  }
 }
 
 function startServer(app: express.Express): Promise<{ server: Server; port: number }> {
@@ -260,7 +320,7 @@ describe("Agents Routes — CRUD", () => {
 
   beforeEach(async () => {
     access = createMockAccess();
-    const app = createApp(access);
+    const { app } = createApp(access);
     const started = await startServer(app);
     server = started.server;
     port = started.port;
@@ -373,7 +433,7 @@ describe("Agents Routes — POST /:id/messages", () => {
       content: "hi from mock",
       toolCalls: [],
     });
-    const app = createApp(access, stubRunner);
+    const { app } = createApp(access, stubRunner);
     const started = await startServer(app);
     server = started.server;
     port = started.port;
@@ -390,6 +450,8 @@ describe("Agents Routes — POST /:id/messages", () => {
       body: JSON.stringify({ title: "Chat" }),
     });
     const { agent } = (await create.json()) as any;
+
+    await openSessionAndDelegate(port, agent.id);
 
     const res = await fetch(`http://localhost:${port}/api/agents/${agent.id}/messages`, {
       method: "POST",
@@ -417,11 +479,242 @@ describe("Agents Routes — POST /:id/messages", () => {
     });
     const { agent } = (await create.json()) as any;
 
+    await openSessionAndDelegate(port, agent.id);
+
     const res = await fetch(`http://localhost:${port}/api/agents/${agent.id}/messages`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({}),
     });
     expect(res.status).toBe(400);
+  });
+
+  it("409s if no agent session has been opened", async () => {
+    const create = await fetch(`http://localhost:${port}/api/agents`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Chat" }),
+    });
+    const { agent } = (await create.json()) as any;
+
+    // No session opened — message should be rejected before any
+    // write hits the user's space.
+    const res = await fetch(`http://localhost:${port}/api/agents/${agent.id}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "hello" }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as any;
+    expect(body.error).toBe("no_agent_session");
+  });
+
+  it("409s if a session is open but no delegation has been activated", async () => {
+    const create = await fetch(`http://localhost:${port}/api/agents`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Chat" }),
+    });
+    const { agent } = (await create.json()) as any;
+
+    const session = await fetch(`http://localhost:${port}/api/agents/${agent.id}/session`, {
+      method: "POST",
+    });
+    expect(session.status).toBe(200);
+
+    const res = await fetch(`http://localhost:${port}/api/agents/${agent.id}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "hello" }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as any;
+    expect(body.error).toBe("no_agent_delegation");
+  });
+});
+
+describe("Agents Routes — session + delegation handshake", () => {
+  let access: ReturnType<typeof createMockAccess>;
+  let server: Server;
+  let port: number;
+
+  beforeEach(async () => {
+    access = createMockAccess();
+    const { app } = createApp(access);
+    const started = await startServer(app);
+    server = started.server;
+    port = started.port;
+  });
+
+  afterEach(async () => {
+    await closeServer(server);
+  });
+
+  it("POST /:id/session returns an ephemeral agentDID + expiry", async () => {
+    const create = await fetch(`http://localhost:${port}/api/agents`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Chat" }),
+    });
+    const { agent } = (await create.json()) as any;
+
+    const res = await fetch(`http://localhost:${port}/api/agents/${agent.id}/session`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.agentId).toBe(agent.id);
+    expect(body.agentDID).toMatch(/^did:key:/);
+    expect(typeof body.expiresAt).toBe("string");
+    expect(new Date(body.expiresAt).getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("POST /:id/session 404s for unknown agent", async () => {
+    const res = await fetch(`http://localhost:${port}/api/agents/nope/session`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("POST /:id/session mints a fresh DID each call", async () => {
+    const create = await fetch(`http://localhost:${port}/api/agents`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Chat" }),
+    });
+    const { agent } = (await create.json()) as any;
+
+    const first = (await (
+      await fetch(`http://localhost:${port}/api/agents/${agent.id}/session`, { method: "POST" })
+    ).json()) as any;
+    const second = (await (
+      await fetch(`http://localhost:${port}/api/agents/${agent.id}/session`, { method: "POST" })
+    ).json()) as any;
+
+    expect(first.agentDID).not.toBe(second.agentDID);
+  });
+
+  it("POST /:id/delegation activates a delegation and returns active:true", async () => {
+    const create = await fetch(`http://localhost:${port}/api/agents`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Chat" }),
+    });
+    const { agent } = (await create.json()) as any;
+
+    await fetch(`http://localhost:${port}/api/agents/${agent.id}/session`, { method: "POST" });
+
+    const res = await fetch(`http://localhost:${port}/api/agents/${agent.id}/delegation`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ serialized: "stub-serialized-delegation" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.active).toBe(true);
+    expect(body.agentDID).toMatch(/^did:key:/);
+  });
+
+  it("POST /:id/delegation 400s on missing serialized", async () => {
+    const create = await fetch(`http://localhost:${port}/api/agents`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Chat" }),
+    });
+    const { agent } = (await create.json()) as any;
+
+    await fetch(`http://localhost:${port}/api/agents/${agent.id}/session`, { method: "POST" });
+
+    const res = await fetch(`http://localhost:${port}/api/agents/${agent.id}/delegation`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /:id/delegation 409s if no session has been opened", async () => {
+    const create = await fetch(`http://localhost:${port}/api/agents`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Chat" }),
+    });
+    const { agent } = (await create.json()) as any;
+
+    const res = await fetch(`http://localhost:${port}/api/agents/${agent.id}/delegation`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ serialized: "stub-serialized-delegation" }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as any;
+    expect(body.error).toBe("no_agent_session");
+  });
+});
+
+describe("AgentSessionStore", () => {
+  it("openSession creates a fresh handle with its own did", async () => {
+    let counter = 0;
+    const store = new AgentSessionStore({
+      createAgentNode: async () => {
+        counter += 1;
+        return {
+          did: `did:key:z6Mktest-${counter}`,
+          useDelegation: async () => ({}) as any,
+        };
+      },
+      sweepIntervalMs: 60_000,
+    });
+
+    const a = await store.openSession("0xalice", "agent-1");
+    expect(a.nodeHandle.did).toBe("did:key:z6Mktest-1");
+    expect(a.access).toBeNull();
+    expect(store.size()).toBe(1);
+  });
+
+  it("requireAccess throws until a delegation is activated, then returns it", async () => {
+    const fakeAccess = { sql: {}, kv: {} };
+    const store = new AgentSessionStore({
+      createAgentNode: async () => ({
+        did: "did:key:z6Mktest-once",
+        useDelegation: async () => fakeAccess as any,
+      }),
+      sweepIntervalMs: 60_000,
+    });
+
+    await store.openSession("0xalice", "agent-1");
+    expect(() => store.requireAccess("0xalice", "agent-1")).toThrow("no active delegation");
+
+    await store.activateDelegation("0xalice", "agent-1", "stub");
+    expect(store.requireAccess("0xalice", "agent-1")).toBe(fakeAccess as any);
+  });
+
+  it("requireAccess throws no_agent_session for an expired entry", async () => {
+    const store = new AgentSessionStore({
+      createAgentNode: async () => ({
+        did: "did:key:z6Mktest-exp",
+        useDelegation: async () => ({}) as any,
+      }),
+      ttlMs: 1,
+      sweepIntervalMs: 60_000,
+    });
+
+    await store.openSession("0xalice", "agent-1");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(() => store.requireAccess("0xalice", "agent-1")).toThrow();
+  });
+
+  it("evict drops the session", async () => {
+    const store = new AgentSessionStore({
+      createAgentNode: async () => ({
+        did: "did:key:z6Mktest-evict",
+        useDelegation: async () => ({}) as any,
+      }),
+      sweepIntervalMs: 60_000,
+    });
+    await store.openSession("0xalice", "agent-1");
+    expect(store.size()).toBe(1);
+    store.evict("0xalice", "agent-1");
+    expect(store.size()).toBe(0);
   });
 });

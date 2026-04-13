@@ -9,15 +9,23 @@ import {
   type AgentTurnMessage,
   type AgentTurnResult,
 } from "../services/agent-runner.js";
+import { AgentSessionStore, AgentSessionError } from "../services/agent-sessions.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
 interface AgentsRoutesConfig {
   authMiddleware: RequestHandler;
   delegationMiddleware: RequestHandler;
+  /** Main backend node — retained for symmetry with other routers, unused here. */
   node: TinyCloudNode;
   /** Optional runner override — defaults to the real Claude Agent SDK runner (task #5). */
   runAgentTurn?: (input: AgentTurnInput) => Promise<AgentTurnResult>;
+  /**
+   * Optional session store override. Tests inject a store backed by a
+   * stub node factory so they don't need the real TinyCloudNode WASM
+   * runtime. Production uses a fresh in-memory store.
+   */
+  sessionStore?: AgentSessionStore;
 }
 
 interface AgentRow {
@@ -112,40 +120,13 @@ async function loadMessages(access: DelegatedAccess, agentId: string): Promise<A
   return (result.data.rows as unknown[][]).map((r) => rowToMessage(r, result.data.columns));
 }
 
-/**
- * Resolve the DelegatedAccess the agent itself should use when running
- * SQL tools. If the request carries an X-Agent-Delegation header (a
- * serialized PortableDelegation granted to the agent's ephemeral DID),
- * activate it. Otherwise fall back to the user's own DelegatedAccess —
- * the MVP path documented in AGENT-KEYS.md.
- */
-async function resolveAgentAccess(
-  req: Request,
-  node: TinyCloudNode,
-  userAccess: DelegatedAccess,
-): Promise<DelegatedAccess> {
-  const header = req.headers["x-agent-delegation"];
-  if (!header) return userAccess;
-  const serialized = Array.isArray(header) ? header[0] : header;
-  if (!serialized) return userAccess;
-
-  // Dynamic import: keeps the router module importable in unit tests
-  // that don't have @tinycloud/node-sdk's runtime deps (siwe, etc.)
-  // resolvable from their cwd. Only hit when the header is present.
-  const { deserializeDelegation } = await import("@tinycloud/node-sdk");
-  const delegation = deserializeDelegation(serialized);
-  const access = await node.useDelegation(delegation);
-  console.log(
-    `[agents] activated agent delegation: spaceId=${access.spaceId} path=${JSON.stringify(access.path)}`,
-  );
-  return access;
-}
-
 // ── Agents Routes ────────────────────────────────────────────────────
 
 export function createAgentsRouter(config: AgentsRoutesConfig) {
-  const { authMiddleware, delegationMiddleware, node } = config;
+  const { authMiddleware, delegationMiddleware } = config;
   const runAgentTurn = config.runAgentTurn ?? defaultRunAgentTurn;
+  const sessionStore = config.sessionStore ?? new AgentSessionStore();
+  sessionStore.startSweeper();
   const router = Router();
 
   router.use(authMiddleware);
@@ -299,6 +280,7 @@ export function createAgentsRouter(config: AgentsRoutesConfig) {
   router.delete("/:id", async (req: Request, res: Response) => {
     const access = req.delegatedAccess!;
     const { id } = req.params;
+    const address = req.user!.address;
     try {
       await ensureSchema(access);
       const existing = await loadAgent(access, id);
@@ -316,11 +298,81 @@ export function createAgentsRouter(config: AgentsRoutesConfig) {
       if (!delAgent.ok) {
         throw new Error(`delete agent failed: ${delAgent.error.message}`);
       }
+      // Drop any ephemeral session tied to this agent.
+      sessionStore.evict(address, id);
       res.status(204).send();
     } catch (err) {
       console.error("[agents] delete failed:", err);
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: "delete_failed", message });
+    }
+  });
+
+  // ── POST /:id/session — open a fresh ephemeral agent session ──
+  //
+  // Creates a new session-only TinyCloudNode in memory, keyed by
+  // (userAddress, agentId). Returns the node's session-key DID so the
+  // frontend can call tcw.createDelegation({ delegateDID }) against it.
+  // Calling this again replaces any prior session for the same pair.
+  router.post("/:id/session", async (req: Request, res: Response) => {
+    const access = req.delegatedAccess!;
+    const { id } = req.params;
+    const address = req.user!.address;
+    try {
+      await ensureSchema(access);
+      const agent = await loadAgent(access, id);
+      if (!agent) {
+        res.status(404).json({ error: "not_found", message: `Agent ${id} not found` });
+        return;
+      }
+      const entry = await sessionStore.openSession(address, id);
+      res.json({
+        agentId: id,
+        agentDID: entry.nodeHandle.did,
+        expiresAt: new Date(entry.expiresAt).toISOString(),
+      });
+    } catch (err) {
+      console.error("[agents] open session failed:", err);
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: "session_failed", message });
+    }
+  });
+
+  // ── POST /:id/delegation — activate a signed delegation on the session ──
+  //
+  // The frontend builds a PortableDelegation (via tcw.createDelegation)
+  // targeting the agentDID returned by POST /:id/session, then POSTs
+  // the serialized blob here. We feed it into the session's
+  // TinyCloudNode.useDelegation(), which produces the DelegatedAccess
+  // the agent runner will use for SQL tools. No fallback: if there is
+  // no active session, we 409 so the caller re-runs the handshake.
+  router.post("/:id/delegation", async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const address = req.user!.address;
+    const { serialized } = req.body ?? {};
+    if (typeof serialized !== "string" || serialized.length === 0) {
+      res.status(400).json({ error: "invalid_body", message: "serialized delegation is required" });
+      return;
+    }
+    try {
+      const entry = await sessionStore.activateDelegation(address, id, serialized);
+      console.log(
+        `[agents] activated agent delegation: agentId=${id} agentDID=${entry.nodeHandle.did} expiresAt=${new Date(entry.expiresAt).toISOString()}`,
+      );
+      res.json({
+        agentId: id,
+        agentDID: entry.nodeHandle.did,
+        expiresAt: new Date(entry.expiresAt).toISOString(),
+        active: true,
+      });
+    } catch (err) {
+      if (err instanceof AgentSessionError) {
+        res.status(409).json({ error: err.code, message: err.message });
+        return;
+      }
+      console.error("[agents] activate delegation failed:", err);
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: "delegation_activation_failed", message });
     }
   });
 
@@ -345,14 +397,35 @@ export function createAgentsRouter(config: AgentsRoutesConfig) {
   });
 
   // ── POST /:id/messages — send a message, get assistant reply ──
+  //
+  // Hard rule: requires an active agent session + activated delegation
+  // for (userAddress, agentId) BEFORE it will run a turn. If either is
+  // missing the route 409s so the frontend can re-run the handshake.
+  // There is no silent fallback to the user's own delegation.
   router.post("/:id/messages", async (req: Request, res: Response) => {
     const access = req.delegatedAccess!;
     const { id } = req.params;
+    const address = req.user!.address;
     const { content } = req.body ?? {};
 
     if (typeof content !== "string" || content.trim().length === 0) {
       res.status(400).json({ error: "invalid_body", message: "content is required" });
       return;
+    }
+
+    // Require the agent-scoped DelegatedAccess upfront. This throws
+    // AgentSessionError if there is no session or no active delegation;
+    // we translate that to 409 so nothing is written to the user's
+    // space until the ephemeral identity is ready.
+    let agentAccess: DelegatedAccess;
+    try {
+      agentAccess = sessionStore.requireAccess(address, id);
+    } catch (err) {
+      if (err instanceof AgentSessionError) {
+        res.status(409).json({ error: err.code, message: err.message });
+        return;
+      }
+      throw err;
     }
 
     try {
@@ -383,11 +456,9 @@ export function createAgentsRouter(config: AgentsRoutesConfig) {
         content: m.content,
       }));
 
-      // Resolve the agent's runtime DelegatedAccess (ephemeral
-      // delegation if the frontend sent one, otherwise user's own).
-      const agentAccess = await resolveAgentAccess(req, node, access);
-
-      // Run the turn. Errors bubble up — no silent fallback.
+      // Run the turn using the agent's own DelegatedAccess (scoped to
+      // the ephemeral did:key for this session). Errors bubble up —
+      // no silent fallback.
       const turn: AgentTurnResult = await runAgentTurn({
         messages: turnMessages,
         systemPrompt: agent.system_prompt,
