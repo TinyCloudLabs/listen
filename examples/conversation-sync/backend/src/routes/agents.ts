@@ -34,6 +34,7 @@ interface AgentRow {
   system_prompt: string | null;
   model: string | null;
   archived: number;
+  session_id: string | null;
   last_message_at: string | null;
   created_at: string;
   updated_at: string;
@@ -45,6 +46,8 @@ interface AgentMessageRow {
   role: string;
   content: string;
   tool_calls: string | null;
+  type: string | null;
+  metadata: string | null;
   created_at: string;
 }
 
@@ -71,6 +74,7 @@ function rowToAgent(row: unknown[], columns: string[]): AgentRow {
     system_prompt: (obj.system_prompt as string | null) ?? null,
     model: (obj.model as string | null) ?? null,
     archived: Number(obj.archived) || 0,
+    session_id: (obj.session_id as string | null) ?? null,
     last_message_at: (obj.last_message_at as string | null) ?? null,
     created_at: String(obj.created_at),
     updated_at: String(obj.updated_at),
@@ -85,6 +89,8 @@ function rowToMessage(row: unknown[], columns: string[]): AgentMessageRow {
     role: String(obj.role),
     content: String(obj.content),
     tool_calls: (obj.tool_calls as string | null) ?? null,
+    type: (obj.type as string | null) ?? null,
+    metadata: (obj.metadata as string | null) ?? null,
     created_at: String(obj.created_at),
   };
 }
@@ -102,7 +108,7 @@ function classifyLane(agent: AgentRow, now = Date.now()): "active" | "stale" | "
 
 async function loadAgent(access: DelegatedAccess, id: string): Promise<AgentRow | null> {
   const result = await access.sql.query(
-    `SELECT id, title, system_prompt, model, archived, last_message_at, created_at, updated_at
+    `SELECT id, title, system_prompt, model, archived, session_id, last_message_at, created_at, updated_at
      FROM agent WHERE id = ?`,
     [id],
   );
@@ -112,7 +118,7 @@ async function loadAgent(access: DelegatedAccess, id: string): Promise<AgentRow 
 
 async function loadMessages(access: DelegatedAccess, agentId: string): Promise<AgentMessageRow[]> {
   const result = await access.sql.query(
-    `SELECT id, agent_id, role, content, tool_calls, created_at
+    `SELECT id, agent_id, role, content, tool_calls, type, metadata, created_at
      FROM agent_message WHERE agent_id = ? ORDER BY created_at ASC`,
     [agentId],
   );
@@ -138,7 +144,7 @@ export function createAgentsRouter(config: AgentsRoutesConfig) {
     try {
       await ensureSchema(access);
       const result = await access.sql.query(
-        `SELECT id, title, system_prompt, model, archived, last_message_at, created_at, updated_at
+        `SELECT id, title, system_prompt, model, archived, session_id, last_message_at, created_at, updated_at
          FROM agent ORDER BY COALESCE(last_message_at, created_at) DESC`,
       );
       if (!result.ok) {
@@ -169,8 +175,8 @@ export function createAgentsRouter(config: AgentsRoutesConfig) {
       const now = new Date().toISOString();
       const id = crypto.randomUUID();
       const insert = await access.sql.execute(
-        `INSERT INTO agent (id, title, system_prompt, model, archived, last_message_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 0, NULL, ?, ?)`,
+        `INSERT INTO agent (id, title, system_prompt, model, archived, session_id, last_message_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 0, NULL, NULL, ?, ?)`,
         [
           id,
           title.trim(),
@@ -441,8 +447,8 @@ export function createAgentsRouter(config: AgentsRoutesConfig) {
       const now = new Date().toISOString();
       const userMsgId = crypto.randomUUID();
       const insertUser = await access.sql.execute(
-        `INSERT INTO agent_message (id, agent_id, role, content, tool_calls, created_at)
-         VALUES (?, ?, 'user', ?, NULL, ?)`,
+        `INSERT INTO agent_message (id, agent_id, role, content, tool_calls, type, metadata, created_at)
+         VALUES (?, ?, 'user', ?, NULL, 'text', NULL, ?)`,
         [userMsgId, id, content, now],
       );
       if (!insertUser.ok) {
@@ -457,31 +463,48 @@ export function createAgentsRouter(config: AgentsRoutesConfig) {
       }));
 
       // Run the turn using the agent's own DelegatedAccess (scoped to
-      // the ephemeral did:key for this session). Errors bubble up —
-      // no silent fallback.
+      // the ephemeral did:key for this session). If the agent has a
+      // stored SDK session ID, pass it as resume so the SDK picks up
+      // where it left off instead of re-sending all history.
       const turn: AgentTurnResult = await runAgentTurn({
         messages: turnMessages,
         systemPrompt: agent.system_prompt,
         agentAccess,
         model: agent.model,
+        resumeSessionId: agent.session_id,
       });
 
       // Persist the assistant reply + update last_message_at.
+      // Also store the captured SDK session ID for future resume.
       const assistantNow = new Date().toISOString();
       const assistantId = crypto.randomUUID();
       const insertAssistant = await access.sql.execute(
-        `INSERT INTO agent_message (id, agent_id, role, content, tool_calls, created_at)
-         VALUES (?, ?, 'assistant', ?, ?, ?)`,
+        `INSERT INTO agent_message (id, agent_id, role, content, tool_calls, type, metadata, created_at)
+         VALUES (?, ?, 'assistant', ?, ?, 'text', ?, ?)`,
         [
           assistantId,
           id,
           turn.content,
           turn.toolCalls ? JSON.stringify(turn.toolCalls) : null,
+          turn.normalizedMessages ? JSON.stringify(turn.normalizedMessages) : null,
           assistantNow,
         ],
       );
       if (!insertAssistant.ok) {
         throw new Error(`insert assistant message failed: ${insertAssistant.error.message}`);
+      }
+
+      // Store the SDK session ID if captured (or update if changed).
+      if (turn.sessionId && turn.sessionId !== agent.session_id) {
+        const updateSession = await access.sql.execute(
+          `UPDATE agent SET session_id = ? WHERE id = ?`,
+          [turn.sessionId, id],
+        );
+        if (!updateSession.ok) {
+          console.warn(
+            `[agents] failed to store session_id for agent ${id}: ${updateSession.error.message}`,
+          );
+        }
       }
 
       const updateAgent = await access.sql.execute(
@@ -501,6 +524,8 @@ export function createAgentsRouter(config: AgentsRoutesConfig) {
           role: "user",
           content,
           tool_calls: null,
+          type: "text",
+          metadata: null,
           created_at: now,
         },
         assistantMessage: {
@@ -509,6 +534,8 @@ export function createAgentsRouter(config: AgentsRoutesConfig) {
           role: "assistant",
           content: turn.content,
           tool_calls: turn.toolCalls ? JSON.stringify(turn.toolCalls) : null,
+          type: "text",
+          metadata: turn.normalizedMessages ? JSON.stringify(turn.normalizedMessages) : null,
           created_at: assistantNow,
         },
       });

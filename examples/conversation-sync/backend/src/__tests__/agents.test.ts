@@ -18,6 +18,7 @@ interface AgentRecord {
   system_prompt: string | null;
   model: string | null;
   archived: number;
+  session_id: string | null;
   last_message_at: string | null;
   created_at: string;
   updated_at: string;
@@ -29,6 +30,8 @@ interface MessageRecord {
   role: string;
   content: string;
   tool_calls: string | null;
+  type: string | null;
+  metadata: string | null;
   created_at: string;
 }
 
@@ -81,6 +84,7 @@ function createMockAccess() {
         system_prompt,
         model,
         archived: 0,
+        session_id: null,
         last_message_at: null,
         created_at,
         updated_at,
@@ -92,11 +96,20 @@ function createMockAccess() {
     if (sql.includes("INSERT INTO agent_message")) {
       const [id, agent_id, content, ...rest] = params as any[];
       // User: 4 params (id, agent_id, content, created_at)
-      // Assistant: 5 params (id, agent_id, content, tool_calls, created_at)
+      // Assistant: 6 params (id, agent_id, content, tool_calls, metadata, created_at)
       const role = sql.includes("'assistant'") ? "assistant" : "user";
-      const tool_calls = role === "assistant" ? (rest[0] as string | null) : null;
-      const created_at = role === "assistant" ? (rest[1] as string) : (rest[0] as string);
-      messages.push({ id, agent_id, role, content, tool_calls, created_at });
+      let tool_calls: string | null = null;
+      let type: string | null = "text";
+      let metadata: string | null = null;
+      let created_at: string;
+      if (role === "assistant") {
+        tool_calls = rest[0] as string | null;
+        metadata = rest[1] as string | null;
+        created_at = rest[2] as string;
+      } else {
+        created_at = rest[0] as string;
+      }
+      messages.push({ id, agent_id, role, content, tool_calls, type, metadata, created_at });
       return { ok: true };
     }
 

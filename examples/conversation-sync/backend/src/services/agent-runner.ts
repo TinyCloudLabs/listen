@@ -1,4 +1,5 @@
 import type { DelegatedAccess } from "@tinyboilerplate/server";
+import { normalizeSDKMessage, type NormalizedMessage } from "./agent-message-normalizer.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -25,6 +26,8 @@ export interface AgentTurnInput {
   agentAccess: DelegatedAccess;
   /** Optional model override — runner chooses the default otherwise. */
   model?: string | null;
+  /** SDK session ID to resume (from a prior turn). */
+  resumeSessionId?: string | null;
 }
 
 export interface AgentTurnToolCall {
@@ -41,6 +44,10 @@ export interface AgentTurnResult {
    * turn, in execution order. Persisted as JSON on agent_message.
    */
   toolCalls?: AgentTurnToolCall[];
+  /** Normalized messages from the SDK stream. */
+  normalizedMessages?: NormalizedMessage[];
+  /** SDK session ID captured from the stream — store for resume. */
+  sessionId?: string;
 }
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -127,6 +134,12 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
   // The Agent SDK subprocess reads ANTHROPIC_API_KEY from process.env.
   process.env.ANTHROPIC_API_KEY = apiKey;
 
+  // Unset nested-session markers so the SDK can launch Claude Code
+  // subprocesses. Without this, the SDK thinks it's already nested and
+  // refuses to spawn. See fundraise dae5671.
+  delete process.env.CLAUDECODE;
+  delete process.env.CLAUDE_CODE_ENTRYPOINT;
+
   // Dynamic imports — the SDK ships a CLI subprocess and pulls in a
   // wide dep tree. Loading it lazily keeps the non-agent code paths
   // (and unit tests that don't exercise this function) cheap.
@@ -204,7 +217,9 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
     systemPromptPieces.push(input.systemPrompt.trim());
   }
 
-  const prompt = buildPrompt(input.messages);
+  const prompt = input.resumeSessionId
+    ? buildPrompt(input.messages.slice(-1))
+    : buildPrompt(input.messages);
 
   const response = query({
     prompt,
@@ -215,14 +230,30 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
       systemPrompt: systemPromptPieces.join("\n\n"),
       permissionMode: "bypassPermissions",
       settingSources: [],
+      ...(input.resumeSessionId ? { resume: input.resumeSessionId } : {}),
     },
   });
 
   let resultText = "";
+  let capturedSessionId: string | undefined;
+  const normalizedMessages: NormalizedMessage[] = [];
+
   for await (const message of response) {
-    const m = message as { type?: string; result?: string; subtype?: string };
+    const m = message as Record<string, unknown>;
+
+    // Capture session ID from the first message that has one.
+    if (!capturedSessionId && typeof m.session_id === "string" && m.session_id) {
+      capturedSessionId = m.session_id;
+    }
+
     if (m.type === "result" && typeof m.result === "string") {
       resultText = m.result;
+    }
+
+    // Normalize and collect for storage.
+    const normalized = normalizeSDKMessage(message);
+    if (normalized) {
+      normalizedMessages.push(normalized);
     }
   }
 
@@ -233,5 +264,7 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
   return {
     content: resultText,
     toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+    normalizedMessages: normalizedMessages.length > 0 ? normalizedMessages : undefined,
+    sessionId: capturedSessionId,
   };
 }
