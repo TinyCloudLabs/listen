@@ -45,6 +45,8 @@ interface AgentMessageRow {
   role: string;
   content: string;
   tool_calls: string | null;
+  type: string | null;
+  metadata: string | null;
   created_at: string;
 }
 
@@ -85,6 +87,8 @@ function rowToMessage(row: unknown[], columns: string[]): AgentMessageRow {
     role: String(obj.role),
     content: String(obj.content),
     tool_calls: (obj.tool_calls as string | null) ?? null,
+    type: (obj.type as string | null) ?? null,
+    metadata: (obj.metadata as string | null) ?? null,
     created_at: String(obj.created_at),
   };
 }
@@ -112,7 +116,7 @@ async function loadAgent(access: DelegatedAccess, id: string): Promise<AgentRow 
 
 async function loadMessages(access: DelegatedAccess, agentId: string): Promise<AgentMessageRow[]> {
   const result = await access.sql.query(
-    `SELECT id, agent_id, role, content, tool_calls, created_at
+    `SELECT id, agent_id, role, content, tool_calls, type, metadata, created_at
      FROM agent_message WHERE agent_id = ? ORDER BY created_at ASC`,
     [agentId],
   );
@@ -441,8 +445,8 @@ export function createAgentsRouter(config: AgentsRoutesConfig) {
       const now = new Date().toISOString();
       const userMsgId = crypto.randomUUID();
       const insertUser = await access.sql.execute(
-        `INSERT INTO agent_message (id, agent_id, role, content, tool_calls, created_at)
-         VALUES (?, ?, 'user', ?, NULL, ?)`,
+        `INSERT INTO agent_message (id, agent_id, role, content, tool_calls, type, metadata, created_at)
+         VALUES (?, ?, 'user', ?, NULL, 'text', NULL, ?)`,
         [userMsgId, id, content, now],
       );
       if (!insertUser.ok) {
@@ -470,13 +474,14 @@ export function createAgentsRouter(config: AgentsRoutesConfig) {
       const assistantNow = new Date().toISOString();
       const assistantId = crypto.randomUUID();
       const insertAssistant = await access.sql.execute(
-        `INSERT INTO agent_message (id, agent_id, role, content, tool_calls, created_at)
-         VALUES (?, ?, 'assistant', ?, ?, ?)`,
+        `INSERT INTO agent_message (id, agent_id, role, content, tool_calls, type, metadata, created_at)
+         VALUES (?, ?, 'assistant', ?, ?, 'text', ?, ?)`,
         [
           assistantId,
           id,
           turn.content,
           turn.toolCalls ? JSON.stringify(turn.toolCalls) : null,
+          turn.normalizedMessages ? JSON.stringify(turn.normalizedMessages) : null,
           assistantNow,
         ],
       );
@@ -501,6 +506,8 @@ export function createAgentsRouter(config: AgentsRoutesConfig) {
           role: "user",
           content,
           tool_calls: null,
+          type: "text",
+          metadata: null,
           created_at: now,
         },
         assistantMessage: {
@@ -509,6 +516,8 @@ export function createAgentsRouter(config: AgentsRoutesConfig) {
           role: "assistant",
           content: turn.content,
           tool_calls: turn.toolCalls ? JSON.stringify(turn.toolCalls) : null,
+          type: "text",
+          metadata: turn.normalizedMessages ? JSON.stringify(turn.normalizedMessages) : null,
           created_at: assistantNow,
         },
       });

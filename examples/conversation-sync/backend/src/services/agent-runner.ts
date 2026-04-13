@@ -1,4 +1,5 @@
 import type { DelegatedAccess } from "@tinyboilerplate/server";
+import { normalizeSDKMessage, type NormalizedMessage } from "./agent-message-normalizer.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -41,6 +42,8 @@ export interface AgentTurnResult {
    * turn, in execution order. Persisted as JSON on agent_message.
    */
   toolCalls?: AgentTurnToolCall[];
+  /** Normalized messages from the SDK stream. */
+  normalizedMessages?: NormalizedMessage[];
 }
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -225,10 +228,19 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
   });
 
   let resultText = "";
+  const normalizedMessages: NormalizedMessage[] = [];
+
   for await (const message of response) {
-    const m = message as { type?: string; result?: string; subtype?: string };
+    const m = message as Record<string, unknown>;
+
     if (m.type === "result" && typeof m.result === "string") {
       resultText = m.result;
+    }
+
+    // Normalize and collect for storage.
+    const normalized = normalizeSDKMessage(message);
+    if (normalized) {
+      normalizedMessages.push(normalized);
     }
   }
 
@@ -239,5 +251,6 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
   return {
     content: resultText,
     toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+    normalizedMessages: normalizedMessages.length > 0 ? normalizedMessages : undefined,
   };
 }

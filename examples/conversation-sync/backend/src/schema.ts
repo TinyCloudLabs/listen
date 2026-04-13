@@ -51,6 +51,8 @@ const SCHEMA_STATEMENTS = [
     role        TEXT NOT NULL,
     content     TEXT NOT NULL,
     tool_calls  TEXT,
+    type        TEXT,
+    metadata    TEXT,
     created_at  TEXT NOT NULL
   )`,
 ];
