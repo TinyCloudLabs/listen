@@ -11,7 +11,18 @@ interface AgentMessage {
   role: string;
   content: string;
   tool_calls: string | null;
+  type: string | null;
+  metadata: string | null;
   created_at: string;
+}
+
+type NormalizedMessageType = "text" | "tool_use" | "tool_result" | "error" | "status";
+
+interface NormalizedMessage {
+  type: NormalizedMessageType;
+  content: string;
+  metadata?: Record<string, unknown>;
+  timestamp: string;
 }
 
 interface AgentSummary {
@@ -75,6 +86,43 @@ function formatExpiresAt(iso: string): string {
 
 function is409Error(err: unknown): boolean {
   return err instanceof Error && err.message.includes("(409)");
+}
+
+function parseNormalizedMessages(metadata: string | null): NormalizedMessage[] | null {
+  if (!metadata) return null;
+  try {
+    const parsed = JSON.parse(metadata);
+    if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].type) return parsed;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function formatToolInput(metadata?: Record<string, unknown>): string {
+  if (!metadata) return "";
+  const tools = metadata.tools as Array<{ name: string; input: unknown }> | undefined;
+  if (!tools?.length) return "";
+  return tools
+    .map((t) => {
+      const input = t.input;
+      if (typeof input === "object" && input && "sql" in input) {
+        return `${t.name}: ${(input as { sql: string }).sql}`;
+      }
+      return `${t.name}: ${JSON.stringify(input)}`;
+    })
+    .join("\n");
+}
+
+function formatToolResult(content: string): string {
+  // Try to pretty-print JSON results, fall back to raw content
+  try {
+    const parsed = JSON.parse(content);
+    if (typeof parsed === "object") return JSON.stringify(parsed, null, 2);
+    return content;
+  } catch {
+    return content;
+  }
 }
 
 // ── Component ────────────────────────────────────────────────────────
@@ -174,6 +222,8 @@ export const AgentChat: FC<AgentChatProps> = ({ api, agentId, tcw, onBack }) => 
       role: "user",
       content,
       tool_calls: null,
+      type: "text",
+      metadata: null,
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimisticUser]);
@@ -249,19 +299,78 @@ export const AgentChat: FC<AgentChatProps> = ({ api, agentId, tcw, onBack }) => 
           <ul style={s.list}>
             {messages.map((m) => {
               const isUser = m.role === "user";
-              return (
-                <li
-                  key={m.id}
-                  style={{
-                    ...s.msgRow,
-                    justifyContent: isUser ? "flex-end" : "flex-start",
-                  }}
-                >
-                  <div style={isUser ? s.bubbleUser : s.bubbleAssistant}>
-                    <div style={s.bubbleText}>{m.content}</div>
-                    <div style={isUser ? s.bubbleTimeUser : s.bubbleTimeAssistant}>
-                      {formatTime(m.created_at)}
+
+              // User messages: always simple bubbles
+              if (isUser) {
+                return (
+                  <li key={m.id} style={{ ...s.msgRow, justifyContent: "flex-end" }}>
+                    <div style={s.bubbleUser}>
+                      <div style={s.bubbleText}>{m.content}</div>
+                      <div style={s.bubbleTimeUser}>{formatTime(m.created_at)}</div>
                     </div>
+                  </li>
+                );
+              }
+
+              // Assistant messages: render normalized sub-messages if available
+              const normalized = parseNormalizedMessages(m.metadata);
+
+              if (!normalized) {
+                // Legacy / simple assistant message — render content directly
+                return (
+                  <li key={m.id} style={{ ...s.msgRow, justifyContent: "flex-start" }}>
+                    <div style={s.bubbleAssistant}>
+                      <div style={s.bubbleText}>{m.content}</div>
+                      <div style={s.bubbleTimeAssistant}>{formatTime(m.created_at)}</div>
+                    </div>
+                  </li>
+                );
+              }
+
+              // Render each normalized sub-message by type
+              const rendered = normalized
+                .filter((nm) => nm.type !== "status")
+                .map((nm, i) => {
+                  if (nm.type === "tool_use") {
+                    const toolLine = formatToolInput(nm.metadata);
+                    return (
+                      <div key={`${m.id}-${i}`} style={s.toolBlock}>
+                        <div style={s.toolLabel}>Tool call</div>
+                        <pre style={s.toolCode}>{toolLine || nm.content}</pre>
+                      </div>
+                    );
+                  }
+                  if (nm.type === "tool_result") {
+                    return (
+                      <div key={`${m.id}-${i}`} style={s.toolBlock}>
+                        <div style={s.toolLabel}>Result</div>
+                        <pre style={s.toolCode}>{formatToolResult(nm.content)}</pre>
+                      </div>
+                    );
+                  }
+                  if (nm.type === "error") {
+                    return (
+                      <div key={`${m.id}-${i}`} style={s.errorBlock}>
+                        {nm.content}
+                      </div>
+                    );
+                  }
+                  // text
+                  if (nm.content.trim()) {
+                    return (
+                      <div key={`${m.id}-${i}`} style={s.bubbleText}>
+                        {nm.content}
+                      </div>
+                    );
+                  }
+                  return null;
+                });
+
+              return (
+                <li key={m.id} style={{ ...s.msgRow, justifyContent: "flex-start" }}>
+                  <div style={s.bubbleAssistant}>
+                    {rendered}
+                    <div style={s.bubbleTimeAssistant}>{formatTime(m.created_at)}</div>
                   </div>
                 </li>
               );
@@ -402,6 +511,44 @@ const s: Record<string, React.CSSProperties> = {
   bubbleText: {
     whiteSpace: "pre-wrap" as const,
     wordBreak: "break-word" as const,
+  },
+  toolBlock: {
+    margin: "4px 0",
+    padding: "6px 8px",
+    background: "#f8f9fa",
+    border: "1px solid #eef0f2",
+    borderRadius: 6,
+  },
+  toolLabel: {
+    fontFamily: MONO,
+    fontSize: 9,
+    fontWeight: 600,
+    color: "#9ca3af",
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.05em",
+    marginBottom: 3,
+  },
+  toolCode: {
+    fontFamily: MONO,
+    fontSize: 11,
+    color: "#4b5563",
+    margin: 0,
+    whiteSpace: "pre-wrap" as const,
+    wordBreak: "break-all" as const,
+    lineHeight: 1.4,
+    maxHeight: 120,
+    overflow: "auto" as const,
+  },
+  errorBlock: {
+    margin: "4px 0",
+    padding: "6px 8px",
+    background: "#fef2f2",
+    border: "1px solid #fecaca",
+    borderRadius: 6,
+    fontFamily: MONO,
+    fontSize: 11,
+    color: "#991b1b",
+    lineHeight: 1.4,
   },
   bubbleTimeUser: {
     fontFamily: MONO,
