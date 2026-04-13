@@ -47,14 +47,17 @@ const SCHEMA_STATEMENTS = [
     updated_at      TEXT NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS agent_message (
-    id          TEXT PRIMARY KEY,
-    agent_id    TEXT NOT NULL,
-    role        TEXT NOT NULL,
-    content     TEXT NOT NULL,
-    tool_calls  TEXT,
-    type        TEXT,
-    metadata    TEXT,
-    created_at  TEXT NOT NULL
+    id              TEXT PRIMARY KEY,
+    agent_id        TEXT NOT NULL,
+    role            TEXT NOT NULL,
+    content         TEXT NOT NULL,
+    tool_calls      TEXT,
+    type            TEXT,
+    metadata        TEXT,
+    input_tokens    INTEGER,
+    output_tokens   INTEGER,
+    duration_ms     INTEGER,
+    created_at      TEXT NOT NULL
   )`,
 ];
 

@@ -32,6 +32,9 @@ interface MessageRecord {
   tool_calls: string | null;
   type: string | null;
   metadata: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  duration_ms: number | null;
   created_at: string;
 }
 
@@ -96,20 +99,38 @@ function createMockAccess() {
     if (sql.includes("INSERT INTO agent_message")) {
       const [id, agent_id, content, ...rest] = params as any[];
       // User: 4 params (id, agent_id, content, created_at)
-      // Assistant: 6 params (id, agent_id, content, tool_calls, metadata, created_at)
+      // Assistant: 9 params (id, agent_id, content, tool_calls, metadata, input_tokens, output_tokens, duration_ms, created_at)
       const role = sql.includes("'assistant'") ? "assistant" : "user";
       let tool_calls: string | null = null;
       let type: string | null = "text";
       let metadata: string | null = null;
+      let input_tokens: number | null = null;
+      let output_tokens: number | null = null;
+      let duration_ms: number | null = null;
       let created_at: string;
       if (role === "assistant") {
         tool_calls = rest[0] as string | null;
         metadata = rest[1] as string | null;
-        created_at = rest[2] as string;
+        input_tokens = rest[2] != null ? Number(rest[2]) : null;
+        output_tokens = rest[3] != null ? Number(rest[3]) : null;
+        duration_ms = rest[4] != null ? Number(rest[4]) : null;
+        created_at = rest[5] as string;
       } else {
         created_at = rest[0] as string;
       }
-      messages.push({ id, agent_id, role, content, tool_calls, type, metadata, created_at });
+      messages.push({
+        id,
+        agent_id,
+        role,
+        content,
+        tool_calls,
+        type,
+        metadata,
+        input_tokens,
+        output_tokens,
+        duration_ms,
+        created_at,
+      });
       return { ok: true };
     }
 
