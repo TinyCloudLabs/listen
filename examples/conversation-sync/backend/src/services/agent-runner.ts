@@ -127,6 +127,12 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
   // The Agent SDK subprocess reads ANTHROPIC_API_KEY from process.env.
   process.env.ANTHROPIC_API_KEY = apiKey;
 
+  // Unset nested-session markers so the SDK can launch Claude Code
+  // subprocesses. Without this, the SDK thinks it's already nested and
+  // refuses to spawn. See fundraise dae5671.
+  delete process.env.CLAUDECODE;
+  delete process.env.CLAUDE_CODE_ENTRYPOINT;
+
   // Dynamic imports — the SDK ships a CLI subprocess and pulls in a
   // wide dep tree. Loading it lazily keeps the non-agent code paths
   // (and unit tests that don't exercise this function) cheap.
