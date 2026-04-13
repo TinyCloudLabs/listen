@@ -375,7 +375,12 @@ export function App() {
         )}
 
         {isSignedIn && view === "agents" && selectedAgentId && (
-          <AgentChat api={api} agentId={selectedAgentId} onBack={() => setSelectedAgentId(null)} />
+          <AgentChat
+            api={api}
+            agentId={selectedAgentId}
+            tcw={tcw}
+            onBack={() => setSelectedAgentId(null)}
+          />
         )}
       </main>
 

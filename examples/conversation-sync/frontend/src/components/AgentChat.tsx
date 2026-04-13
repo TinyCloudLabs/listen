@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback, type FC } from "react";
+import type { TinyCloudWeb } from "@tinycloud/web-sdk";
 import type { ApiClient } from "@tinyboilerplate/client";
+import { createDelegation } from "@tinyboilerplate/client";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -19,10 +21,6 @@ interface AgentSummary {
   archived: number;
 }
 
-interface MessagesResponse {
-  messages: AgentMessage[];
-}
-
 interface SendMessageResponse {
   agent: AgentSummary | null;
   userMessage: AgentMessage;
@@ -34,11 +32,30 @@ interface AgentDetailResponse {
   messages: AgentMessage[];
 }
 
+interface SessionResponse {
+  agentId: string;
+  agentDID: string;
+  expiresAt: string;
+}
+
+interface DelegationActivationResponse {
+  agentId: string;
+  agentDID: string;
+  expiresAt: string;
+  active: boolean;
+}
+
 interface AgentChatProps {
   api: ApiClient;
   agentId: string;
+  tcw: TinyCloudWeb | null;
   onBack: () => void;
 }
+
+// ── Constants ────────────────────────────────────────────────────────
+
+const AGENT_DELEGATION_ACTIONS = ["tinycloud.sql/read", "tinycloud.sql/write"];
+const AGENT_DELEGATION_EXPIRY_MS = 3_600_000; // 1 hour
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -49,21 +66,35 @@ function formatTime(iso: string): string {
   });
 }
 
+function formatExpiresAt(iso: string): string {
+  return new Date(iso).toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function is409Error(err: unknown): boolean {
+  return err instanceof Error && err.message.includes("(409)");
+}
+
 // ── Component ────────────────────────────────────────────────────────
 
 /**
- * Agent chat view.
+ * Agent chat view with ephemeral-keypair delegation handshake.
  *
- * Delegation model — MVP (see examples/conversation-sync/AGENT-KEYS.md):
- * the backend currently runs agent SQL calls under the user's own
- * DelegatedAccess (the one activated by the normal `delegationMiddleware`).
- * It reads an `X-Agent-Delegation` header if present, but for the MVP we
- * do NOT send one. The per-session ephemeral-keypair flow is designed in
- * AGENT-KEYS.md and is a deferred follow-up — when it lands, this
- * component will gain a `tcw.createDelegation(...)` step on first message
- * and attach the serialized blob as `X-Agent-Delegation` on each POST.
+ * On the first message send, this component:
+ * 1. POST /api/agents/:id/session → gets `agentDID`
+ * 2. tcw.createDelegation({ delegateDID: agentDID, ... }) → serialized
+ * 3. POST /api/agents/:id/delegation { serialized } → confirms active
+ * 4. POST /api/agents/:id/messages { content } → sends the message
+ *
+ * If the messages POST returns 409 (session expired / missing), the
+ * handshake is re-run once and the message is retried. If the retry
+ * also 409s, the error is surfaced — no silent loop.
+ *
+ * See examples/conversation-sync/AGENT-KEYS.md for the full design.
  */
-export const AgentChat: FC<AgentChatProps> = ({ api, agentId, onBack }) => {
+export const AgentChat: FC<AgentChatProps> = ({ api, agentId, tcw, onBack }) => {
   const [agent, setAgent] = useState<AgentSummary | null>(null);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [loading, setLoading] = useState(true);
@@ -71,6 +102,11 @@ export const AgentChat: FC<AgentChatProps> = ({ api, agentId, onBack }) => {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Ephemeral session state — scoped to this component instance.
+  // Navigating away and back resets it; the next send re-handshakes.
+  const [sessionActive, setSessionActive] = useState(false);
+  const [sessionExpiresAt, setSessionExpiresAt] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -89,17 +125,49 @@ export const AgentChat: FC<AgentChatProps> = ({ api, agentId, onBack }) => {
   }, [load]);
 
   useEffect(() => {
-    // Auto-scroll to bottom when new messages arrive.
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages, sending]);
+
+  /**
+   * Run the 3-step delegation handshake:
+   * 1. Open session → get agentDID
+   * 2. Sign delegation via tcw
+   * 3. Activate delegation on backend
+   */
+  const runHandshake = useCallback(async (): Promise<void> => {
+    if (!tcw) {
+      throw new Error(
+        "Full sign-in required to chat with agents. " +
+          "Session restore doesn't include wallet access for delegation signing. " +
+          "Please sign out and sign in again.",
+      );
+    }
+
+    // Step 1: Open session
+    const session = await api.post<SessionResponse>(`/api/agents/${agentId}/session`);
+
+    // Step 2: Sign delegation targeting the agent's ephemeral DID
+    const serialized = await createDelegation(tcw, session.agentDID, {
+      actions: AGENT_DELEGATION_ACTIONS,
+      path: "",
+      expiryMs: AGENT_DELEGATION_EXPIRY_MS,
+    });
+
+    // Step 3: Activate delegation on backend
+    const activation = await api.post<DelegationActivationResponse>(
+      `/api/agents/${agentId}/delegation`,
+      { serialized },
+    );
+
+    setSessionActive(true);
+    setSessionExpiresAt(activation.expiresAt);
+  }, [api, agentId, tcw]);
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     const content = input.trim();
     if (!content || sending) return;
 
-    // Optimistically show the user message; if the request fails we'll
-    // leave it in place and surface the error — no silent rollback.
     const optimisticUser: AgentMessage = {
       id: `optimistic-${Date.now()}`,
       agent_id: agentId,
@@ -114,11 +182,24 @@ export const AgentChat: FC<AgentChatProps> = ({ api, agentId, onBack }) => {
     setError(null);
 
     try {
-      const res = await api.post<SendMessageResponse>(`/api/agents/${agentId}/messages`, {
-        content,
-      });
-      // Replace the optimistic user message with the canonical one + append
-      // the assistant reply.
+      // Ensure the ephemeral session is active before sending.
+      if (!sessionActive) {
+        await runHandshake();
+      }
+
+      // Try sending the message.
+      let res: SendMessageResponse;
+      try {
+        res = await api.post<SendMessageResponse>(`/api/agents/${agentId}/messages`, { content });
+      } catch (err) {
+        // On 409 (no_agent_session / no_agent_delegation / agent_session_expired),
+        // re-run the handshake once and retry. If the retry also fails, throw.
+        if (!is409Error(err)) throw err;
+
+        await runHandshake();
+        res = await api.post<SendMessageResponse>(`/api/agents/${agentId}/messages`, { content });
+      }
+
       setMessages((prev) => [
         ...prev.filter((m) => m.id !== optimisticUser.id),
         res.userMessage,
@@ -126,11 +207,19 @@ export const AgentChat: FC<AgentChatProps> = ({ api, agentId, onBack }) => {
       ]);
       if (res.agent) setAgent(res.agent);
     } catch (err) {
+      // On handshake or message failure, mark session as inactive so
+      // the next send attempt will re-handshake from scratch.
+      setSessionActive(false);
+      setSessionExpiresAt(null);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setSending(false);
     }
   };
+
+  const sessionLabel = sessionActive
+    ? `Ephemeral agent session — renews at ${sessionExpiresAt ? formatExpiresAt(sessionExpiresAt) : "unknown"}`
+    : "Not yet active — starts on first message";
 
   return (
     <section style={s.card}>
@@ -140,7 +229,7 @@ export const AgentChat: FC<AgentChatProps> = ({ api, agentId, onBack }) => {
         </button>
         <div style={s.titleCol}>
           <span style={s.title}>{agent?.title ?? "Loading…"}</span>
-          <span style={s.sessionNote}>Session uses your main TinyCloud delegation</span>
+          <span style={s.sessionNote}>{sessionLabel}</span>
         </div>
       </div>
 
