@@ -1,3 +1,4 @@
+import { EventEmitter } from "events";
 import type { DelegatedAccess } from "@tinyboilerplate/server";
 import { normalizeSDKMessage, type NormalizedMessage } from "./agent-message-normalizer.js";
 
@@ -48,7 +49,24 @@ export interface AgentTurnResult {
   normalizedMessages?: NormalizedMessage[];
   /** SDK session ID captured from the stream — store for resume. */
   sessionId?: string;
+  /** Token/cost usage from the SDK result message. */
+  usage?: { inputTokens: number; outputTokens: number; durationMs: number };
 }
+
+// ── EventEmitter for streaming prep ─────────────────────────────────
+
+/**
+ * Typed emitter for agent turn events. Listeners receive normalized
+ * messages as they arrive from the SDK stream. The current request/
+ * response endpoint ignores this (it waits for the full result), but a
+ * future SSE endpoint can subscribe to stream messages in real time.
+ *
+ * Events:
+ *   "message"  — NormalizedMessage (each SDK message as it arrives)
+ *   "done"     — AgentTurnResult   (final result after stream ends)
+ *   "error"    — Error             (if the stream fails)
+ */
+export class AgentTurnEmitter extends EventEmitter {}
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -126,10 +144,18 @@ function requireAnthropicKey(): string {
  * agent makes is scoped to the agent's own delegation at the TinyCloud
  * layer.
  *
+ * If `emitter` is provided, normalized messages are emitted as they
+ * arrive from the SDK stream ("message" event). When the stream ends,
+ * the full result is emitted ("done"). On error, "error" is emitted.
+ * This is the hook for a future SSE streaming endpoint.
+ *
  * Non-streaming: consumes the async iterator to completion and returns
  * the final text result. Errors bubble up — no silent fallback.
  */
-export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResult> {
+export async function runAgentTurn(
+  input: AgentTurnInput,
+  emitter?: AgentTurnEmitter,
+): Promise<AgentTurnResult> {
   const apiKey = requireAnthropicKey();
   // The Agent SDK subprocess reads ANTHROPIC_API_KEY from process.env.
   process.env.ANTHROPIC_API_KEY = apiKey;
@@ -236,6 +262,7 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
 
   let resultText = "";
   let capturedSessionId: string | undefined;
+  let usage: { inputTokens: number; outputTokens: number; durationMs: number } | undefined;
   const normalizedMessages: NormalizedMessage[] = [];
 
   for await (const message of response) {
@@ -246,25 +273,42 @@ export async function runAgentTurn(input: AgentTurnInput): Promise<AgentTurnResu
       capturedSessionId = m.session_id;
     }
 
-    if (m.type === "result" && typeof m.result === "string") {
-      resultText = m.result;
+    if (m.type === "result") {
+      if (typeof m.result === "string") {
+        resultText = m.result;
+      }
+      // Capture token/cost usage from result message.
+      const u = m.usage as Record<string, unknown> | undefined;
+      if (u) {
+        usage = {
+          inputTokens: Number(u.input_tokens ?? 0),
+          outputTokens: Number(u.output_tokens ?? 0),
+          durationMs: Number(m.duration_ms ?? 0),
+        };
+      }
     }
 
     // Normalize and collect for storage.
     const normalized = normalizeSDKMessage(message);
     if (normalized) {
       normalizedMessages.push(normalized);
+      emitter?.emit("message", normalized);
     }
   }
 
   if (!resultText) {
-    throw new Error("Agent SDK returned no result text for this turn.");
+    const err = new Error("Agent SDK returned no result text for this turn.");
+    emitter?.emit("error", err);
+    throw err;
   }
 
-  return {
+  const result: AgentTurnResult = {
     content: resultText,
     toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
     normalizedMessages: normalizedMessages.length > 0 ? normalizedMessages : undefined,
     sessionId: capturedSessionId,
+    usage,
   };
+  emitter?.emit("done", result);
+  return result;
 }

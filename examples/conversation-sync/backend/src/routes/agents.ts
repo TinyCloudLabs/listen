@@ -48,6 +48,9 @@ interface AgentMessageRow {
   tool_calls: string | null;
   type: string | null;
   metadata: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  duration_ms: number | null;
   created_at: string;
 }
 
@@ -91,6 +94,9 @@ function rowToMessage(row: unknown[], columns: string[]): AgentMessageRow {
     tool_calls: (obj.tool_calls as string | null) ?? null,
     type: (obj.type as string | null) ?? null,
     metadata: (obj.metadata as string | null) ?? null,
+    input_tokens: obj.input_tokens != null ? Number(obj.input_tokens) : null,
+    output_tokens: obj.output_tokens != null ? Number(obj.output_tokens) : null,
+    duration_ms: obj.duration_ms != null ? Number(obj.duration_ms) : null,
     created_at: String(obj.created_at),
   };
 }
@@ -118,7 +124,7 @@ async function loadAgent(access: DelegatedAccess, id: string): Promise<AgentRow 
 
 async function loadMessages(access: DelegatedAccess, agentId: string): Promise<AgentMessageRow[]> {
   const result = await access.sql.query(
-    `SELECT id, agent_id, role, content, tool_calls, type, metadata, created_at
+    `SELECT id, agent_id, role, content, tool_calls, type, metadata, input_tokens, output_tokens, duration_ms, created_at
      FROM agent_message WHERE agent_id = ? ORDER BY created_at ASC`,
     [agentId],
   );
@@ -447,8 +453,8 @@ export function createAgentsRouter(config: AgentsRoutesConfig) {
       const now = new Date().toISOString();
       const userMsgId = crypto.randomUUID();
       const insertUser = await access.sql.execute(
-        `INSERT INTO agent_message (id, agent_id, role, content, tool_calls, type, metadata, created_at)
-         VALUES (?, ?, 'user', ?, NULL, 'text', NULL, ?)`,
+        `INSERT INTO agent_message (id, agent_id, role, content, tool_calls, type, metadata, input_tokens, output_tokens, duration_ms, created_at)
+         VALUES (?, ?, 'user', ?, NULL, 'text', NULL, NULL, NULL, NULL, ?)`,
         [userMsgId, id, content, now],
       );
       if (!insertUser.ok) {
@@ -474,50 +480,56 @@ export function createAgentsRouter(config: AgentsRoutesConfig) {
         resumeSessionId: agent.session_id,
       });
 
-      // Persist the assistant reply + update last_message_at.
-      // Also store the captured SDK session ID for future resume.
+      // Persist the assistant reply + update bookkeeping. Fire-and-forget:
+      // the response body is assembled from in-memory data so we don't need
+      // to block on DB writes. Errors are logged, not thrown.
       const assistantNow = new Date().toISOString();
       const assistantId = crypto.randomUUID();
-      const insertAssistant = await access.sql.execute(
-        `INSERT INTO agent_message (id, agent_id, role, content, tool_calls, type, metadata, created_at)
-         VALUES (?, ?, 'assistant', ?, ?, 'text', ?, ?)`,
-        [
-          assistantId,
-          id,
-          turn.content,
-          turn.toolCalls ? JSON.stringify(turn.toolCalls) : null,
-          turn.normalizedMessages ? JSON.stringify(turn.normalizedMessages) : null,
-          assistantNow,
-        ],
-      );
-      if (!insertAssistant.ok) {
-        throw new Error(`insert assistant message failed: ${insertAssistant.error.message}`);
-      }
+
+      access.sql
+        .execute(
+          `INSERT INTO agent_message (id, agent_id, role, content, tool_calls, type, metadata, input_tokens, output_tokens, duration_ms, created_at)
+         VALUES (?, ?, 'assistant', ?, ?, 'text', ?, ?, ?, ?, ?)`,
+          [
+            assistantId,
+            id,
+            turn.content,
+            turn.toolCalls ? JSON.stringify(turn.toolCalls) : null,
+            turn.normalizedMessages ? JSON.stringify(turn.normalizedMessages) : null,
+            turn.usage?.inputTokens ?? null,
+            turn.usage?.outputTokens ?? null,
+            turn.usage?.durationMs ?? null,
+            assistantNow,
+          ],
+        )
+        .catch((err: unknown) =>
+          console.error(`[agents] fire-and-forget: insert assistant message failed:`, err),
+        );
 
       // Store the SDK session ID if captured (or update if changed).
       if (turn.sessionId && turn.sessionId !== agent.session_id) {
-        const updateSession = await access.sql.execute(
-          `UPDATE agent SET session_id = ? WHERE id = ?`,
-          [turn.sessionId, id],
-        );
-        if (!updateSession.ok) {
-          console.warn(
-            `[agents] failed to store session_id for agent ${id}: ${updateSession.error.message}`,
+        access.sql
+          .execute(`UPDATE agent SET session_id = ? WHERE id = ?`, [turn.sessionId, id])
+          .catch((err: unknown) =>
+            console.error(`[agents] fire-and-forget: update session_id failed:`, err),
           );
-        }
       }
 
-      const updateAgent = await access.sql.execute(
-        `UPDATE agent SET last_message_at = ?, updated_at = ? WHERE id = ?`,
-        [assistantNow, assistantNow, id],
-      );
-      if (!updateAgent.ok) {
-        throw new Error(`update agent last_message_at failed: ${updateAgent.error.message}`);
-      }
+      access.sql
+        .execute(`UPDATE agent SET last_message_at = ?, updated_at = ? WHERE id = ?`, [
+          assistantNow,
+          assistantNow,
+          id,
+        ])
+        .catch((err: unknown) =>
+          console.error(`[agents] fire-and-forget: update last_message_at failed:`, err),
+        );
 
-      const updatedAgent = await loadAgent(access, id);
+      // Build response from in-memory data — don't re-query since DB
+      // writes are fire-and-forget and may not have landed yet.
+      const updatedAgent = { ...agent, last_message_at: assistantNow, updated_at: assistantNow };
       res.json({
-        agent: updatedAgent ? { ...updatedAgent, lane: classifyLane(updatedAgent) } : null,
+        agent: { ...updatedAgent, lane: classifyLane(updatedAgent) },
         userMessage: {
           id: userMsgId,
           agent_id: id,
@@ -526,6 +538,9 @@ export function createAgentsRouter(config: AgentsRoutesConfig) {
           tool_calls: null,
           type: "text",
           metadata: null,
+          input_tokens: null,
+          output_tokens: null,
+          duration_ms: null,
           created_at: now,
         },
         assistantMessage: {
@@ -536,6 +551,9 @@ export function createAgentsRouter(config: AgentsRoutesConfig) {
           tool_calls: turn.toolCalls ? JSON.stringify(turn.toolCalls) : null,
           type: "text",
           metadata: turn.normalizedMessages ? JSON.stringify(turn.normalizedMessages) : null,
+          input_tokens: turn.usage?.inputTokens ?? null,
+          output_tokens: turn.usage?.outputTokens ?? null,
+          duration_ms: turn.usage?.durationMs ?? null,
           created_at: assistantNow,
         },
       });
