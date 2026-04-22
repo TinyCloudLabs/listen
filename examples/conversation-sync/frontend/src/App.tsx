@@ -24,6 +24,7 @@ import { SyncControl } from "./components/SyncControl";
 import { ConversationList } from "./components/ConversationList";
 import { ConversationDetail } from "./components/ConversationDetail";
 import { LiveWriteEvents } from "./components/LiveWriteEvents";
+import { ConnectAgentButton } from "./components/ConnectAgentButton";
 
 // ── Environment ─────────────────────────────────────────────────────
 
@@ -262,6 +263,13 @@ export function App() {
           onSignIn={handleSignIn}
           onSignOut={handleSignOut}
         />
+
+        {isSignedIn && tcw && (
+          <ConnectAgentButton
+            tcw={tcw}
+            onRefreshConversations={() => setRefreshKey((k) => k + 1)}
+          />
+        )}
 
         {isSignedIn &&
           (hasKey === false || (hasGoogleMeet === false && !!GOOGLE_CLIENT_ID)) &&
