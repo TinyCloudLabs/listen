@@ -1,17 +1,17 @@
 #!/usr/bin/env bun
 /**
- * delegation-endpoint: tiny localhost HTTP server that the listen frontend
- * POSTs a serialized PortableDelegation to. Writes it to disk; the CLI
- * reads it on each invocation.
+ * delegation-endpoint: tiny localhost HTTP server that an app's frontend
+ * POSTs a serialized PortableDelegation to. Writes it to disk; the tc-agent
+ * CLI reads it on each invocation.
  *
- * Runs inside the listen-agent Docker container on port 4097.
+ * Runs inside the tc-agent Docker container on port 4097.
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 const PORT = Number(process.env.DELEGATION_ENDPOINT_PORT ?? 4097);
-const DELEGATION_PATH = process.env.LISTEN_DELEGATION_PATH ?? "/root/.listen/delegation.txt";
+const DELEGATION_PATH = process.env.TC_AGENT_DELEGATION_PATH ?? "/root/.tc-agent/delegation.txt";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",

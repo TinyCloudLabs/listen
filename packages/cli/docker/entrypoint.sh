@@ -1,17 +1,17 @@
 #!/bin/sh
 set -e
 
-mkdir -p /root/.listen
+mkdir -p /root/.tc-agent
 
 # Generate agent key if missing (idempotent) and print the DID for the user to copy.
-listen agent init >/dev/null
+tc-agent agent init >/dev/null
 
-AGENT_DID=$(listen agent did | jq -r .did)
+AGENT_DID=$(tc-agent agent did | jq -r .did)
 echo ""
 echo "=================================================================="
 echo "  Agent DID: $AGENT_DID"
 echo ""
-echo "  Copy this DID into the 'Connect Agent' dialog in listen."
+echo "  Copy this DID into the 'Connect Agent' dialog in your app UI."
 echo "  OpenCode web UI: http://localhost:4096"
 echo "=================================================================="
 echo ""

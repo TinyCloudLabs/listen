@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# ---------- builder: compile listen + delegation-endpoint to standalone binaries ----------
+# ---------- builder: compile tc-agent + delegation-endpoint to standalone binaries ----------
 # We detect the arch inside the container (uname -m) rather than relying on
 # buildkit's $TARGETARCH, which is only populated when --platform is explicit.
 # This compiles native for the host arch so the image runs without Rosetta/qemu.
@@ -32,7 +32,7 @@ RUN set -eu; \
       aarch64) BUN_TARGET=bun-linux-arm64 ;; \
       *) echo "Unsupported arch: $(uname -m)" >&2 && exit 1 ;; \
     esac; \
-    bun build packages/cli/src/index.ts --compile --target=$BUN_TARGET --outfile /out/listen; \
+    bun build packages/cli/src/index.ts --compile --target=$BUN_TARGET --outfile /out/tc-agent; \
     bun build packages/cli/docker/delegation-endpoint.ts --compile --target=$BUN_TARGET --outfile /out/delegation-endpoint
 
 # The @tinycloud/node-sdk-wasm package loads its .wasm via an absolute path
@@ -59,30 +59,31 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 # Compiled binaries.
-COPY --from=builder /out/listen /usr/local/bin/listen
+COPY --from=builder /out/tc-agent /usr/local/bin/tc-agent
 COPY --from=builder /out/delegation-endpoint /usr/local/bin/delegation-endpoint
-RUN chmod +x /usr/local/bin/listen /usr/local/bin/delegation-endpoint
+RUN chmod +x /usr/local/bin/tc-agent /usr/local/bin/delegation-endpoint
 
 # Mirror the WASM file at the exact absolute path the binary expects.
 # See the builder stage comment for why.
 COPY --from=builder /out/wasm/tinycloud_web_sdk_rs_bg.wasm \
      /build/node_modules/.bun/@tinycloud+node-sdk-wasm@1.7.2-beta.0/node_modules/@tinycloud/node-sdk-wasm/dist/wasm/tinycloud_web_sdk_rs_bg.wasm
 
-# Static config + entrypoint.
+# Static config + entrypoint. The CLAUDE.md that teaches the agent about
+# this app's schema/KV layout is app-specific — mount it at runtime via
+# `-v ./agent/CLAUDE.md:/workspace/CLAUDE.md:ro` in your compose file.
 COPY packages/cli/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 COPY packages/cli/docker/opencode.json /root/.config/opencode/opencode.json
-COPY packages/cli/docker/CLAUDE.md /workspace/CLAUDE.md
 
 # Per-user state (agent key + delegation). Mount a named volume here in production.
-VOLUME ["/root/.listen"]
+VOLUME ["/root/.tc-agent"]
 
 WORKDIR /workspace
 
 EXPOSE 4096 4097
 
 ENV TINYCLOUD_HOST=https://node.tinycloud.xyz \
-    LISTEN_AGENT_KEY_PATH=/root/.listen/agent-key.json \
-    LISTEN_DELEGATION_PATH=/root/.listen/delegation.txt
+    TC_AGENT_KEY_PATH=/root/.tc-agent/agent-key.json \
+    TC_AGENT_DELEGATION_PATH=/root/.tc-agent/delegation.txt
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

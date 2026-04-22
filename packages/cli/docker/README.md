@@ -1,17 +1,19 @@
-# listen-agent Docker image
+# tc-agent Docker image
 
-Part of [TC-1344](https://linear.app/tinycloudlabs/issue/TC-1344) / [TC-1353](https://linear.app/tinycloudlabs/issue/TC-1353). A Docker image bundling:
+Part of [TC-1344](https://linear.app/tinycloudlabs/issue/TC-1344) / [TC-1353](https://linear.app/tinycloudlabs/issue/TC-1353). An app-agnostic Docker image bundling:
 
 - OpenCode (web UI on `:4096`)
-- The `listen` CLI (from `packages/cli`) as `/usr/local/bin/listen`
-- A tiny `delegation-endpoint` HTTP server on `:4097` that receives a serialized `PortableDelegation` from the listen frontend and writes it to `/root/.listen/delegation.txt`
+- The `tc-agent` CLI (from `packages/cli`) as `/usr/local/bin/tc-agent`
+- A tiny `delegation-endpoint` HTTP server on `:4097` that receives a serialized `PortableDelegation` from an app's frontend and writes it to `/root/.tc-agent/delegation.txt`
+
+**App-specific schema docs live outside this image.** Apps mount their own `CLAUDE.md` at `/workspace/CLAUDE.md` to teach the agent about their SQL tables and KV key layout — see `examples/conversation-sync/` for a listen example.
 
 ## Build
 
-From the listen repo root (so the Docker build context sees the workspace):
+From the repo root (so the Docker build context sees the workspace):
 
 ```bash
-docker build -f packages/cli/docker/Dockerfile -t listen-agent .
+docker build -f packages/cli/docker/Dockerfile -t tc-agent .
 ```
 
 ## Run
@@ -19,12 +21,13 @@ docker build -f packages/cli/docker/Dockerfile -t listen-agent .
 ```bash
 docker run --rm -it \
   -p 4096:4096 -p 4097:4097 \
-  -v listen-agent-state:/root/.listen \
+  -v tc-agent-state:/root/.tc-agent \
+  -v /absolute/path/to/your/CLAUDE.md:/workspace/CLAUDE.md:ro \
   -e OPENCODE_ZEN_API_KEY=sk-... \
-  listen-agent
+  tc-agent
 ```
 
-Or, from `examples/conversation-sync/`:
+Or, from any `examples/<app>/` that provides a `docker-compose.yml` and `agent/CLAUDE.md`:
 
 ```bash
 cp .env.example .env       # fill in OPENCODE_ZEN_API_KEY
@@ -33,13 +36,13 @@ docker compose up
 
 ## First-boot flow
 
-1. Entrypoint runs `listen agent init` (generates `/root/.listen/agent-key.json` on first run, idempotent afterwards).
+1. Entrypoint runs `tc-agent agent init` (generates `/root/.tc-agent/agent-key.json` on first run, idempotent afterwards).
 2. Container logs print the agent DID:
    ```
    Agent DID: did:pkh:eip155:1:0xD10bc910…
    ```
-3. Copy that DID, open listen, click **Connect Agent**, paste the DID.
-4. Listen's frontend POSTs the serialized delegation to `http://localhost:4097/delegation` — `delegation-endpoint` writes it to `/root/.listen/delegation.txt`.
+3. Copy that DID, open your app, click **Connect Agent**, paste the DID.
+4. The app's frontend POSTs the serialized delegation to `http://localhost:4097/delegation` — `delegation-endpoint` writes it to `/root/.tc-agent/delegation.txt`.
 5. Open `http://localhost:4096` (OpenCode web UI) and start chatting.
 
 ## Configuration
@@ -48,7 +51,8 @@ docker compose up
 |---|---|---|
 | `OPENCODE_ZEN_API_KEY` | *(required for model access)* | OpenCode Zen key for the configured model |
 | `TINYCLOUD_HOST` | `https://node.tinycloud.xyz` | Passed to the CLI |
-| `LISTEN_DELEGATION_PATH` | `/root/.listen/delegation.txt` | Where `delegation-endpoint` writes, where CLI reads |
+| `TC_AGENT_PREFIX` | `tc-agent` | Override per-app if multiple apps share one TC node |
+| `TC_AGENT_DELEGATION_PATH` | `/root/.tc-agent/delegation.txt` | Where `delegation-endpoint` writes, where CLI reads |
 
 ## Swapping the model
 
@@ -59,7 +63,7 @@ The OpenCode model ID is pinned in `opencode.json` to `opencode-zen/minimax-m1`.
 | Port | Service |
 |---|---|
 | `4096` | OpenCode web UI (the agent) |
-| `4097` | `delegation-endpoint` (receives delegations from listen's frontend) |
+| `4097` | `delegation-endpoint` (receives delegations from an app's frontend) |
 
 ## Security
 
@@ -71,11 +75,11 @@ You can validate the bootstrap without hitting any LLM:
 
 ```bash
 # 1. Build + run
-docker build -f packages/cli/docker/Dockerfile -t listen-agent .
-docker run --rm -d -p 4096:4096 -p 4097:4097 -v listen-test:/root/.listen --name listen-agent-test listen-agent
+docker build -f packages/cli/docker/Dockerfile -t tc-agent .
+docker run --rm -d -p 4096:4096 -p 4097:4097 -v tc-agent-test:/root/.tc-agent --name tc-agent-test tc-agent
 
 # 2. Agent DID should appear in logs
-docker logs listen-agent-test | grep "Agent DID:"
+docker logs tc-agent-test | grep "Agent DID:"
 
 # 3. Endpoint accepts a POST
 curl -sS -X POST http://localhost:4097/delegation \
@@ -84,9 +88,9 @@ curl -sS -X POST http://localhost:4097/delegation \
 # -> {"ok":true,"bytes":21}
 
 # 4. File was written
-docker exec listen-agent-test cat /root/.listen/delegation.txt
+docker exec tc-agent-test cat /root/.tc-agent/delegation.txt
 # -> dummy-for-shape-test
 
 # 5. Clean up
-docker rm -f listen-agent-test && docker volume rm listen-test
+docker rm -f tc-agent-test && docker volume rm tc-agent-test
 ```

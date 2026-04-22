@@ -24,7 +24,7 @@ async function getAccess() {
   if (!key) {
     writeError(
       "no_agent_key",
-      `Agent key not found at ${env.agentKeyPath}. Run: listen agent init`,
+      `Agent key not found at ${env.agentKeyPath}. Run: tc-agent agent init`,
     );
   }
   const node = buildNode(key.privateKey, env.host);
@@ -73,7 +73,7 @@ export async function kvGet(argv: string[]): Promise<void> {
   }
 
   const [key] = parsed.positionals;
-  if (!key) writeError("invalid_args", "Usage: listen kv get <key> [--raw]");
+  if (!key) writeError("invalid_args", "Usage: tc-agent kv get <key> [--raw]");
 
   const { node, access } = await getAccess();
   try {
@@ -113,7 +113,7 @@ export async function kvPut(argv: string[]): Promise<void> {
 
   const [key, inlineValue] = parsed.positionals;
   if (!key)
-    writeError("invalid_args", "Usage: listen kv put <key> <value>   (or pipe value via stdin)");
+    writeError("invalid_args", "Usage: tc-agent kv put <key> <value>   (or pipe value via stdin)");
 
   let rawValue: string;
   if (inlineValue !== undefined && inlineValue !== "-") {
@@ -149,7 +149,7 @@ export async function kvDel(argv: string[]): Promise<void> {
   }
 
   const [key] = parsed.positionals;
-  if (!key) writeError("invalid_args", "Usage: listen kv del <key>");
+  if (!key) writeError("invalid_args", "Usage: tc-agent kv del <key>");
 
   const { node, access } = await getAccess();
   try {

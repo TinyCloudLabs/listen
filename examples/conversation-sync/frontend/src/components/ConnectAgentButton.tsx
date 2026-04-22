@@ -4,7 +4,10 @@ import type { TinyCloudWeb } from "@tinycloud/web-sdk";
 
 interface ConnectAgentButtonProps {
   tcw: TinyCloudWeb;
-  onRefreshConversations: () => void;
+  agentEndpoint?: string;
+  opencodeUrl?: string;
+  onRefresh?: () => void;
+  refreshLabel?: string;
 }
 
 type Status =
@@ -14,12 +17,12 @@ type Status =
   | { kind: "error"; message: string }
   | { kind: "endpoint_unreachable"; serialized: string };
 
-const AGENT_ENDPOINT = import.meta.env.VITE_AGENT_ENDPOINT || "http://localhost:4097";
+const DEFAULT_AGENT_ENDPOINT = import.meta.env.VITE_AGENT_ENDPOINT || "http://localhost:4097";
 // OpenCode encodes the project path as base64url in the URL; linking directly
 // to the /workspace session avoids the root project picker (which shows
-// container `/` on fresh boots and hides our CLAUDE.md + `listen` CLI).
+// container `/` on fresh boots and hides the app's CLAUDE.md + `tc-agent` CLI).
 // btoa("/workspace").replace(/=/g, "") === "L3dvcmtzcGFjZQ".
-const OPENCODE_URL = "http://localhost:4096/L3dvcmtzcGFjZQ";
+const DEFAULT_OPENCODE_URL = "http://localhost:4096/L3dvcmtzcGFjZQ";
 const DELEGATION_EXPIRY_MS = 7 * 24 * 3600 * 1000;
 
 const AGENT_ACTIONS = [
@@ -33,7 +36,10 @@ const AGENT_ACTIONS = [
 
 export const ConnectAgentButton: FC<ConnectAgentButtonProps> = ({
   tcw,
-  onRefreshConversations,
+  agentEndpoint = DEFAULT_AGENT_ENDPOINT,
+  opencodeUrl = DEFAULT_OPENCODE_URL,
+  onRefresh,
+  refreshLabel = "Refresh",
 }) => {
   const [agentDid, setAgentDid] = useState("");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
@@ -67,7 +73,7 @@ export const ConnectAgentButton: FC<ConnectAgentButtonProps> = ({
     }
 
     try {
-      const res = await fetch(`${AGENT_ENDPOINT}/delegation`, {
+      const res = await fetch(`${agentEndpoint}/delegation`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ serialized }),
@@ -119,17 +125,19 @@ export const ConnectAgentButton: FC<ConnectAgentButtonProps> = ({
           </div>
           <p style={s.connectedCopy}>
             Open the agent at{" "}
-            <a href={OPENCODE_URL} target="_blank" rel="noreferrer" style={s.link}>
-              {OPENCODE_URL}
+            <a href={opencodeUrl} target="_blank" rel="noreferrer" style={s.link}>
+              {opencodeUrl}
             </a>
           </p>
           <div style={s.buttonRow}>
             <button onClick={handleDisconnect} style={s.btnGhost}>
               Disconnect
             </button>
-            <button onClick={onRefreshConversations} style={s.btnGhost}>
-              Refresh conversations
-            </button>
+            {onRefresh && (
+              <button onClick={onRefresh} style={s.btnGhost}>
+                {refreshLabel}
+              </button>
+            )}
           </div>
         </div>
       ) : (
@@ -163,9 +171,11 @@ export const ConnectAgentButton: FC<ConnectAgentButtonProps> = ({
             >
               {isSubmitting ? "Connecting…" : "Connect Agent"}
             </button>
-            <button onClick={onRefreshConversations} style={s.btnGhost}>
-              Refresh conversations
-            </button>
+            {onRefresh && (
+              <button onClick={onRefresh} style={s.btnGhost}>
+                {refreshLabel}
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -182,9 +192,9 @@ export const ConnectAgentButton: FC<ConnectAgentButtonProps> = ({
           <div style={s.fallbackHeader}>
             <span style={s.warnIcon}>!</span>
             <span>
-              Couldn't reach the agent container at <code style={s.inline}>{AGENT_ENDPOINT}</code>.
+              Couldn't reach the agent container at <code style={s.inline}>{agentEndpoint}</code>.
               Copy this delegation and paste it into the container's{" "}
-              <code style={s.inline}>/root/.listen/delegation.txt</code> manually.
+              <code style={s.inline}>/root/.tc-agent/delegation.txt</code> manually.
             </span>
           </div>
           <textarea

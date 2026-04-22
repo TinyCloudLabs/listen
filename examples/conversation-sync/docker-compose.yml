@@ -3,6 +3,10 @@
 # The frontend/backend still run via `bun run dev` in their own processes — this
 # compose file only brings up the agent container (TC-1344).
 #
+# The image is built from the generic base Dockerfile in packages/cli/docker/;
+# this example injects listen's schema doc by bind-mounting agent/CLAUDE.md into
+# /workspace/ so the agent knows about the conversation/participant tables.
+#
 # Usage:
 #   cp .env.example .env
 #   docker compose up --build
@@ -18,10 +22,12 @@ services:
       - "127.0.0.1:4096:4096" # OpenCode web UI
       - "127.0.0.1:4097:4097" # delegation endpoint
     volumes:
-      - listen-agent-state:/root/.listen
+      - listen-agent-state:/root/.tc-agent
+      - ./agent/CLAUDE.md:/workspace/CLAUDE.md:ro
     environment:
       OPENCODE_ZEN_API_KEY: ${OPENCODE_ZEN_API_KEY:-}
       TINYCLOUD_HOST: ${TINYCLOUD_HOST:-https://node.tinycloud.xyz}
+      TC_AGENT_PREFIX: ${TC_AGENT_PREFIX:-listen-agent}
     restart: unless-stopped
 
 volumes:

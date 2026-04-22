@@ -32,7 +32,7 @@ async function getAccess() {
   if (!key) {
     writeError(
       "no_agent_key",
-      `Agent key not found at ${env.agentKeyPath}. Run: listen agent init`,
+      `Agent key not found at ${env.agentKeyPath}. Run: tc-agent agent init`,
     );
   }
   const node = buildNode(key.privateKey, env.host);
@@ -55,7 +55,7 @@ export async function sqlQuery(argv: string[]): Promise<void> {
   }
 
   const [sql] = parsed.positionals;
-  if (!sql) writeError("invalid_args", 'Usage: listen sql query "<sql>" [--param <p>]...');
+  if (!sql) writeError("invalid_args", 'Usage: tc-agent sql query "<sql>" [--param <p>]...');
 
   const params = (parsed.values.param ?? []).map(coerceParam);
 
@@ -88,7 +88,7 @@ export async function sqlExecute(argv: string[]): Promise<void> {
   }
 
   const [sql] = parsed.positionals;
-  if (!sql) writeError("invalid_args", 'Usage: listen sql execute "<sql>" [--param <p>]...');
+  if (!sql) writeError("invalid_args", 'Usage: tc-agent sql execute "<sql>" [--param <p>]...');
 
   const params = (parsed.values.param ?? []).map(coerceParam);
 

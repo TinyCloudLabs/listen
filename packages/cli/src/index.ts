@@ -5,24 +5,25 @@ import { kvList, kvGet, kvPut, kvDel } from "./commands/kv.js";
 import { sqlQuery, sqlExecute } from "./commands/sql.js";
 import { doctor } from "./commands/doctor.js";
 
-const USAGE = `listen — TinyCloud CLI bridge
+const USAGE = `tc-agent — TinyCloud agent CLI bridge
 
 Usage:
-  listen agent init
-  listen agent did
-  listen kv list [--prefix <p>]
-  listen kv get <key> [--raw]
-  listen kv put <key> <value>           (value via arg or stdin)
-  listen kv del <key>
-  listen sql query "<sql>" [--param <p>]...
-  listen sql execute "<sql>" [--param <p>]...
-  listen doctor
+  tc-agent agent init
+  tc-agent agent did
+  tc-agent kv list [--prefix <p>]
+  tc-agent kv get <key> [--raw]
+  tc-agent kv put <key> <value>           (value via arg or stdin)
+  tc-agent kv del <key>
+  tc-agent sql query "<sql>" [--param <p>]...
+  tc-agent sql execute "<sql>" [--param <p>]...
+  tc-agent doctor
 
 Env:
-  TINYCLOUD_HOST            (default https://node.tinycloud.xyz)
-  LISTEN_AGENT_KEY_PATH     (default /root/.listen/agent-key.json)
-  LISTEN_DELEGATION_PATH    (default /root/.listen/delegation.txt)
-  LISTEN_SESSION_CACHE_PATH (default /tmp/listen-cli-session.json)
+  TINYCLOUD_HOST                (default https://node.tinycloud.xyz)
+  TC_AGENT_PREFIX               (default tc-agent)
+  TC_AGENT_KEY_PATH             (default /root/.tc-agent/agent-key.json)
+  TC_AGENT_DELEGATION_PATH      (default /root/.tc-agent/delegation.txt)
+  TC_AGENT_SESSION_CACHE_PATH   (default /tmp/tc-agent-session.json)
 `;
 
 async function dispatch(argv: string[]): Promise<void> {
@@ -54,7 +55,7 @@ async function dispatch(argv: string[]): Promise<void> {
 
   writeError(
     "invalid_args",
-    `Unknown command: ${[group, sub].filter(Boolean).join(" ")}. Run 'listen --help'.`,
+    `Unknown command: ${[group, sub].filter(Boolean).join(" ")}. Run 'tc-agent --help'.`,
   );
 }
 

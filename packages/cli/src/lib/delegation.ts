@@ -29,7 +29,7 @@ export function loadSerializedDelegation(path: string): string {
   if (!existsSync(path)) {
     writeError(
       "no_delegation",
-      `Run Connect Agent in listen to grant a delegation. (expected file at ${path})`,
+      `Run Connect Agent in the app UI to grant a delegation. (expected file at ${path})`,
     );
   }
   return readFileSync(path, "utf-8").trim();
@@ -60,7 +60,7 @@ export async function activateDelegation(
     if (exp && exp.getTime() < Date.now()) {
       writeError(
         "expired_delegation",
-        `Delegation expired at ${exp.toISOString()}. Re-run Connect Agent in listen.`,
+        `Delegation expired at ${exp.toISOString()}. Re-run Connect Agent in the app UI.`,
       );
     }
   }

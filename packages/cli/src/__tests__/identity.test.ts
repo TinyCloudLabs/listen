@@ -11,7 +11,7 @@ import {
 
 const scratch: string[] = [];
 function scratchPath(): string {
-  const dir = mkdtempSync(join(tmpdir(), "listen-id-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "tc-agent-id-test-"));
   scratch.push(dir);
   return join(dir, "agent-key.json");
 }
@@ -42,7 +42,7 @@ describe("identity", () => {
   });
 
   test("writeAgentKey creates parent directories", () => {
-    const dir = mkdtempSync(join(tmpdir(), "listen-id-test-"));
+    const dir = mkdtempSync(join(tmpdir(), "tc-agent-id-test-"));
     scratch.push(dir);
     const nested = join(dir, "deep", "nested", "agent-key.json");
     writeAgentKey(nested, { privateKey: generatePrivateKey() });

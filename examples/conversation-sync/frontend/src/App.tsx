@@ -267,7 +267,8 @@ export function App() {
         {isSignedIn && tcw && (
           <ConnectAgentButton
             tcw={tcw}
-            onRefreshConversations={() => setRefreshKey((k) => k + 1)}
+            onRefresh={() => setRefreshKey((k) => k + 1)}
+            refreshLabel="Refresh conversations"
           />
         )}
 

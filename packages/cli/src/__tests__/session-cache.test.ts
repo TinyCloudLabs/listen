@@ -6,7 +6,7 @@ import { isFresh, readSessionCache, writeSessionCache } from "../lib/session-cac
 
 const scratch: string[] = [];
 function scratchFile(): string {
-  const dir = mkdtempSync(join(tmpdir(), "listen-cache-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "tc-agent-cache-test-"));
   scratch.push(dir);
   return join(dir, "session.json");
 }

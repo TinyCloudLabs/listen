@@ -23,7 +23,7 @@ export async function agentDid(): Promise<void> {
   if (!key) {
     writeError(
       "no_agent_key",
-      `Agent key not found at ${env.agentKeyPath}. Run: listen agent init`,
+      `Agent key not found at ${env.agentKeyPath}. Run: tc-agent agent init`,
     );
   }
 

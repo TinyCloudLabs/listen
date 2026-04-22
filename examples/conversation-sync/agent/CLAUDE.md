@@ -1,19 +1,19 @@
 # listen — your own TinyCloud space
 
-You can read and write the user's listen data (meeting transcripts, conversations) through the `listen` CLI. Every command prints JSON to stdout; pipe to `jq` to extract fields.
+You can read and write the user's listen data (meeting transcripts, conversations) through the `tc-agent` CLI. Every command prints JSON to stdout; pipe to `jq` to extract fields.
 
 If a command returns `{"error":{"code":"no_delegation",...}}`, the user has not yet granted you access. Ask them to click **Connect Agent** in listen.
 
 ## Commands
 
 ```
-listen kv list [--prefix <p>]        -> {"keys":[...]}
-listen kv get <key>                   -> {"value":<v>}
-listen kv put <key> <value>           -> {"ok":true}
-listen kv del <key>                   -> {"ok":true}
-listen sql query "<sql>" [--param p]  -> {"columns":[...],"rows":[...],"rowCount":n}
-listen sql execute "<sql>"            -> {"changes":n,"lastInsertRowId":n}
-listen doctor                         -> health check (exit 0 if all good)
+tc-agent kv list [--prefix <p>]        -> {"keys":[...]}
+tc-agent kv get <key>                   -> {"value":<v>}
+tc-agent kv put <key> <value>           -> {"ok":true}
+tc-agent kv del <key>                   -> {"ok":true}
+tc-agent sql query "<sql>" [--param p]  -> {"columns":[...],"rows":[...],"rowCount":n}
+tc-agent sql execute "<sql>"            -> {"changes":n,"lastInsertRowId":n}
+tc-agent doctor                         -> health check (exit 0 if all good)
 ```
 
 ## SQL schema
@@ -55,6 +55,6 @@ Database name: `conversations`.
 
 ## Typical flows
 
-- **"Summarize my most recent meeting"**: `listen sql query "SELECT * FROM conversation ORDER BY started_at DESC LIMIT 1"` to get the id, then `listen kv get /app.conversations/transcript/<id>` for the full transcript.
-- **"List meetings from last week"**: `listen sql query "SELECT id, title, started_at FROM conversation WHERE started_at >= '2026-04-15' ORDER BY started_at DESC"` (substitute dates).
-- **"Who was in that meeting?"**: `listen sql query "SELECT name, email FROM participant WHERE conversation_id = ?" --param <id>`.
+- **"Summarize my most recent meeting"**: `tc-agent sql query "SELECT * FROM conversation ORDER BY started_at DESC LIMIT 1"` to get the id, then `tc-agent kv get /app.conversations/transcript/<id>` for the full transcript.
+- **"List meetings from last week"**: `tc-agent sql query "SELECT id, title, started_at FROM conversation WHERE started_at >= '2026-04-15' ORDER BY started_at DESC"` (substitute dates).
+- **"Who was in that meeting?"**: `tc-agent sql query "SELECT name, email FROM participant WHERE conversation_id = ?" --param <id>`.

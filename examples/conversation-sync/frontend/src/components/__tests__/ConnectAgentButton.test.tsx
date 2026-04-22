@@ -22,13 +22,13 @@ const VALID_AGENT_DID = "did:pkh:eip155:1:0x1204f2e9f634B5A8c09CA1579d351B99B27f
 const fakeTcw = {} as unknown as TinyCloudWeb;
 
 let fetchMock: ReturnType<typeof vi.fn>;
-let onRefreshConversations: ReturnType<typeof vi.fn>;
+let onRefresh: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   mockedCreateDelegation.mockReset();
   fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
-  onRefreshConversations = vi.fn();
+  onRefresh = vi.fn();
 });
 
 afterEach(() => {
@@ -38,7 +38,13 @@ afterEach(() => {
 
 describe("ConnectAgentButton — initial render", () => {
   test("shows the form with an input and both buttons in idle state", () => {
-    render(<ConnectAgentButton tcw={fakeTcw} onRefreshConversations={onRefreshConversations} />);
+    render(
+      <ConnectAgentButton
+        tcw={fakeTcw}
+        onRefresh={onRefresh}
+        refreshLabel="Refresh conversations"
+      />,
+    );
 
     expect(screen.getByPlaceholderText(/did:pkh:eip155/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /connect agent/i })).toBeInTheDocument();
@@ -46,16 +52,22 @@ describe("ConnectAgentButton — initial render", () => {
   });
 
   test("Connect button is disabled when input is empty", () => {
-    render(<ConnectAgentButton tcw={fakeTcw} onRefreshConversations={onRefreshConversations} />);
+    render(<ConnectAgentButton tcw={fakeTcw} onRefresh={onRefresh} />);
 
     expect(screen.getByRole("button", { name: /connect agent/i })).toBeDisabled();
+  });
+
+  test("refresh button is hidden when onRefresh is not provided", () => {
+    render(<ConnectAgentButton tcw={fakeTcw} />);
+
+    expect(screen.queryByRole("button", { name: /refresh/i })).not.toBeInTheDocument();
   });
 });
 
 describe("ConnectAgentButton — validation", () => {
   test("malformed DID surfaces an inline error and never calls createDelegation", async () => {
     const user = userEvent.setup();
-    render(<ConnectAgentButton tcw={fakeTcw} onRefreshConversations={onRefreshConversations} />);
+    render(<ConnectAgentButton tcw={fakeTcw} onRefresh={onRefresh} />);
 
     await user.type(screen.getByPlaceholderText(/did:pkh:eip155/), "not-a-did");
     await user.click(screen.getByRole("button", { name: /connect agent/i }));
@@ -72,7 +84,7 @@ describe("ConnectAgentButton — happy path", () => {
     fetchMock.mockResolvedValue(new Response('{"ok":true,"bytes":42}', { status: 200 }));
 
     const user = userEvent.setup();
-    render(<ConnectAgentButton tcw={fakeTcw} onRefreshConversations={onRefreshConversations} />);
+    render(<ConnectAgentButton tcw={fakeTcw} onRefresh={onRefresh} />);
 
     await user.type(screen.getByPlaceholderText(/did:pkh:eip155/), VALID_AGENT_DID);
     await user.click(screen.getByRole("button", { name: /connect agent/i }));
@@ -109,12 +121,36 @@ describe("ConnectAgentButton — happy path", () => {
     );
   });
 
+  test("agentEndpoint prop overrides the default POST target", async () => {
+    mockedCreateDelegation.mockResolvedValue(FAKE_SERIALIZED);
+    fetchMock.mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+
+    const user = userEvent.setup();
+    render(
+      <ConnectAgentButton
+        tcw={fakeTcw}
+        agentEndpoint="http://example.test:9999"
+        onRefresh={onRefresh}
+      />,
+    );
+
+    await user.type(screen.getByPlaceholderText(/did:pkh:eip155/), VALID_AGENT_DID);
+    await user.click(screen.getByRole("button", { name: /connect agent/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://example.test:9999/delegation",
+        expect.any(Object),
+      );
+    });
+  });
+
   test("Disconnect after connected resets back to the form", async () => {
     mockedCreateDelegation.mockResolvedValue(FAKE_SERIALIZED);
     fetchMock.mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
 
     const user = userEvent.setup();
-    render(<ConnectAgentButton tcw={fakeTcw} onRefreshConversations={onRefreshConversations} />);
+    render(<ConnectAgentButton tcw={fakeTcw} onRefresh={onRefresh} />);
 
     await user.type(screen.getByPlaceholderText(/did:pkh:eip155/), VALID_AGENT_DID);
     await user.click(screen.getByRole("button", { name: /connect agent/i }));
@@ -134,7 +170,7 @@ describe("ConnectAgentButton — createDelegation error", () => {
     mockedCreateDelegation.mockRejectedValue(new Error("delegation chain too short"));
 
     const user = userEvent.setup();
-    render(<ConnectAgentButton tcw={fakeTcw} onRefreshConversations={onRefreshConversations} />);
+    render(<ConnectAgentButton tcw={fakeTcw} onRefresh={onRefresh} />);
 
     await user.type(screen.getByPlaceholderText(/did:pkh:eip155/), VALID_AGENT_DID);
     await user.click(screen.getByRole("button", { name: /connect agent/i }));
@@ -150,7 +186,7 @@ describe("ConnectAgentButton — endpoint unreachable fallback", () => {
     fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
 
     const user = userEvent.setup();
-    render(<ConnectAgentButton tcw={fakeTcw} onRefreshConversations={onRefreshConversations} />);
+    render(<ConnectAgentButton tcw={fakeTcw} onRefresh={onRefresh} />);
 
     await user.type(screen.getByPlaceholderText(/did:pkh:eip155/), VALID_AGENT_DID);
     await user.click(screen.getByRole("button", { name: /connect agent/i }));
@@ -170,7 +206,7 @@ describe("ConnectAgentButton — endpoint unreachable fallback", () => {
     fetchMock.mockResolvedValue(new Response("Internal Error", { status: 500 }));
 
     const user = userEvent.setup();
-    render(<ConnectAgentButton tcw={fakeTcw} onRefreshConversations={onRefreshConversations} />);
+    render(<ConnectAgentButton tcw={fakeTcw} onRefresh={onRefresh} />);
 
     await user.type(screen.getByPlaceholderText(/did:pkh:eip155/), VALID_AGENT_DID);
     await user.click(screen.getByRole("button", { name: /connect agent/i }));
@@ -182,11 +218,17 @@ describe("ConnectAgentButton — endpoint unreachable fallback", () => {
 });
 
 describe("ConnectAgentButton — refresh button", () => {
-  test("clicking Refresh conversations fires the prop callback", async () => {
+  test("clicking Refresh fires the onRefresh callback", async () => {
     const user = userEvent.setup();
-    render(<ConnectAgentButton tcw={fakeTcw} onRefreshConversations={onRefreshConversations} />);
+    render(
+      <ConnectAgentButton
+        tcw={fakeTcw}
+        onRefresh={onRefresh}
+        refreshLabel="Refresh conversations"
+      />,
+    );
 
     await user.click(screen.getByRole("button", { name: /refresh conversations/i }));
-    expect(onRefreshConversations).toHaveBeenCalledTimes(1);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 });

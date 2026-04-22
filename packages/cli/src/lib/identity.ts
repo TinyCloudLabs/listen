@@ -38,7 +38,7 @@ export function buildNode(privateKey: string, host: string): TinyCloudNode {
   return new TinyCloudNode({
     privateKey,
     host,
-    prefix: "listen-agent",
+    prefix: process.env.TC_AGENT_PREFIX ?? "tc-agent",
     autoCreateSpace: false,
   });
 }
