@@ -1,0 +1,13 @@
+**/node_modules
+**/dist
+**/.turbo
+**/.next
+**/.vite
+**/.env
+**/.env.*
+**/.DS_Store
+**/coverage
+.git
+.github
+examples/*/frontend/dist
+examples/*/backend/dist

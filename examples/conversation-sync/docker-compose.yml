@@ -1,0 +1,28 @@
+# Launches the listen-agent container alongside the conversation-sync example.
+#
+# The frontend/backend still run via `bun run dev` in their own processes — this
+# compose file only brings up the agent container (TC-1344).
+#
+# Usage:
+#   cp .env.example .env
+#   docker compose up --build
+
+services:
+  listen-agent:
+    build:
+      context: ../../ # listen repo root
+      dockerfile: packages/cli/docker/Dockerfile
+    image: listen-agent:latest
+    container_name: listen-agent
+    ports:
+      - "127.0.0.1:4096:4096" # OpenCode web UI
+      - "127.0.0.1:4097:4097" # delegation endpoint
+    volumes:
+      - listen-agent-state:/root/.listen
+    environment:
+      OPENCODE_ZEN_API_KEY: ${OPENCODE_ZEN_API_KEY:-}
+      TINYCLOUD_HOST: ${TINYCLOUD_HOST:-https://node.tinycloud.xyz}
+    restart: unless-stopped
+
+volumes:
+  listen-agent-state:
