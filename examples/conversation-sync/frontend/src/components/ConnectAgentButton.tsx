@@ -15,7 +15,11 @@ type Status =
   | { kind: "endpoint_unreachable"; serialized: string };
 
 const AGENT_ENDPOINT = import.meta.env.VITE_AGENT_ENDPOINT || "http://localhost:4097";
-const OPENCODE_URL = "http://localhost:4096";
+// OpenCode encodes the project path as base64url in the URL; linking directly
+// to the /workspace session avoids the root project picker (which shows
+// container `/` on fresh boots and hides our CLAUDE.md + `listen` CLI).
+// btoa("/workspace").replace(/=/g, "") === "L3dvcmtzcGFjZQ".
+const OPENCODE_URL = "http://localhost:4096/L3dvcmtzcGFjZQ";
 const DELEGATION_EXPIRY_MS = 7 * 24 * 3600 * 1000;
 
 const AGENT_ACTIONS = [

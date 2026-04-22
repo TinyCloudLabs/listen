@@ -80,7 +80,7 @@ describe("ConnectAgentButton — happy path", () => {
     expect(await screen.findByText(/agent connected/i)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /http:\/\/localhost:4096/ })).toHaveAttribute(
       "href",
-      "http://localhost:4096",
+      "http://localhost:4096/L3dvcmtzcGFjZQ",
     );
 
     // Verify the SDK helper was called with the right scope.
