@@ -9,12 +9,15 @@ A monorepo boilerplate for building full-stack apps with TinyCloud (user-owned s
 ## Package Map
 
 ```
-@tinyboilerplate/core     → shared types + constants (no runtime deps)
-@tinyboilerplate/client   → browser: OpenKey auth, TC sign-in, delegation, API client
-@tinyboilerplate/server   → server: TC identity, delegation store/cache, JWT verification
+@tinyboilerplate/core           → shared types + constants (no runtime deps)
+@tinyboilerplate/client         → browser: OpenKey auth, TC sign-in, delegation, API client
+@tinyboilerplate/server         → server: TC identity, delegation store/cache, JWT verification
+@tinyboilerplate/agent-runtime  → Docker image + activation sidecar so the official `tc`
+                                   CLI can operate on a delegated space inside an agent
+                                   container (e.g. OpenCode). See packages/agent-runtime/README.md.
 ```
 
-Dependency chain: `core` ← `client`, `core` ← `server`. Client and server are independent of each other.
+Dependency chain: `core` ← `client`, `core` ← `server`. Client and server are independent of each other. `agent-runtime` ships as a Docker image + compiled Bun sidecar — no JS imports.
 
 ## Build & Run
 

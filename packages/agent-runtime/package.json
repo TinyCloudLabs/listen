@@ -1,0 +1,17 @@
+{
+  "name": "@tinyboilerplate/agent-runtime",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:sidecar": "bun build docker/delegation-endpoint.ts --compile --outfile dist/delegation-endpoint",
+    "postinstall": "node ../server/scripts/fix-wasm-esm.mjs"
+  },
+  "dependencies": {
+    "@tinycloud/node-sdk": "2.1.0-beta.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  }
+}
