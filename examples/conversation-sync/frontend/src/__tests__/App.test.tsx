@@ -3,6 +3,14 @@ import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/re
 
 // ── Mocks ────────────────────────────────────────────────────────────
 
+(globalThis as unknown as { HTMLElement?: unknown }).HTMLElement ??= class HTMLElement {};
+(globalThis as unknown as { customElements?: unknown }).customElements ??= {
+  define() {},
+  get() {
+    return undefined;
+  },
+};
+
 const mockGet = vi.fn();
 const mockPost = vi.fn();
 const mockPut = vi.fn();
@@ -33,10 +41,27 @@ vi.mock("@tinyboilerplate/client", () => {
     verifySession: vi.fn(),
     createAndSignIn: vi.fn(),
     createApiClient: vi.fn(() => mockApiClient),
-    createDelegation: vi.fn(),
+    createManifestDelegation: vi.fn(),
     sendDelegation: vi.fn(),
     checkDelegationStatus: vi.fn().mockResolvedValue({ status: "active" }),
     revokeDelegation: vi.fn(),
+    loadAppManifest: vi.fn().mockResolvedValue({
+      id: "com.test.listen",
+      name: "Conversation Sync",
+      delegations: [],
+    }),
+    composeManifestWithBackend: vi.fn((manifest) => manifest),
+    resolveManifestDelegationPermissions: vi.fn().mockReturnValue([
+      {
+        service: "tinycloud.kv",
+        space: "default",
+        path: "com.test.listen/",
+        actions: ["tinycloud.kv/get", "tinycloud.kv/put"],
+      },
+    ]),
+    resolveManifestPermissionPath: vi
+      .fn()
+      .mockReturnValue("com.test.listen/conversations/conversation"),
     SessionStore: MockSessionStore,
   };
 });

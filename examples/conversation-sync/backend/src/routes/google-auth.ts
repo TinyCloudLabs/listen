@@ -5,6 +5,7 @@ import {
   buildAuthUrl as defaultBuildAuthUrl,
   exchangeCode as defaultExchangeCode,
 } from "../services/google-auth.js";
+import { resolveAppPath } from "../manifest.js";
 import type { GoogleTokenResponse } from "../services/google-auth.js";
 import type { SubscriptionMetadata } from "../services/pubsub-manager.js";
 
@@ -44,9 +45,9 @@ interface StateEntry {
 
 // ── Constants ────────────────────────────────────────────────────────
 
-const GOOGLE_TOKENS_PATH = "/app.conversations/config/google-tokens";
-const SUBSCRIPTION_KV_PATH = "/app.webhooks/config/google-meet-subscription";
-const USER_ADDRESS_KV_PATH = "/app.webhooks/config/google-meet-user-address";
+const GOOGLE_TOKENS_PATH = "config/google-tokens";
+const SUBSCRIPTION_KV_PATH = resolveAppPath("webhooks/config/google-meet-subscription");
+const USER_ADDRESS_KV_PATH = resolveAppPath("webhooks/config/google-meet-user-address");
 const STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 const GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo";

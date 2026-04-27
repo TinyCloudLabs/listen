@@ -1,6 +1,6 @@
 import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
-import { ensureSchema } from "../schema.js";
+import { conversationSql, ensureSchema } from "../schema.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -51,13 +51,14 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
 
     try {
       await ensureSchema(access);
+      const sqlDb = conversationSql(access);
 
       // Total count — with optional source filter
       const countSql = source
         ? `SELECT COUNT(*) AS total FROM conversation WHERE source = ?`
         : `SELECT COUNT(*) AS total FROM conversation`;
       const countParams = source ? [source] : [];
-      const countResult = await access.sql.query(countSql, countParams);
+      const countResult = await sqlDb.query(countSql, countParams);
       let total = 0;
       if (countResult.ok && countResult.data.rows?.[0]) {
         const countRow = rowToObject(
@@ -81,7 +82,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
          ORDER BY c.started_at DESC
          LIMIT ? OFFSET ?`;
       const listParams = source ? [source, limit, offset] : [limit, offset];
-      const listResult = await access.sql.query(listSql, listParams);
+      const listResult = await sqlDb.query(listSql, listParams);
 
       const conversations = listResult.ok
         ? rowsToObjects(listResult.data.rows as unknown[][], listResult.data.columns)
@@ -102,9 +103,10 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
 
     try {
       await ensureSchema(access);
+      const sqlDb = conversationSql(access);
 
       // Fetch conversation
-      const convoResult = await access.sql.query(
+      const convoResult = await sqlDb.query(
         `SELECT id, title, source, source_id, source_url, started_at, ended_at, duration_secs, summary, metadata, created_at, updated_at
          FROM conversation WHERE id = ?`,
         [id],
@@ -128,7 +130,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
       const conversation = { ...row, metadata };
 
       // Fetch participants
-      const participantsResult = await access.sql.query(
+      const participantsResult = await sqlDb.query(
         `SELECT id, name, email, speaker_label FROM participant WHERE conversation_id = ?`,
         [id],
       );
@@ -140,7 +142,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         : [];
 
       // Load transcript blob from KV
-      const kvKey = `/app.conversations/transcript/${id}`;
+      const kvKey = `transcript/${id}`;
       console.log(`[conversations] Loading transcript from KV: ${kvKey}`);
       const kvResult = await access.kv.get(kvKey);
       console.log(

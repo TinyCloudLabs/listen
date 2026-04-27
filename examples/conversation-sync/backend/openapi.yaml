@@ -24,6 +24,25 @@ security:
 # ── Paths ───────────────────────────────────────────────────────────
 
 paths:
+  /api/manifest:
+    get:
+      operationId: getManifest
+      summary: Get runtime TinyCloud manifest
+      description: |
+        Returns the app manifest with the backend's live DID injected into the
+        manifest-declared backend delegation template. No auth required.
+      security: []
+      tags: [Server]
+      responses:
+        "200":
+          description: Runtime manifest
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Manifest"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
   /api/server-info:
     get:
       operationId: getServerInfo
@@ -393,6 +412,60 @@ components:
           description: "Backend DID (e.g. did:pkh:eip155:1:0x...)"
         status:
           type: string
+        name:
+          type: string
+        expiry:
+          type: string
+        permissions:
+          type: array
+          items:
+            $ref: "#/components/schemas/PermissionEntry"
+
+    Manifest:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        permissions:
+          type: array
+          items:
+            $ref: "#/components/schemas/PermissionEntry"
+        delegations:
+          type: array
+          items:
+            type: object
+            required: [to, permissions]
+            properties:
+              to:
+                type: string
+              name:
+                type: string
+              expiry:
+                type: string
+              permissions:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PermissionEntry"
+
+    PermissionEntry:
+      type: object
+      required: [service, space, path, actions]
+      properties:
+        service:
+          type: string
+        space:
+          type: string
+        path:
+          type: string
+        actions:
+          type: array
+          items:
+            type: string
 
     ApiError:
       type: object

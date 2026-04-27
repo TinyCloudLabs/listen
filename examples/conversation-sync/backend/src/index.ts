@@ -20,7 +20,9 @@ import {
 
 import { createAuthMiddleware } from "./middleware/auth.js";
 import { createDelegationMiddleware } from "./middleware/delegation.js";
+import { resolveAppPath } from "./manifest.js";
 import { createAuthRouter } from "./routes/auth.js";
+import { createManifestRouter } from "./routes/manifest.js";
 import { createServerInfoRouter } from "./routes/server-info.js";
 import { createDelegationRouter } from "./routes/delegations.js";
 import { createConfigRouter } from "./routes/config.js";
@@ -89,7 +91,7 @@ async function main() {
   } as any;
 
   // Resolve delegated access for webhook processing (single-user mode)
-  const WEBHOOK_USER_ADDRESS_PATH = "/app.webhooks/config/user-address";
+  const WEBHOOK_USER_ADDRESS_PATH = resolveAppPath("webhooks/config/user-address");
   const tryGetDelegatedAccess = async () => {
     const addrResult = await backendKV.get(WEBHOOK_USER_ADDRESS_PATH);
     const address =
@@ -158,7 +160,9 @@ async function main() {
   // Google Meet push endpoint — after JSON parsing, before CSRF (public, OIDC-verified)
   const pubSubConfig = parsePubSubConfig();
   if (pubSubConfig) {
-    const GOOGLE_MEET_USER_ADDRESS_PATH = "/app.webhooks/config/google-meet-user-address";
+    const GOOGLE_MEET_USER_ADDRESS_PATH = resolveAppPath(
+      "webhooks/config/google-meet-user-address",
+    );
     const tryGetGoogleMeetAccess = async () => {
       const addrResult = await backendKV.get(GOOGLE_MEET_USER_ADDRESS_PATH);
       const address =
@@ -222,6 +226,7 @@ async function main() {
   app.use(generalLimiter);
 
   // 7. Mount routes
+  app.use("/api/manifest", createManifestRouter(did));
   app.use("/api/server-info", createServerInfoRouter(did));
 
   app.use(

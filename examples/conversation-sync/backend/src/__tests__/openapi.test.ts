@@ -19,6 +19,7 @@ describe("OpenAPI spec", () => {
 
   test("contains all expected paths", () => {
     const paths = Object.keys(spec.paths as object);
+    expect(paths).toContain("/api/manifest");
     expect(paths).toContain("/api/server-info");
     expect(paths).toContain("/api/delegations");
     expect(paths).toContain("/api/delegations/status");
@@ -45,6 +46,8 @@ describe("OpenAPI spec", () => {
     const components = spec.components as Record<string, Record<string, unknown>>;
     const schemas = Object.keys(components.schemas as object);
     expect(schemas).toContain("DelegationResponse");
+    expect(schemas).toContain("Manifest");
+    expect(schemas).toContain("PermissionEntry");
     expect(schemas).toContain("ServerInfo");
     expect(schemas).toContain("ApiError");
     expect(schemas).toContain("WebhookProcessed");

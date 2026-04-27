@@ -5,6 +5,8 @@ import type { TinyCloudWeb, HookEvent } from "@tinycloud/web-sdk";
 
 interface LiveWriteEventsProps {
   tcw: TinyCloudWeb | null;
+  hooksHost: string;
+  pathPrefix: string | null;
   onWrite: () => void;
 }
 
@@ -14,7 +16,6 @@ const MAX_EVENTS = 20;
 
 // Scope we subscribe to: writes to the user's own conversations SQL space.
 const SUBSCRIPTION_SERVICE = "sql" as const;
-const SUBSCRIPTION_PATH_PREFIX = "conversations/conversation";
 const SUBSCRIPTION_ABILITIES = ["tinycloud.sql/write"];
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -68,9 +69,26 @@ function statusAccent(status: Status): string {
   }
 }
 
+async function hasHooksTicketEndpoint(host: string, signal: AbortSignal): Promise<boolean> {
+  const base = host.replace(/\/+$/, "");
+  const response = await fetch(`${base}/hooks/tickets`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ subscriptions: [] }),
+    signal,
+  });
+
+  return response.status !== 404;
+}
+
 // ── Component ────────────────────────────────────────────────────────
 
-export const LiveWriteEvents: FC<LiveWriteEventsProps> = ({ tcw, onWrite }) => {
+export const LiveWriteEvents: FC<LiveWriteEventsProps> = ({
+  tcw,
+  hooksHost,
+  pathPrefix,
+  onWrite,
+}) => {
   const [status, setStatus] = useState<Status>("idle");
   const [events, setEvents] = useState<HookEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -94,7 +112,7 @@ export const LiveWriteEvents: FC<LiveWriteEventsProps> = ({ tcw, onWrite }) => {
   // instance identity — signing out or re-signing-in produces a new tcw,
   // which tears down the old stream and starts a fresh one.
   useEffect(() => {
-    if (!tcw) {
+    if (!tcw || !pathPrefix) {
       setStatus("idle");
       setEvents([]);
       setError(null);
@@ -119,12 +137,19 @@ export const LiveWriteEvents: FC<LiveWriteEventsProps> = ({ tcw, onWrite }) => {
 
     (async () => {
       try {
+        const endpointAvailable = await hasHooksTicketEndpoint(hooksHost, ctrl.signal);
+        if (!endpointAvailable) {
+          setStatus("error");
+          setError("TinyCloud hooks are not available on this host");
+          return;
+        }
+
         const stream = tcw.hooks.subscribe(
           [
             {
               space,
               service: SUBSCRIPTION_SERVICE,
-              pathPrefix: SUBSCRIPTION_PATH_PREFIX,
+              pathPrefix,
               abilities: SUBSCRIPTION_ABILITIES,
             },
           ],
@@ -165,7 +190,7 @@ export const LiveWriteEvents: FC<LiveWriteEventsProps> = ({ tcw, onWrite }) => {
     };
     // We intentionally depend only on `tcw` identity. status/events are
     // updated from within and must not retrigger the subscribe loop.
-  }, [tcw]);
+  }, [tcw, hooksHost, pathPrefix]);
 
   // ── Render ──────────────────────────────────────────────────────────
 

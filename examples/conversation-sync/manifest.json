@@ -1,0 +1,32 @@
+{
+  "id": "com.tinycloud.conversation-sync",
+  "name": "Conversation Sync",
+  "description": "Sync Fireflies and Google Meet transcripts into a TinyCloud space.",
+  "permissions": [
+    {
+      "service": "tinycloud.hooks",
+      "space": "default",
+      "path": "sql/com.tinycloud.conversation-sync/conversations/conversation",
+      "actions": ["subscribe"],
+      "skipPrefix": true
+    }
+  ],
+  "backend": {
+    "name": "Conversation Sync Backend",
+    "expiry": "7d",
+    "permissions": [
+      {
+        "service": "tinycloud.kv",
+        "space": "default",
+        "path": "/",
+        "actions": ["get", "put", "del", "list", "metadata"]
+      },
+      {
+        "service": "tinycloud.sql",
+        "space": "default",
+        "path": "conversations",
+        "actions": ["read", "write"]
+      }
+    ]
+  }
+}

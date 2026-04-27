@@ -31,7 +31,7 @@ function createMockKV() {
 // ── Test Helpers ─────────────────────────────────────────────────────
 
 const TEST_SUB = "test-user-sub";
-const TOKENS_KV_PATH = "/app.conversations/config/google-tokens";
+const TOKENS_KV_PATH = "config/google-tokens";
 const TEST_CLIENT_ID = "test-client-id.apps.googleusercontent.com";
 
 function mockAuthMiddleware(req: Request, _res: Response, next: NextFunction) {

@@ -52,13 +52,12 @@ export async function createDelegation(
 /**
  * Manifest-driven delegation helper.
  *
- * Takes the list of permissions the backend advertised in
- * `/api/server-info` and calls `tcw.delegateTo` to issue a single
- * multi-resource UCAN covering all of them. When the requested caps
- * are a subset of the current session's recap (the normal case when
- * the manifest was installed at sign-in with the same backend
- * permissions), no wallet prompt is shown — `result.prompted` will
- * be `false`.
+ * Takes the backend permissions resolved from the app manifest and calls
+ * `tcw.delegateTo` to issue a single multi-resource UCAN covering all of
+ * them. When the requested caps are a subset of the current session's recap
+ * (the normal case when the manifest was installed at sign-in with the same
+ * backend delegation), no wallet prompt is shown — `result.prompted` will be
+ * `false`.
  *
  * Returns the serialized delegation ready for POST to the backend's
  * `/api/delegations` endpoint.

@@ -249,7 +249,7 @@ describe("syncSingleConference", () => {
     const result = await syncSingleConference(record, mockAccess as any, mockClient);
 
     expect(result.status).toBe("created");
-    const kvKey = `/app.conversations/transcript/${result.conversationId}`;
+    const kvKey = `transcript/${result.conversationId}`;
     const storedBlob = mockKV._data.get(kvKey);
     expect(storedBlob).toBeDefined();
 

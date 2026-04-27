@@ -4,7 +4,12 @@ export { connectWallet, type ConnectWalletConfig, type ConnectWalletResult } fro
 
 export { createTinyCloudWeb, createAndSignIn, type TinyCloudWebConfig } from "./tinycloud.js";
 
-export { loadAppManifest, composeManifestWithBackend } from "./manifest.js";
+export {
+  loadAppManifest,
+  composeManifestWithBackend,
+  resolveManifestDelegationPermissions,
+  resolveManifestPermissionPath,
+} from "./manifest.js";
 
 export {
   loadPersistedSession,

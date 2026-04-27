@@ -1,7 +1,7 @@
 import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
 import { FirefliesClient } from "../services/fireflies-client.js";
-import { ensureSchema } from "../schema.js";
+import { conversationSql, ensureSchema } from "../schema.js";
 import { persistFullTranscript } from "../services/sync-pipeline.js";
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -19,7 +19,7 @@ interface SyncRoutesConfig {
 
 // ── Constants ────────────────────────────────────────────────────────
 
-const FIREFLIES_KEY_PATH = "/app.conversations/config/fireflies-key";
+const FIREFLIES_KEY_PATH = "config/fireflies-key";
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
 const SYNC_DELAY_MS = 800;
@@ -63,6 +63,7 @@ export function createSyncRouter(config: SyncRoutesConfig) {
     try {
       // 3. Ensure schema exists
       await ensureSchema(access);
+      const sqlDb = conversationSql(access);
 
       const client = makeClient(apiKey);
 
@@ -88,7 +89,7 @@ export function createSyncRouter(config: SyncRoutesConfig) {
       const sourceIds = summaries.map((s) => s.id);
       const placeholders = sourceIds.map(() => "?").join(", ");
       const dedupQuery = `SELECT source_id FROM conversation WHERE source = 'fireflies' AND source_id IN (${placeholders})`;
-      const dedupResult = await access.sql.query(dedupQuery, sourceIds);
+      const dedupResult = await sqlDb.query(dedupQuery, sourceIds);
 
       const existingIds = new Set<string>();
       if (dedupResult.ok && dedupResult.data.rows) {
@@ -175,6 +176,7 @@ export function createSyncRouter(config: SyncRoutesConfig) {
       }
 
       await ensureSchema(access);
+      const sqlDb = conversationSql(access);
       const client = makeClient(apiKey);
 
       // 2. Parse mode
@@ -183,7 +185,7 @@ export function createSyncRouter(config: SyncRoutesConfig) {
       // 3. Collect existing source_ids for incremental dedup
       const knownIds = new Set<string>();
       if (mode === "incremental") {
-        const existingResult = await access.sql.query(
+        const existingResult = await sqlDb.query(
           "SELECT source_id FROM conversation WHERE source = 'fireflies'",
         );
         if (existingResult.ok && existingResult.data.rows) {
@@ -290,11 +292,12 @@ export function createSyncRouter(config: SyncRoutesConfig) {
 
     try {
       await ensureSchema(access);
+      const sqlDb = conversationSql(access);
 
       const client = makeClient(apiKey);
 
       // 2. Query for Fireflies conversations with NULL summary
-      const missingResult = await access.sql.query(
+      const missingResult = await sqlDb.query(
         `SELECT id, source_id FROM conversation WHERE source = 'fireflies' AND summary IS NULL`,
       );
 
@@ -327,10 +330,9 @@ export function createSyncRouter(config: SyncRoutesConfig) {
             const now = new Date().toISOString();
 
             // Update summary and merge keywords/meeting_type into existing metadata
-            const metaResult = await access.sql.query(
-              `SELECT metadata FROM conversation WHERE id = ?`,
-              [row.id],
-            );
+            const metaResult = await sqlDb.query(`SELECT metadata FROM conversation WHERE id = ?`, [
+              row.id,
+            ]);
             let metadata: Record<string, unknown> = {};
             if (metaResult.ok && metaResult.data.rows?.length) {
               const raw = Array.isArray(metaResult.data.rows[0])
@@ -347,7 +349,7 @@ export function createSyncRouter(config: SyncRoutesConfig) {
             metadata.keywords = keywords;
             metadata.meeting_type = meetingType;
 
-            await access.sql.execute(
+            await sqlDb.execute(
               `UPDATE conversation SET summary = ?, metadata = ?, updated_at = ? WHERE id = ?`,
               [overview, JSON.stringify(metadata), now, row.id],
             );
@@ -378,8 +380,9 @@ export function createSyncRouter(config: SyncRoutesConfig) {
     const access = req.delegatedAccess!;
     try {
       await ensureSchema(access);
-      await access.sql.execute(`DELETE FROM participant`);
-      await access.sql.execute(`DELETE FROM conversation`);
+      const sqlDb = conversationSql(access);
+      await sqlDb.execute(`DELETE FROM participant`);
+      await sqlDb.execute(`DELETE FROM conversation`);
       res.json({ ok: true, message: "All conversations cleared. Re-sync to repopulate." });
     } catch (err) {
       console.error("[sync] clear failed:", err);

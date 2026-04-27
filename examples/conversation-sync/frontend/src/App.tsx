@@ -7,11 +7,14 @@ import {
   verifySession,
   createAndSignIn,
   createApiClient,
-  createDelegation,
+  createManifestDelegation,
   sendDelegation,
   checkDelegationStatus,
   revokeDelegation,
   SessionStore,
+  loadAppManifest,
+  resolveManifestDelegationPermissions,
+  resolveManifestPermissionPath,
   type ApiClient,
 } from "@tinyboilerplate/client";
 
@@ -28,6 +31,7 @@ const OPENKEY_HOST = import.meta.env.VITE_OPENKEY_HOST || "https://openkey.so";
 const TINYCLOUD_HOST = import.meta.env.VITE_TINYCLOUD_HOST || "https://node.tinycloud.xyz";
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+const ENABLE_TINYCLOUD_HOOKS = import.meta.env.VITE_ENABLE_TINYCLOUD_HOOKS === "true";
 
 // ── App ─────────────────────────────────────────────────────────────
 
@@ -44,6 +48,7 @@ export function App() {
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [pendingBanner, setPendingBanner] = useState<string | null>(null);
   const [gmLapsedBanner, setGmLapsedBanner] = useState(false);
+  const [liveWritePathPrefix, setLiveWritePathPrefix] = useState<string | null>(null);
 
   const sessionStoreRef = useRef(new SessionStore());
   const restoreAttemptedRef = useRef(false);
@@ -168,11 +173,24 @@ export function App() {
     setAuthError(null);
     try {
       const { address: addr, web3Provider } = await connectWallet({ host: OPENKEY_HOST });
-      const nonce = await requestNonce(BACKEND_URL, addr);
+      const [nonce, info] = await Promise.all([
+        requestNonce(BACKEND_URL, addr),
+        (async (): Promise<ServerInfo> => {
+          const res = await fetch(`${BACKEND_URL}/api/server-info`);
+          if (!res.ok) throw new Error(`Server info: ${res.statusText}`);
+          return res.json();
+        })(),
+      ]);
+      const appManifest = await loadAppManifest(`${BACKEND_URL}/api/manifest`);
+      const conversationEventPathPrefix = ENABLE_TINYCLOUD_HOOKS
+        ? resolveManifestPermissionPath(appManifest, "tinycloud.sql", "conversations/conversation")
+        : null;
+
       const { tcw: tcwInstance, session } = await createAndSignIn(web3Provider, {
         nonce,
         tinycloudHosts: [TINYCLOUD_HOST],
         autoCreateSpace: true,
+        manifest: appManifest,
       });
       const { token, expiresIn } = await verifySession(
         BACKEND_URL,
@@ -183,15 +201,22 @@ export function App() {
       const apiClient = createApiClient(BACKEND_URL, {
         sessionStore: sessionStoreRef.current,
       });
-      const infoRes = await fetch(`${BACKEND_URL}/api/server-info`);
-      if (!infoRes.ok) throw new Error(`Server info: ${infoRes.statusText}`);
-      const info: ServerInfo = await infoRes.json();
-      const serialized = await createDelegation(tcwInstance, info.did);
+
+      const backendPermissions = resolveManifestDelegationPermissions(appManifest, info.did);
+      if (backendPermissions.length === 0) {
+        throw new Error("Manifest did not declare a delegation for this backend");
+      }
+      const { serialized } = await createManifestDelegation(
+        tcwInstance,
+        info.did,
+        backendPermissions,
+      );
       await sendDelegation(BACKEND_URL, serialized, token);
       setAddress(addr);
       setDid(tcwInstance.did ?? null);
       setTcw(tcwInstance);
       setApi(apiClient);
+      setLiveWritePathPrefix(conversationEventPathPrefix);
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -208,6 +233,7 @@ export function App() {
     setDid(null);
     setTcw(null);
     setApi(null);
+    setLiveWritePathPrefix(null);
     setAuthError(null);
     setHasKey(null);
     setHasGoogleMeet(null);
@@ -306,7 +332,14 @@ export function App() {
               hasFireflies={hasKey === true}
               hasGoogleMeet={hasGoogleMeet === true}
             />
-            <LiveWriteEvents tcw={tcw} onWrite={() => setRefreshKey((k) => k + 1)} />
+            {ENABLE_TINYCLOUD_HOOKS && (
+              <LiveWriteEvents
+                tcw={tcw}
+                hooksHost={TINYCLOUD_HOST}
+                pathPrefix={liveWritePathPrefix}
+                onWrite={() => setRefreshKey((k) => k + 1)}
+              />
+            )}
             <ConversationList
               api={api}
               onSelectConversation={setSelectedConversationId}

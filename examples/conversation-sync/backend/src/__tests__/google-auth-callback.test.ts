@@ -32,9 +32,11 @@ function createMockKV() {
 // ── Test Helpers ─────────────────────────────────────────────────────
 
 const TEST_ADDRESS = "0xtest-user-address";
-const TOKENS_KV_PATH = "/app.conversations/config/google-tokens";
-const SUBSCRIPTION_KV_PATH = "/app.webhooks/config/google-meet-subscription";
-const USER_ADDRESS_KV_PATH = "/app.webhooks/config/google-meet-user-address";
+const TOKENS_KV_PATH = "config/google-tokens";
+const SUBSCRIPTION_KV_PATH =
+  "com.tinycloud.conversation-sync/webhooks/config/google-meet-subscription";
+const USER_ADDRESS_KV_PATH =
+  "com.tinycloud.conversation-sync/webhooks/config/google-meet-user-address";
 
 const TEST_GOOGLE_USER_ID = "google-user-12345";
 

@@ -159,7 +159,7 @@ function createMockGoogleMeetClientFactory() {
 
 // ── Test Helpers ─────────────────────────────────────────────────────
 
-const GOOGLE_TOKENS_PATH = "/app.conversations/config/google-tokens";
+const GOOGLE_TOKENS_PATH = "config/google-tokens";
 const TEST_TOKENS = JSON.stringify({
   access_token: "test-access-token",
   refresh_token: "test-refresh-token",

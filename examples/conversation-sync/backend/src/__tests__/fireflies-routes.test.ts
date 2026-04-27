@@ -51,7 +51,7 @@ function createMockClientFactory() {
 // ── Test Helpers ─────────────────────────────────────────────────────
 
 const TEST_SUB = "test-sub";
-const KV_KEY = "/app.conversations/config/fireflies-key";
+const KV_KEY = "config/fireflies-key";
 
 function mockAuthMiddleware(req: Request, _res: Response, next: NextFunction) {
   req.user = { sub: TEST_SUB };

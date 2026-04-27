@@ -137,7 +137,7 @@ describe("persistConversation", () => {
 
     await persistConversation(mockAccess as any, normalized);
 
-    const kvKey = `/app.conversations/transcript/conv-123`;
+    const kvKey = `transcript/conv-123`;
     const stored = mockKV._data.get(kvKey);
     expect(stored).toBeDefined();
 

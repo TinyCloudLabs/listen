@@ -542,6 +542,7 @@
           <a href="#sign-in">Sign-in</a>
           <a href="#data">Data paths</a>
           <a href="#states">States</a>
+          <a href="#listen">Listen</a>
           <a href="#customize">Customize</a>
         </nav>
       </div>
@@ -554,10 +555,12 @@
           <h1>How the boilerplate turns one wallet approval into authenticated app access.</h1>
           <p class="lede">
             This worktree is a Bun monorepo for TinyCloud + OpenKey apps. The current branch adds a
-            manifest-driven capability chain: the frontend composes the app manifest with
-            backend-advertised permissions, signs in once, then issues the backend delegation from
-            the session key. The flow is verified against TinyCloud SDK 2.1.0, where session-key
-            UCAN delegation activation uses the raw UCAN header expected by the TinyCloud host.
+            manifest-driven capability chain: one manifest file defines the app namespace, default
+            capabilities, and backend delegation template. The backend serves a runtime manifest
+            with its DID injected, the frontend signs in once, then issues the backend delegation
+            from the session key. The flow is verified against TinyCloud SDK 2.1.0, where
+            session-key UCAN delegation activation uses the raw UCAN header expected by the
+            TinyCloud host.
           </p>
           <div class="summary-list" aria-label="Summary">
             <div class="summary-item">
@@ -577,9 +580,9 @@
             <div class="summary-item">
               <b>Delegation</b>
               <span
-                >The backend advertises what it needs through <code>/api/server-info</code>; the
-                client appends that as a manifest delegation before sign-in and activates the
-                resulting UCAN without a <code>Bearer</code> prefix.</span
+                >The backend serves <code>/api/manifest</code> from the single manifest file,
+                inserting its live DID before sign-in. The resulting UCAN is activated without a
+                <code>Bearer</code> prefix.</span
               >
             </div>
           </div>
@@ -598,7 +601,14 @@
             </div>
             <div class="fact">
               <b>Manifest</b>
-              <span><code>examples/react-express/frontend/public/manifest.json</code></span>
+              <span><code>examples/conversation-sync/manifest.json</code></span>
+            </div>
+            <div class="fact">
+              <b>Listen flow</b>
+              <span
+                >Fireflies and Google Meet setup write through the backend into user TinyCloud
+                storage.</span
+              >
             </div>
             <div class="fact">
               <b>SDK</b>
@@ -672,8 +682,8 @@
   Core["@tinyboilerplate/core<br/>types, constants"]
   Client["@tinyboilerplate/client<br/>browser helpers"]
   Server["@tinyboilerplate/server<br/>backend helpers"]
-  Frontend["examples/react-express/frontend<br/>React + Vite"]
-  Backend["examples/react-express/backend<br/>Express + Bun"]
+  Frontend["examples/conversation-sync/frontend<br/>React + Vite"]
+  Backend["examples/conversation-sync/backend<br/>Express + Bun"]
   TinyCloud["TinyCloud<br/>KV, SQL, DuckDB"]
   OpenKey["OpenKey<br/>wallet auth"]
 
@@ -697,9 +707,8 @@
           </div>
           <p>
             The React app does not sign in first and ask for backend powers later. It fetches the
-            backend's DID and permission list up front, appends that as a manifest delegation, and
-            passes the composed manifest into
-            <code>createAndSignIn</code>.
+            backend runtime manifest, which already contains the backend delegation with the live
+            DID inserted, and passes that manifest into <code>createAndSignIn</code>.
           </p>
         </div>
 
@@ -724,9 +733,10 @@ sequenceDiagram
   ClientSDK-->>Browser: address + web3 provider
   Browser->>Backend: GET /api/auth/nonce?address
   Browser->>Backend: GET /api/server-info
-  Backend-->>Browser: nonce + DID + backend permissions
-  Browser->>ClientSDK: loadAppManifest("/manifest.json")
-  Browser->>ClientSDK: composeManifestWithBackend(manifest, info)
+  Browser->>Backend: GET /api/manifest
+  Backend-->>Browser: nonce + DID + runtime manifest
+  Browser->>ClientSDK: loadAppManifest(BACKEND_URL + "/api/manifest")
+  Browser->>ClientSDK: resolveManifestDelegationPermissions(manifest, info.did)
   Browser->>TCSDK: createAndSignIn(provider, nonce, manifest)
   TCSDK->>Wallet: SIWE prompt with app and backend capabilities
   Wallet-->>TCSDK: signature
@@ -739,7 +749,7 @@ sequenceDiagram
   TinyCloud-->>TCSDK: UCAN activated
   TCSDK-->>ClientSDK: serialized delegation + prompted=false
   Browser->>Backend: POST /api/delegations
-  Backend->>TinyCloud: node.useDelegation(serialized)
+  Backend->>TinyCloud: node.useDelegation(serialized resources)
   TinyCloud-->>Backend: DelegatedAccess
   Backend-->>Browser: delegation status active</pre
             >
@@ -751,19 +761,20 @@ sequenceDiagram
             <span class="tag teal">Frontend</span>
             <h3>What the app contributes</h3>
             <p>
-              The static manifest declares the app's own TinyCloud resources. In this branch,
-              <code>examples/react-express/frontend/public/manifest.json</code>
-              grants KV, SQL, DuckDB, and capability-read access over the default space with an
-              empty path scope.
+              <code>examples/conversation-sync/manifest.json</code> declares the app id, extra app
+              runtime permissions, and a backend delegation template. It omits
+              <code>prefix</code> and <code>defaults</code>, so the SDK uses the normal defaults:
+              prefix equals the manifest id and defaults are enabled.
             </p>
           </article>
           <article class="card">
             <span class="tag blue">Backend</span>
             <h3>What the server advertises</h3>
             <p>
-              <code>GET /api/server-info</code> returns the backend DID, display name,
-              <code>7d</code> delegation expiry, and the KV + SQL permissions needed by
-              authenticated data routes.
+              <code>GET /api/manifest</code> returns a runtime manifest with the backend DID
+              inserted into the file's backend delegation template.
+              <code>GET /api/server-info</code>
+              remains a lightweight discovery endpoint for the DID and status.
             </p>
           </article>
         </div>
@@ -774,7 +785,9 @@ sequenceDiagram
           <code>tcw.delegateTo</code> can produce the backend delegation without asking the wallet
           again. The UCAN activation request must send the serialized UCAN as the raw
           <code>Authorization</code> value; adding <code>Bearer </code> makes the host parse a
-          non-UCAN string and reject the activation.
+          non-UCAN string and reject the activation. Live write-event hooks are declared in the
+          manifest but remain disabled unless <code>VITE_ENABLE_TINYCLOUD_HOOKS=true</code>, because
+          the selected node must advertise and serve the hooks ticket endpoint.
         </div>
       </section>
 
@@ -901,8 +914,8 @@ stateDiagram-v2
   ExistingToken --> Restored: token valid and delegation active
   ExistingToken --> NoSession: token expired or delegation missing
   NoSession --> WalletConnected: connectWallet
-  WalletConnected --> ManifestComposed: nonce + server-info + manifest
-  ManifestComposed --> TinyCloudSignedIn: createAndSignIn
+  WalletConnected --> RuntimeManifest: nonce + server-info + /api/manifest
+  RuntimeManifest --> TinyCloudSignedIn: createAndSignIn
   TinyCloudSignedIn --> BackendVerified: POST /api/auth/verify
   BackendVerified --> UcanActivated: delegateTo raw UCAN
   UcanActivated --> BackendDelegated: POST /api/delegations
@@ -938,6 +951,173 @@ stateDiagram-v2
         </div>
       </section>
 
+      <section id="listen">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Listen conversation sync</p>
+            <h2>Frontend setup writes secrets through the backend, not into defaults.</h2>
+          </div>
+          <p>
+            Listen runs from <code>examples/conversation-sync</code>. The frontend must be served
+            from <code>https://localhost:5173</code> for OpenKey/passkeys, while the local backend
+            stays on <code>http://localhost:3001</code>. Fireflies keys are never bundled into the
+            app or defaulted in code; the user enters the key in the setup form, and the backend
+            stores it in that user's TinyCloud KV via delegated access.
+          </p>
+        </div>
+
+        <div class="diagram-card">
+          <div class="diagram-title">
+            <h3>Fireflies key setup</h3>
+            <span>Sequence diagram</span>
+          </div>
+          <div class="diagram" data-mermaid>
+            <pre>
+sequenceDiagram
+  participant User
+  participant UI as Listen frontend
+  participant Backend as Listen backend
+  participant TinyCloud
+  participant Fireflies
+
+  User->>UI: Paste Fireflies API key
+  UI->>Backend: PUT /api/config/fireflies-key
+  Backend->>TinyCloud: delegatedAccess.kv.put("config/fireflies-key")
+  TinyCloud-->>Backend: write result
+  Backend->>TinyCloud: delegatedAccess.kv.get("config/fireflies-key")
+  TinyCloud-->>Backend: readback result
+  Backend->>Fireflies: GetUser query with stored key
+  Fireflies-->>Backend: user profile
+  Backend-->>UI: key verified
+  UI-->>User: Connected as account</pre
+            >
+          </div>
+        </div>
+
+        <div class="two-col" style="margin-top: 14px">
+          <div class="diagram-card">
+            <div class="diagram-title">
+              <h3>Transcript sync write path</h3>
+              <span>Sequence diagram</span>
+            </div>
+            <div class="diagram" data-mermaid>
+              <pre>
+sequenceDiagram
+  participant UI as Listen frontend
+  participant Backend
+  participant TinyCloud
+  participant Fireflies
+
+  UI->>Backend: POST /api/sync/fireflies
+  Backend->>TinyCloud: KV get config/fireflies-key
+  TinyCloud-->>Backend: Fireflies key
+  Backend->>Fireflies: List transcripts
+  Fireflies-->>Backend: transcript summaries and content
+  Backend->>TinyCloud: SQL db("com.tinycloud.conversation-sync/conversations") SELECT source_id
+  TinyCloud-->>Backend: existing transcript ids
+  Backend->>TinyCloud: SQL db("com.tinycloud.conversation-sync/conversations") INSERT conversation rows
+  Backend->>TinyCloud: SQL db("com.tinycloud.conversation-sync/conversations") INSERT participant rows
+  Backend->>TinyCloud: KV put transcript/{id}
+  Backend-->>UI: synced, skipped, failed counts</pre
+              >
+            </div>
+          </div>
+
+          <div class="diagram-card">
+            <div class="diagram-title">
+              <h3>Listen setup and sync states</h3>
+              <span>State diagram</span>
+            </div>
+            <div class="diagram" data-mermaid>
+              <pre>
+stateDiagram-v2
+  [*] --> SignedOut
+  SignedOut --> SignedIn: OpenKey passkey over HTTPS
+  SignedIn --> Delegated: backend delegation active
+  Delegated --> NoFirefliesKey: key missing in user KV
+  NoFirefliesKey --> SetupForm: Connect Fireflies
+  SetupForm --> Verifying: Save and Verify
+  Verifying --> NoFirefliesKey: KV write or Fireflies verify fails
+  Verifying --> FirefliesConnected: key stored in user KV
+  FirefliesConnected --> Syncing: Sync Fireflies
+  Syncing --> FirefliesConnected: success or handled partial errors
+  FirefliesConnected --> NoFirefliesKey: Disconnect Fireflies
+  Delegated --> GoogleMeetConnected: Google OAuth tokens stored in user KV
+  GoogleMeetConnected --> Syncing: Sync Google Meet</pre
+              >
+            </div>
+          </div>
+        </div>
+
+        <div class="two-col" style="margin-top: 14px">
+          <article class="card">
+            <span class="tag teal">Capabilities</span>
+            <h3>Backend permissions are exact</h3>
+            <p>
+              The manifest backend template asks for user KV at <code>/</code> and user SQL database
+              <code>conversations</code>. After manifest resolution those become
+              <code>com.tinycloud.conversation-sync/</code> and
+              <code>com.tinycloud.conversation-sync/conversations</code>. Conversation routes use
+              <code>conversationSql(access)</code>, which calls
+              <code>access.sql.db("com.tinycloud.conversation-sync/conversations")</code> instead of
+              the SDK shortcut database named <code>default</code>.
+            </p>
+          </article>
+          <article class="card">
+            <span class="tag blue">SDK chain</span>
+            <h3>Backend activation keeps every resource</h3>
+            <p>
+              The browser sends one multi-resource delegation. The node SDK must derive the
+              backend's active session from <code>PortableDelegation.resources</code>, not just the
+              flat first <code>path</code> and <code>actions</code>, or SQL permissions are dropped.
+            </p>
+          </article>
+          <article class="card">
+            <span class="tag amber">No default secrets</span>
+            <h3>Secrets stay user-scoped</h3>
+            <p>
+              The Fireflies API key is not an environment default and is not in
+              <code>manifest.json</code>. The only persistent copy is the user's TinyCloud KV value
+              at <code>config/fireflies-key</code>, written by the backend after the frontend
+              submits the setup form.
+            </p>
+          </article>
+          <article class="card">
+            <span class="tag teal">Live hooks</span>
+            <h3>Hooks are host-dependent</h3>
+            <p>
+              The runtime hook grant targets
+              <code>hooks/sql/com.tinycloud.conversation-sync/conversations/conversation</code>. The
+              frontend only mounts the live event stream when the hooks flag is enabled, and it
+              checks <code>POST /hooks/tickets</code> before subscribing so unsupported hosts do not
+              loop on ticket requests.
+            </p>
+          </article>
+        </div>
+
+        <div class="diagram-card" style="margin-top: 14px">
+          <div class="diagram-title">
+            <h3>Listen capability states</h3>
+            <span>State diagram</span>
+          </div>
+          <div class="diagram" data-mermaid>
+            <pre>
+stateDiagram-v2
+  [*] --> ManifestLoaded
+  ManifestLoaded --> RuntimeManifest: backend DID injected
+  RuntimeManifest --> SessionGranted: SIWE includes app and backend recap
+  SessionGranted --> BackendDelegated: tcw.delegateTo(info.did, permissions)
+  BackendDelegated --> BackendActivated: node-sdk rehydrates all resources
+  BackendActivated --> KVConfig: tinycloud.kv path /
+  BackendActivated --> SQLConversations: tinycloud.sql path com.tinycloud.conversation-sync/conversations
+  KVConfig --> StoreFirefliesKey: put config/fireflies-key
+  SQLConversations --> StoreConversationRows: query and execute on db com.tinycloud.conversation-sync/conversations
+  KVConfig --> StoreTranscriptBlob: put transcript/{id}</pre
+            >
+          </div>
+        </div>
+      </section>
+
       <section id="customize">
         <div class="section-head">
           <div>
@@ -962,19 +1142,19 @@ stateDiagram-v2
           </li>
           <li>
             <div>
-              <b>Declare app capabilities in the frontend manifest.</b>
+              <b>Declare app and backend capabilities in the single manifest.</b>
               <span
-                >Use service, space, path, action, and expiry entries that match what the app needs
-                during its session.</span
+                >Use app-relative service, space, path, action, and expiry entries. Let the SDK
+                apply the manifest id prefix.</span
               >
             </div>
           </li>
           <li>
             <div>
-              <b>Advertise backend needs through <code>/api/server-info</code>.</b>
+              <b>Serve the runtime manifest through <code>/api/manifest</code>.</b>
               <span
-                >The client composes this response into the manifest before sign-in, so these
-                permissions must match the routes.</span
+                >The backend reads the manifest file, injects its DID into the backend delegation
+                template, and returns a normal TinyCloud manifest for sign-in.</span
               >
             </div>
           </li>
@@ -1028,8 +1208,8 @@ stateDiagram-v2
               </li>
               <li>
                 <code
-                  ><a href="examples/react-express/frontend/src/App.tsx"
-                    >examples/react-express/frontend/src/App.tsx</a
+                  ><a href="examples/conversation-sync/frontend/src/App.tsx"
+                    >examples/conversation-sync/frontend/src/App.tsx</a
                   ></code
                 ><span>full sign-in orchestration</span>
               </li>
@@ -1044,28 +1224,28 @@ stateDiagram-v2
             <ul class="path-list">
               <li>
                 <code
-                  ><a href="examples/react-express/backend/src/routes/server-info.ts"
+                  ><a href="examples/conversation-sync/backend/src/routes/server-info.ts"
                     >routes/server-info.ts</a
                   ></code
                 ><span>backend DID and permissions</span>
               </li>
               <li>
                 <code
-                  ><a href="examples/react-express/backend/src/routes/auth.ts"
+                  ><a href="examples/conversation-sync/backend/src/routes/auth.ts"
                     >routes/auth.ts</a
                   ></code
                 ><span>nonce and SIWE verification</span>
               </li>
               <li>
                 <code
-                  ><a href="examples/react-express/backend/src/routes/delegations.ts"
+                  ><a href="examples/conversation-sync/backend/src/routes/delegations.ts"
                     >routes/delegations.ts</a
                   ></code
                 ><span>store and activate delegation</span>
               </li>
               <li>
                 <code
-                  ><a href="examples/react-express/backend/src/middleware/delegation.ts"
+                  ><a href="examples/conversation-sync/backend/src/middleware/delegation.ts"
                     >middleware/delegation.ts</a
                   ></code
                 ><span>cache miss and delegated access</span>
@@ -1079,7 +1259,7 @@ stateDiagram-v2
 bun install
 bun run build
 bun run generate-key
-cp examples/react-express/.env.example examples/react-express/.env
+cp examples/conversation-sync/.env.example examples/conversation-sync/.env
 bun run dev</pre
         >
       </section>

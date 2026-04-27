@@ -3,7 +3,7 @@ import type { Request, Response, RequestHandler } from "express";
 import { GoogleMeetClient } from "../services/google-meet-client.js";
 import type { ConferenceRecord } from "../services/google-meet-client.js";
 import { GoogleAuthRevokedError } from "../services/google-auth.js";
-import { ensureSchema } from "../schema.js";
+import { conversationSql, ensureSchema } from "../schema.js";
 import { syncSingleConference } from "../services/google-meet-sync.js";
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -23,7 +23,7 @@ interface GoogleMeetSyncRoutesConfig {
 
 // ── Constants ────────────────────────────────────────────────────────
 
-const GOOGLE_TOKENS_PATH = "/app.conversations/config/google-tokens";
+const GOOGLE_TOKENS_PATH = "config/google-tokens";
 const DEFAULT_SYNC_DELAY_MS = 200;
 
 function sleep(ms: number): Promise<void> {
@@ -111,6 +111,7 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
 
     try {
       await ensureSchema(access);
+      const sqlDb = conversationSql(access);
 
       const client = createClientWithTokenRefresh(tokens, access, makeClient);
 
@@ -126,7 +127,7 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
       const sourceIds = conferences.map((c) => c.name);
       const placeholders = sourceIds.map(() => "?").join(", ");
       const dedupQuery = `SELECT source_id FROM conversation WHERE source = 'google-meet' AND source_id IN (${placeholders})`;
-      const dedupResult = await access.sql.query(dedupQuery, sourceIds);
+      const dedupResult = await sqlDb.query(dedupQuery, sourceIds);
 
       const existingIds = new Set<string>();
       if (dedupResult.ok && dedupResult.data.rows) {
@@ -215,6 +216,7 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
       console.log("[google-meet-sync] tokens loaded, has refresh_token:", !!tokens.refresh_token);
 
       await ensureSchema(access);
+      const sqlDb = conversationSql(access);
       const client = createClientWithTokenRefresh(tokens, access, makeClient);
 
       sendEvent("status", { phase: "listing", message: "Fetching conference list..." });
@@ -228,7 +230,7 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
 
       // 3. Collect existing source_ids for dedup
       const knownIds = new Set<string>();
-      const existingResult = await access.sql.query(
+      const existingResult = await sqlDb.query(
         "SELECT source_id FROM conversation WHERE source = 'google-meet'",
       );
       if (existingResult.ok && existingResult.data.rows) {
@@ -309,11 +311,12 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
     const access = req.delegatedAccess!;
     try {
       await ensureSchema(access);
+      const sqlDb = conversationSql(access);
       // Delete participants for google-meet conversations, then conversations
-      await access.sql.execute(
+      await sqlDb.execute(
         `DELETE FROM participant WHERE conversation_id IN (SELECT id FROM conversation WHERE source = 'google-meet')`,
       );
-      await access.sql.execute(`DELETE FROM conversation WHERE source = 'google-meet'`);
+      await sqlDb.execute(`DELETE FROM conversation WHERE source = 'google-meet'`);
       res.json({ ok: true, message: "All Google Meet conversations cleared." });
     } catch (err) {
       console.error("[sync] google-meet purge failed:", err);

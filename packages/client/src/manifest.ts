@@ -1,11 +1,12 @@
-import { loadManifest, type Manifest } from "@tinycloud/web-sdk";
-import type { ServerInfo } from "@tinyboilerplate/core";
+import { loadManifest, resolveManifest, type Manifest } from "@tinycloud/web-sdk";
+import type { ServerInfo, ServerInfoPermission } from "@tinyboilerplate/core";
 
 // ── Manifest Loading ──────────────────────────────────────────────────
 
 /**
- * Fetch and validate the app's `manifest.json` from the app's own
- * public directory (e.g. `/manifest.json`).
+ * Fetch and validate the app's manifest from a URL. Apps can serve this
+ * from their frontend public directory or from a backend endpoint that
+ * injects runtime delegation targets.
  *
  * This is a thin re-export of the SDK's {@link loadManifest} so
  * consumers don't need to pull `@tinycloud/web-sdk` directly just
@@ -59,4 +60,58 @@ export function composeManifestWithBackend(appManifest: Manifest, info: ServerIn
       },
     ],
   };
+}
+
+/**
+ * Return the fully resolved permissions for a manifest-declared backend
+ * delegation. Use this output for `delegateTo` after sign-in: it has the
+ * manifest prefix applied and short actions expanded to full action URNs,
+ * matching the SIWE recap the wallet signed.
+ */
+export function resolveManifestDelegationPermissions(
+  manifest: Manifest,
+  backendDid: string,
+): ServerInfoPermission[] {
+  const resolved = resolveManifest(manifest);
+  const delegate = resolved.additionalDelegates.find((entry) => entry.did === backendDid);
+  if (!delegate) return [];
+
+  return delegate.permissions.map((permission) => ({
+    service: permission.service,
+    space: permission.space,
+    path: permission.path,
+    actions: [...permission.actions],
+  }));
+}
+
+/**
+ * Resolve one app-relative path with the manifest's prefix rules. This is
+ * useful for frontend code that needs to subscribe to or display a runtime
+ * path that matches the manifest namespace.
+ */
+export function resolveManifestPermissionPath(
+  manifest: Manifest,
+  service: string,
+  path: string,
+  actions: string[] = ["read"],
+): string {
+  const resolved = resolveManifest({
+    ...manifest,
+    defaults: false,
+    permissions: [
+      {
+        service,
+        space: "default",
+        path,
+        actions,
+      },
+    ],
+    delegations: undefined,
+  }).resources[0];
+
+  if (!resolved) {
+    throw new Error(`Failed to resolve manifest path: ${path}`);
+  }
+
+  return resolved.path;
 }

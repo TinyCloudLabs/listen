@@ -14,12 +14,12 @@ function createMockAccess() {
 
 // ── Tests ────────────────────────────────────────────────────────────
 
-import { ensureSchema, DATABASE_NAME } from "../schema.js";
+import { conversationSql, ensureSchema, DATABASE_NAME } from "../schema.js";
 
 describe("schema", () => {
   describe("DATABASE_NAME", () => {
-    it("exports 'conversations' as the database name", () => {
-      expect(DATABASE_NAME).toBe("conversations");
+    it("exports the manifest-prefixed conversations database name", () => {
+      expect(DATABASE_NAME).toBe("com.tinycloud.conversation-sync/conversations");
     });
   });
 
@@ -53,6 +53,24 @@ describe("schema", () => {
       expect(calls.length).toBe(2);
       expect(calls[0][0]).toContain("CREATE TABLE IF NOT EXISTS conversation");
       expect(calls[1][0]).toContain("CREATE TABLE IF NOT EXISTS participant");
+    });
+
+    it("uses the named conversations database when a db handle is available", async () => {
+      const dbHandle = {
+        execute: mock(async (_sql: string) => ({ ok: true })),
+        query: mock(async () => ({ ok: true, data: { rows: [], columns: [] } })),
+      };
+      access.sql.db = mock((name: string) => {
+        expect(name).toBe(DATABASE_NAME);
+        return dbHandle;
+      });
+
+      expect(conversationSql(access)).toBe(dbHandle);
+      await ensureSchema(access);
+
+      expect(access.sql.db).toHaveBeenCalled();
+      expect(dbHandle.execute.mock.calls.length).toBe(2);
+      expect(access.sql.execute.mock.calls.length).toBe(0);
     });
 
     it("no-ops on subsequent calls with the same access", async () => {

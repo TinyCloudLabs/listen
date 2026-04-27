@@ -2,6 +2,7 @@ import type { DelegatedAccess } from "@tinyboilerplate/server";
 import type { FirefliesClient, FullTranscript } from "./fireflies-client.js";
 import { normalizeFireflies } from "../adapters/fireflies.js";
 import { persistConversation } from "./persist-conversation.js";
+import { conversationSql } from "../schema.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -54,8 +55,10 @@ export async function syncSingleTranscript(
   firefliesClient: Pick<FirefliesClient, "getTranscript">,
 ): Promise<SyncSingleResult> {
   try {
+    const sqlDb = conversationSql(access);
+
     // 1. Check if source_id already exists in SQL
-    const dedupResult = await access.sql.query(
+    const dedupResult = await sqlDb.query(
       `SELECT source_id FROM conversation WHERE source = 'fireflies' AND source_id = ?`,
       [meetingId],
     );
