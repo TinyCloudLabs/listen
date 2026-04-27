@@ -1,0 +1,12 @@
+{
+  "name": "tinyboilerplate-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup": "bun setup-passkey.ts",
+    "signin": "bun run-signin.ts"
+  },
+  "dependencies": {
+    "playwright": "^1.50.0"
+  }
+}
