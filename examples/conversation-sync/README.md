@@ -6,7 +6,7 @@ Sync meeting transcripts from Fireflies.ai into your TinyCloud space. Server-orc
 - OAuth PKCE sign-in via OpenKey (popup mode)
 - TinyCloud session creation + space auto-provisioning
 - Scoped delegation from user to backend
-- A single app manifest that drives frontend sign-in, backend delegation scope, and app namespace
+- A single app manifest that describes the app/data surface and drives frontend sign-in
 - JWT-authenticated API with delegation-based authorization
 - Server-side sync with external API (Fireflies)
 - SQL + KV hybrid storage in user's TinyCloud space
@@ -77,14 +77,16 @@ bun run dev:backend    # Just the backend (http://localhost:3001)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/manifest` | Returns the runtime manifest with the backend DID injected into the manifest-defined delegation |
-| GET | `/api/server-info` | Returns backend DID, display name, expiry, and manifest-derived TinyCloud KV + SQL permissions |
+| GET | `/api/manifest` | Returns the user-facing TinyCloud manifest |
+| GET | `/api/server-info` | Returns backend DID, display name, expiry, and app-logic TinyCloud KV + SQL permissions |
 
-The single source of truth is `examples/conversation-sync/manifest.json`. It omits `prefix` and `defaults`, so the SDK uses the normal defaults: `prefix` is the manifest `id`, and `defaults` is `true`. The backend reads the same file, serves `/api/manifest`, and injects its live DID into the manifest's `backend` delegation template.
+The app manifest is `examples/conversation-sync/manifest.json`. It declares `manifest_version: 1`, the `app_id`/name/description, `defaults: true`, and the additional hooks permission used for optional live updates. The manifest has no backend-only section: it is the app/data contract a user or agent can inspect.
 
-The backend delegation template stays app-relative: KV `/` and SQL `conversations`. At sign-in those resolve to `com.tinycloud.conversation-sync/` and `com.tinycloud.conversation-sync/conversations`. Runtime SQL queries go through `conversationSql(access)`, which calls `access.sql.db("com.tinycloud.conversation-sync/conversations")` instead of the SDK default database named `default`.
+Backend delegation is app logic exposed by `/api/server-info`. The backend asks for app-relative KV `/` and SQL `conversations`; the frontend turns that into a backend delegate manifest, composes it with the app manifest, and signs one capability request. After sign-in, it calls `materializeDelegation()` to create the backend UCAN with no second wallet prompt. Those app-relative paths resolve to `com.tinycloud.conversation-sync/` and `com.tinycloud.conversation-sync/conversations`. Runtime SQL queries go through `conversationSql(access)`, which calls `access.sql.db("com.tinycloud.conversation-sync/conversations")` instead of the SDK default database named `default`.
 
 The delegation is multi-resource and is carried in `PortableDelegation.resources`. The backend relies on node-sdk `useDelegation()` preserving that full resource list when it derives its active backend session; otherwise only the flat first resource is available and SQL writes fail.
+
+See [Manifest and capability chain](../../SPEC-manifest-and-capability-chain.md) for the manifest model and SDK flow.
 
 ### Authenticated (JWT required)
 

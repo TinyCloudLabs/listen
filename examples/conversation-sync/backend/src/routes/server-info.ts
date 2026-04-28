@@ -7,9 +7,10 @@ import { backendManifestConfig } from "../manifest.js";
 /**
  * GET /api/server-info
  *
- * Returns the backend's DID and status. No auth required.
- * Useful for the frontend to discover the backend's DID before
- * creating a delegation.
+ * Returns the backend's DID plus the app-logic permissions this backend
+ * should receive. No auth required. The frontend resolves these
+ * app-relative permissions against the user-facing manifest, signs one
+ * composed capability request, then materializes the backend delegation.
  */
 export function createServerInfoRouter(did: string) {
   const router = Router();
@@ -26,6 +27,7 @@ export function createServerInfoRouter(did: string) {
         space: permission.space,
         path: permission.path,
         actions: [...permission.actions],
+        description: permission.description,
       })),
     };
 

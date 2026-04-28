@@ -1,12 +1,17 @@
-import { loadManifest, resolveManifest, type Manifest } from "@tinycloud/web-sdk";
+import {
+  composeManifestRequest,
+  loadManifest,
+  resolveManifest,
+  type ComposedManifestRequest,
+  type Manifest,
+} from "@tinycloud/sdk-core";
 import type { ServerInfo, ServerInfoPermission } from "@tinyboilerplate/core";
 
 // ── Manifest Loading ──────────────────────────────────────────────────
 
 /**
  * Fetch and validate the app's manifest from a URL. Apps can serve this
- * from their frontend public directory or from a backend endpoint that
- * injects runtime delegation targets.
+ * from their frontend public directory or from a backend endpoint.
  *
  * This is a thin re-export of the SDK's {@link loadManifest} so
  * consumers don't need to pull `@tinycloud/web-sdk` directly just
@@ -18,62 +23,79 @@ export async function loadAppManifest(url: string): Promise<Manifest> {
 
 // ── Composition ───────────────────────────────────────────────────────
 
-/**
- * Compose an app manifest with a backend delegation declared from the
- * backend's `/api/server-info` response.
- *
- * This is the bridge between "app declares its own permissions" (via
- * `manifest.json` in the app's public directory) and "backend declares
- * the permissions it needs the user to delegate" (via `server-info`).
- * The composed manifest is what drives the SIWE recap at sign-in: the
- * session key gets coverage for BOTH the app's own runtime needs AND
- * the backend's declared permissions, in one wallet prompt.
- *
- * Rules:
- * - If `info.permissions` is undefined or empty, returns the input
- *   manifest unchanged (no delegation to compose).
- * - Otherwise appends a new `delegations[*]` entry with the backend's
- *   DID, informational name, expiry (if provided), and permissions.
- * - Existing manifest delegations are preserved — we append, not
- *   overwrite.
- *
- * The returned manifest is a new object; the input is not mutated.
- */
-export function composeManifestWithBackend(appManifest: Manifest, info: ServerInfo): Manifest {
+/** Turn backend-advertised permissions into a delegate manifest. */
+export function backendManifestFromServerInfo(appManifest: Manifest, info: ServerInfo): Manifest {
   if (!info.permissions || info.permissions.length === 0) {
-    return appManifest;
+    throw new Error("Backend did not advertise any permissions to delegate");
   }
   return {
-    ...appManifest,
-    delegations: [
-      ...(appManifest.delegations ?? []),
-      {
-        to: info.did,
-        name: info.name ?? "Backend",
-        expiry: info.expiry,
-        permissions: info.permissions.map((p) => ({
-          service: p.service,
-          space: p.space,
-          path: p.path,
-          actions: [...p.actions],
-        })),
-      },
-    ],
+    manifest_version: 1,
+    app_id: appManifest.app_id,
+    name: info.name ?? "Backend",
+    description: `${info.name ?? "Backend"} access for ${appManifest.name}`,
+    did: info.did,
+    expiry: info.expiry,
+    defaults: false,
+    permissions: info.permissions.map((p) => ({
+      service: p.service,
+      ...(p.space !== undefined ? { space: p.space } : {}),
+      path: p.path,
+      actions: [...p.actions],
+    })),
   };
 }
 
+/** Compose the app manifest and backend delegate manifest into one request. */
+export function composeManifestWithBackend(
+  appManifest: Manifest,
+  info: ServerInfo,
+): ComposedManifestRequest {
+  return composeManifestRequest([appManifest, backendManifestFromServerInfo(appManifest, info)]);
+}
+
 /**
- * Return the fully resolved permissions for a manifest-declared backend
- * delegation. Use this output for `delegateTo` after sign-in: it has the
- * manifest prefix applied and short actions expanded to full action URNs,
- * matching the SIWE recap the wallet signed.
+ * Resolve app-relative permission entries using the manifest's prefix/action
+ * rules. Use this when delegation is app logic rather than manifest structure:
+ * a backend or agent can ask for app-relative caps, and the frontend resolves
+ * them to the concrete caps already covered by the signed manifest session.
+ */
+export function resolveManifestPermissions(
+  manifest: Manifest,
+  permissions: readonly ServerInfoPermission[],
+): ServerInfoPermission[] {
+  if (permissions.length === 0) return [];
+
+  const resolved = resolveManifest({
+    ...manifest,
+    defaults: false,
+    permissions: permissions.map((permission) => ({
+      service: permission.service,
+      ...(permission.space !== undefined ? { space: permission.space } : {}),
+      path: permission.path,
+      actions: [...permission.actions],
+    })),
+  }).resources;
+
+  return resolved.map((permission, index) => ({
+    service: permission.service,
+    space: permission.space,
+    path: permission.path,
+    actions: [...permission.actions],
+    description: permissions[index]?.description,
+  }));
+}
+
+/**
+ * Return the fully resolved permissions for a manifest with `did`.
+ * This is mainly useful for diagnostics and tests; production code should
+ * generally use `composeManifestRequest` plus `materializeDelegation`.
  */
 export function resolveManifestDelegationPermissions(
   manifest: Manifest,
-  backendDid: string,
+  delegateDid: string,
 ): ServerInfoPermission[] {
   const resolved = resolveManifest(manifest);
-  const delegate = resolved.additionalDelegates.find((entry) => entry.did === backendDid);
+  const delegate = resolved.additionalDelegates.find((entry) => entry.did === delegateDid);
   if (!delegate) return [];
 
   return delegate.permissions.map((permission) => ({
@@ -101,12 +123,10 @@ export function resolveManifestPermissionPath(
     permissions: [
       {
         service,
-        space: "default",
         path,
         actions,
       },
     ],
-    delegations: undefined,
   }).resources[0];
 
   if (!resolved) {

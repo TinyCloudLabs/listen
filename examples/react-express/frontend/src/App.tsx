@@ -131,20 +131,17 @@ export function App() {
       const appManifest = await loadAppManifest("/manifest.json");
       const composed = composeManifestWithBackend(appManifest, info);
       console.log(
-        `[sign-in] Step 3 complete. Manifest has ${composed.delegations?.length ?? 0} delegation(s).`,
+        `[sign-in] Step 3 complete. Request has ${composed.delegationTargets.length} delegation target(s).`,
       );
 
-      // 4. Create TinyCloudWeb with the composed manifest and sign in.
-      //    Inside signIn(), the SDK resolves the manifest, unions the
-      //    app resources with every delegation's permissions, and
-      //    passes the union as the SIWE recap's `abilities`. ONE
-      //    wallet prompt covers everything.
+      // 4. Create TinyCloudWeb with the composed capability request and
+      //    sign in. ONE wallet prompt covers the full app + backend union.
       console.log("[sign-in] Step 4: TinyCloud sign-in with manifest...");
       const { tcw: tcwInstance, session } = await createAndSignIn(web3Provider, {
         nonce,
         tinycloudHosts: [TINYCLOUD_HOST],
         autoCreateSpace: true,
-        manifest: composed,
+        capabilityRequest: composed,
       });
       console.log("[sign-in] Step 4 complete. DID:", tcwInstance.did);
 
@@ -167,29 +164,21 @@ export function App() {
       const sessionToken = sessionStoreRef.current.getToken();
       if (!sessionToken) throw new Error("No session token after sign-in");
 
-      // 7. Issue the backend delegation via the capability-chain flow.
-      //    Because the manifest pre-declared this delegation, the
-      //    session key already holds the capabilities — `delegateTo`
-      //    takes the session-key UCAN path and shows NO wallet
-      //    prompt. `prompted` should be `false` here; if it ever
-      //    becomes `true`, something drifted between the manifest
-      //    permissions and the server-info permissions and we want
-      //    the log to surface it.
+      // 7. Materialize the backend delegation via the capability-chain flow.
+      //    Delivery remains app logic.
       console.log("[sign-in] Step 7: Issuing backend delegation...");
-      const backendPermissions = info.permissions ?? [];
-      if (backendPermissions.length === 0) {
+      if (composed.delegationTargets.length === 0) {
         throw new Error(
           "Backend /api/server-info did not advertise any permissions — cannot build delegation",
         );
       }
       // DIAGNOSTIC: dump the signed SIWE so we can inspect the recap
       console.log("[diagnostic] session.siwe:\n" + session.siwe);
-      console.log("[diagnostic] backendPermissions:", backendPermissions);
-      console.log("[diagnostic] composed manifest:", composed);
+      console.log("[diagnostic] composed request:", composed);
       const { serialized, prompted } = await createManifestDelegation(
         tcwInstance,
         info.did,
-        backendPermissions,
+        composed,
       );
       console.log(`[sign-in] Step 7 complete. Delegation issued (wallet prompted: ${prompted}).`);
 

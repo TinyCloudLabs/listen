@@ -13,14 +13,15 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "bun test"
+    "test": "bun test src/__tests__"
   },
   "dependencies": {
-    "@tinyboilerplate/core": "workspace:*"
+    "@tinyboilerplate/core": "workspace:*",
+    "@tinycloud/sdk-core": "2.2.0-beta.0"
   },
   "peerDependencies": {
     "@openkey/sdk": ">=0.8.0",
-    "@tinycloud/web-sdk": ">=2.1.0",
+    "@tinycloud/web-sdk": ">=2.2.0-beta.0",
     "ethers": "^5.7.0"
   },
   "peerDependenciesMeta": {
@@ -30,7 +31,7 @@
   },
   "devDependencies": {
     "@openkey/sdk": "^0.8.4",
-    "@tinycloud/web-sdk": "2.1.0",
+    "@tinycloud/web-sdk": "2.2.0-beta.0",
     "ethers": "^5.7.2",
     "typescript": "^5.7.0"
   }

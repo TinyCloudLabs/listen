@@ -29,8 +29,9 @@ paths:
       operationId: getManifest
       summary: Get runtime TinyCloud manifest
       description: |
-        Returns the app manifest with the backend's live DID injected into the
-        manifest-declared backend delegation template. No auth required.
+        Returns the app's user-facing TinyCloud manifest. No auth required.
+        Backend delegation is app logic exposed through /api/server-info, not
+        a backend-only manifest section.
       security: []
       tags: [Server]
       responses:
@@ -423,49 +424,55 @@ components:
 
     Manifest:
       type: object
-      required: [id, name]
+      required: [app_id, name]
       properties:
-        id:
+        manifest_version:
+          type: integer
+          enum: [1]
+          description: Manifest schema version. Missing means version 1.
+        app_id:
           type: string
+          description: Stable application id used as the default data path prefix.
         name:
           type: string
         description:
           type: string
+        did:
+          type: string
+          description: Optional delegate DID. Required only for manifests that can materialize a delegation.
+        space:
+          type: string
+          description: Manifest default space. Missing means applications.
+        defaults:
+          oneOf:
+            - type: boolean
+            - type: string
+              enum: [admin, all]
+          description: Default TinyCloud app permission tier. Missing means true.
         permissions:
           type: array
           items:
             $ref: "#/components/schemas/PermissionEntry"
-        delegations:
-          type: array
-          items:
-            type: object
-            required: [to, permissions]
-            properties:
-              to:
-                type: string
-              name:
-                type: string
-              expiry:
-                type: string
-              permissions:
-                type: array
-                items:
-                  $ref: "#/components/schemas/PermissionEntry"
 
     PermissionEntry:
       type: object
-      required: [service, space, path, actions]
+      required: [service, path, actions]
       properties:
         service:
           type: string
         space:
           type: string
+          description: Optional override. Missing means the manifest default space.
         path:
           type: string
         actions:
           type: array
           items:
             type: string
+        skipPrefix:
+          type: boolean
+        description:
+          type: string
 
     ApiError:
       type: object

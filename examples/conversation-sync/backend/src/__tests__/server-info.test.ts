@@ -60,10 +60,11 @@ describe("GET /api/server-info", () => {
     );
     expect(services.has("tinycloud.kv")).toBe(true);
     expect(services.has("tinycloud.sql")).toBe(true);
-    const sqlPermission = (body.permissions as Array<{ service: string; path: string }>).find(
-      (p) => p.service === "tinycloud.sql",
-    );
+    const sqlPermission = (
+      body.permissions as Array<{ service: string; path: string; description?: string }>
+    ).find((p) => p.service === "tinycloud.sql");
     expect(sqlPermission?.path).toBe("conversations");
+    expect(sqlPermission?.description).toContain("conversation records");
   });
 
   it("does not require authentication", async () => {

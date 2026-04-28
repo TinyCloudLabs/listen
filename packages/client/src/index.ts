@@ -6,7 +6,9 @@ export { createTinyCloudWeb, createAndSignIn, type TinyCloudWebConfig } from "./
 
 export {
   loadAppManifest,
+  backendManifestFromServerInfo,
   composeManifestWithBackend,
+  resolveManifestPermissions,
   resolveManifestDelegationPermissions,
   resolveManifestPermissionPath,
 } from "./manifest.js";

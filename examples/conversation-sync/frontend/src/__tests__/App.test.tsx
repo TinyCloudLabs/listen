@@ -46,15 +46,29 @@ vi.mock("@tinyboilerplate/client", () => {
     checkDelegationStatus: vi.fn().mockResolvedValue({ status: "active" }),
     revokeDelegation: vi.fn(),
     loadAppManifest: vi.fn().mockResolvedValue({
-      id: "com.test.listen",
+      app_id: "com.test.listen",
       name: "Conversation Sync",
-      delegations: [],
+      defaults: true,
     }),
-    composeManifestWithBackend: vi.fn((manifest) => manifest),
-    resolveManifestDelegationPermissions: vi.fn().mockReturnValue([
+    composeManifestWithBackend: vi.fn((manifest) => ({
+      manifests: [manifest],
+      resources: [],
+      delegationTargets: [
+        {
+          did: "did:key:backend",
+          name: "Backend",
+          expiryMs: 604800000,
+          permissions: [],
+        },
+      ],
+      registryRecords: [],
+      expiryMs: 2592000000,
+      includePublicSpace: true,
+    })),
+    resolveManifestPermissions: vi.fn().mockReturnValue([
       {
         service: "tinycloud.kv",
-        space: "default",
+        space: "applications",
         path: "com.test.listen/",
         actions: ["tinycloud.kv/get", "tinycloud.kv/put"],
       },

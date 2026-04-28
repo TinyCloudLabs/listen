@@ -1,5 +1,10 @@
 import { TinyCloudWeb, BrowserSessionStorage } from "@tinycloud/web-sdk";
-import type { ClientSession, SiweConfig, Manifest } from "@tinycloud/web-sdk";
+import type {
+  ClientSession,
+  ComposedManifestRequest,
+  Manifest,
+  SiweConfig,
+} from "@tinycloud/web-sdk";
 import type { providers } from "ethers";
 
 // ── Configuration ────────────────────────────────────────────────────
@@ -9,13 +14,12 @@ export interface TinyCloudWebConfig {
   autoCreateSpace?: boolean;
   siweConfig?: SiweConfig;
   /**
-   * Manifest driving the SIWE recap at sign-in. When provided, the
-   * session key acquires capability coverage for BOTH the app's own
-   * permissions AND every manifest-declared delegation target — in
-   * one wallet prompt. Subsequent `tcw.delegateTo(declaredDid, perms)`
-   * calls issue via the session-key UCAN path with no further prompt.
+   * Manifest driving the SIWE recap at sign-in. If `capabilityRequest`
+   * is present, it takes precedence and is signed directly.
    */
   manifest?: Manifest;
+  /** Pre-composed manifest request that may include app and delegate manifests. */
+  capabilityRequest?: ComposedManifestRequest;
 }
 
 // ── TinyCloudWeb Instance ────────────────────────────────────────────
@@ -34,6 +38,7 @@ export function createTinyCloudWeb(
     sessionStorage: new BrowserSessionStorage(),
     siweConfig: config?.siweConfig,
     manifest: config?.manifest,
+    capabilityRequest: config?.capabilityRequest,
   });
 
   // Set provider for createDelegation() signing (SDK bug workaround)
@@ -46,8 +51,8 @@ export function createTinyCloudWeb(
  * Create a TinyCloudWeb instance and sign in.
  *
  * Accepts an optional `nonce` to pass through to the SDK's SIWE message
- * construction, and an optional `manifest` that drives the session's
- * granted capabilities. The SDK's `signIn()` returns a `ClientSession`
+ * construction, and optional manifest/capability request inputs that drive
+ * the session's granted capabilities. The SDK's `signIn()` returns a `ClientSession`
  * containing the signed SIWE message and signature.
  */
 export async function createAndSignIn(

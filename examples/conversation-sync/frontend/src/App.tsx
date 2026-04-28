@@ -12,8 +12,8 @@ import {
   checkDelegationStatus,
   revokeDelegation,
   SessionStore,
+  composeManifestWithBackend,
   loadAppManifest,
-  resolveManifestDelegationPermissions,
   resolveManifestPermissionPath,
   type ApiClient,
 } from "@tinyboilerplate/client";
@@ -185,12 +185,13 @@ export function App() {
       const conversationEventPathPrefix = ENABLE_TINYCLOUD_HOOKS
         ? resolveManifestPermissionPath(appManifest, "tinycloud.sql", "conversations/conversation")
         : null;
+      const capabilityRequest = composeManifestWithBackend(appManifest, info);
 
       const { tcw: tcwInstance, session } = await createAndSignIn(web3Provider, {
         nonce,
         tinycloudHosts: [TINYCLOUD_HOST],
         autoCreateSpace: true,
-        manifest: appManifest,
+        capabilityRequest,
       });
       const { token, expiresIn } = await verifySession(
         BACKEND_URL,
@@ -202,14 +203,10 @@ export function App() {
         sessionStore: sessionStoreRef.current,
       });
 
-      const backendPermissions = resolveManifestDelegationPermissions(appManifest, info.did);
-      if (backendPermissions.length === 0) {
-        throw new Error("Manifest did not declare a delegation for this backend");
-      }
       const { serialized } = await createManifestDelegation(
         tcwInstance,
         info.did,
-        backendPermissions,
+        capabilityRequest,
       );
       await sendDelegation(BACKEND_URL, serialized, token);
       setAddress(addr);

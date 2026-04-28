@@ -40,21 +40,22 @@ export interface StoredDelegation {
  * when building or consuming the manifest.
  *
  * `service` uses the long form (e.g. `"tinycloud.kv"`) so the frontend
- * can pass the entries directly into a `Manifest.delegations[*].permissions`
- * list without translation.
+ * can turn these entries into a delegate manifest without translation.
  */
 export interface ServerInfoPermission {
   service: string;
-  space: string;
+  space?: string;
   path: string;
   actions: string[];
+  /** Optional user/agent-facing context for why the permission is needed. */
+  description?: string;
 }
 
 /**
  * Shape of `/api/server-info`. The backend advertises its identity plus
- * the capabilities it needs the user to grant via a delegation, so the
- * frontend can compose a manifest that includes the pre-declared
- * delegation and drive a single-prompt sign-in.
+ * the capabilities it needs the user to grant via a delegation. The
+ * frontend composes this with the app manifest into a single signed
+ * capability request, then materializes the delegation after sign-in.
  */
 export interface ServerInfo {
   did: string;
