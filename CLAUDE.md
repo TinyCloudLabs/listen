@@ -190,7 +190,8 @@ interface Request {
 |----------|---------|-------|
 | `VITE_OPENKEY_CLIENT_ID` | (required) | Register at openkey.so |
 | `VITE_OPENKEY_HOST` | `https://openkey.so` | |
-| `VITE_TINYCLOUD_HOST` | `https://node.tinycloud.xyz` | |
+| `VITE_TINYCLOUD_HOST` | (empty) | Explicit TinyCloud node URL; conversation-sync uses registry discovery when empty |
+| `VITE_TINYCLOUD_LOCATION_REGISTRY_URL` | `https://registry.tinycloud.xyz` | conversation-sync only |
 | `VITE_BACKEND_URL` | `http://localhost:3001` | |
 
 ## Common Patterns

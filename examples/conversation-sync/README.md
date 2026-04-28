@@ -51,7 +51,8 @@ OPENKEY_ISSUER_URL=https://openkey.so
 FRONTEND_URL=https://localhost:5173
 PORT=3001
 VITE_OPENKEY_HOST=https://openkey.so
-VITE_TINYCLOUD_HOST=https://node.tinycloud.xyz
+VITE_TINYCLOUD_HOST=
+VITE_TINYCLOUD_LOCATION_REGISTRY_URL=https://registry.tinycloud.xyz
 VITE_BACKEND_URL=http://localhost:3001
 VITE_ENABLE_TINYCLOUD_HOOKS=false
 ```
@@ -59,6 +60,8 @@ VITE_ENABLE_TINYCLOUD_HOOKS=false
 Note: The Fireflies API key is per-user, entered in the setup wizard, and stored in the user's TinyCloud KV via the backend. It is not an env var and should not have a default value. The local frontend must use HTTPS for OpenKey/passkey sign-in; the backend API can remain HTTP on `localhost:3001`.
 
 Live TinyCloud write-event hooks are disabled by default because the hosted node currently returns `404` for `POST /hooks/tickets`. Set `VITE_ENABLE_TINYCLOUD_HOOKS=true` only when the target TinyCloud host supports the hooks ticket endpoint. The manifest contains the correctly scoped hook permission for that opt-in path.
+
+By default, the frontend resolves the user's TinyCloud node through `https://registry.tinycloud.xyz`, then falls back to `https://node.tinycloud.xyz`. Set `VITE_TINYCLOUD_HOST` only when you want to force a specific node and skip registry discovery.
 
 ## Running
 

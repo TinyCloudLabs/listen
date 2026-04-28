@@ -20,6 +20,12 @@ export {
 } from "./session-persistence.js";
 
 export {
+  resolveTinyCloudHosts,
+  type ResolveTinyCloudHostsOptions,
+  type TinyCloudHostResolution,
+} from "./location.js";
+
+export {
   createDelegation,
   createManifestDelegation,
   sendDelegation,

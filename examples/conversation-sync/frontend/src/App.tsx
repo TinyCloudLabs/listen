@@ -14,6 +14,7 @@ import {
   SessionStore,
   composeManifestWithBackend,
   loadAppManifest,
+  resolveTinyCloudHosts,
   resolveManifestPermissionPath,
   type ApiClient,
 } from "@tinyboilerplate/client";
@@ -28,7 +29,10 @@ import { LiveWriteEvents } from "./components/LiveWriteEvents";
 // ── Environment ─────────────────────────────────────────────────────
 
 const OPENKEY_HOST = import.meta.env.VITE_OPENKEY_HOST || "https://openkey.so";
-const TINYCLOUD_HOST = import.meta.env.VITE_TINYCLOUD_HOST || "https://node.tinycloud.xyz";
+const TINYCLOUD_HOST = import.meta.env.VITE_TINYCLOUD_HOST || "";
+const TINYCLOUD_FALLBACK_HOST = "https://node.tinycloud.xyz";
+const TINYCLOUD_LOCATION_REGISTRY_URL =
+  import.meta.env.VITE_TINYCLOUD_LOCATION_REGISTRY_URL || "https://registry.tinycloud.xyz";
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const ENABLE_TINYCLOUD_HOOKS = import.meta.env.VITE_ENABLE_TINYCLOUD_HOOKS === "true";
@@ -182,6 +186,11 @@ export function App() {
         })(),
       ]);
       const appManifest = await loadAppManifest(`${BACKEND_URL}/api/manifest`);
+      const { hosts: tinycloudHosts } = await resolveTinyCloudHosts(`did:pkh:eip155:1:${addr}`, {
+        explicitHosts: TINYCLOUD_HOST ? [TINYCLOUD_HOST] : undefined,
+        centralizedRegistryUrl: TINYCLOUD_LOCATION_REGISTRY_URL,
+        fallbackHosts: [TINYCLOUD_FALLBACK_HOST],
+      });
       const conversationEventPathPrefix = ENABLE_TINYCLOUD_HOOKS
         ? resolveManifestPermissionPath(appManifest, "tinycloud.sql", "conversations/conversation")
         : null;
@@ -189,7 +198,7 @@ export function App() {
 
       const { tcw: tcwInstance, session } = await createAndSignIn(web3Provider, {
         nonce,
-        tinycloudHosts: [TINYCLOUD_HOST],
+        tinycloudHosts,
         autoCreateSpace: true,
         capabilityRequest,
       });
@@ -332,7 +341,7 @@ export function App() {
             {ENABLE_TINYCLOUD_HOOKS && (
               <LiveWriteEvents
                 tcw={tcw}
-                hooksHost={TINYCLOUD_HOST}
+                hooksHost={TINYCLOUD_HOST || TINYCLOUD_FALLBACK_HOST}
                 pathPrefix={liveWritePathPrefix}
                 onWrite={() => setRefreshKey((k) => k + 1)}
               />

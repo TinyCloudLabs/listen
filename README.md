@@ -202,7 +202,8 @@ The delegation chain is the same regardless of your data model: authenticate (JW
 |----------|----------|---------|-------------|
 | `VITE_OPENKEY_CLIENT_ID` | Yes | — | Your OpenKey OAuth client ID |
 | `VITE_OPENKEY_HOST` | No | `https://openkey.so` | OpenKey host |
-| `VITE_TINYCLOUD_HOST` | No | `https://node.tinycloud.xyz` | TinyCloud node URL |
+| `VITE_TINYCLOUD_HOST` | No | — | Explicit TinyCloud node URL; when empty, conversation-sync uses registry discovery |
+| `VITE_TINYCLOUD_LOCATION_REGISTRY_URL` | No | `https://registry.tinycloud.xyz` | Conversation-sync TinyCloud location registry |
 | `VITE_BACKEND_URL` | No | `http://localhost:3001` | Backend URL |
 
 ## Known Constraints
