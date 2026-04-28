@@ -32,6 +32,7 @@ describe("resolveManifestPermissions", () => {
             service: "tinycloud.sql",
             path: "conversations",
             actions: ["read", "write"],
+            description: "Store transcript rows",
           },
         ],
       },
@@ -41,6 +42,7 @@ describe("resolveManifestPermissions", () => {
     expect(request.delegationTargets[0]?.permissions[0]?.path).toBe(
       "com.example.app/conversations",
     );
+    expect(request.delegationTargets[0]?.permissions[0]?.description).toBe("Store transcript rows");
     expect(request.resources.some((permission) => permission.space === "account")).toBe(true);
   });
 
@@ -99,11 +101,13 @@ describe("resolveManifestDelegationPermissions", () => {
             service: "tinycloud.kv",
             path: "/",
             actions: ["get", "put"],
+            description: "Backend sync state",
           },
           {
             service: "tinycloud.sql",
             path: "conversations",
             actions: ["read", "write"],
+            description: "Conversation records",
           },
         ],
       },
@@ -116,12 +120,14 @@ describe("resolveManifestDelegationPermissions", () => {
         space: "applications",
         path: "com.example.app/",
         actions: ["tinycloud.kv/get", "tinycloud.kv/put"],
+        description: "Backend sync state",
       },
       {
         service: "tinycloud.sql",
         space: "applications",
         path: "com.example.app/conversations",
         actions: ["tinycloud.sql/read", "tinycloud.sql/write"],
+        description: "Conversation records",
       },
     ]);
   });

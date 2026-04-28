@@ -41,6 +41,7 @@ export function backendManifestFromServerInfo(appManifest: Manifest, info: Serve
       ...(p.space !== undefined ? { space: p.space } : {}),
       path: p.path,
       actions: [...p.actions],
+      ...(p.description !== undefined ? { description: p.description } : {}),
     })),
   };
 }
@@ -73,6 +74,7 @@ export function resolveManifestPermissions(
       ...(permission.space !== undefined ? { space: permission.space } : {}),
       path: permission.path,
       actions: [...permission.actions],
+      ...(permission.description !== undefined ? { description: permission.description } : {}),
     })),
   }).resources;
 
@@ -103,6 +105,7 @@ export function resolveManifestDelegationPermissions(
     space: permission.space,
     path: permission.path,
     actions: [...permission.actions],
+    description: permission.description,
   }));
 }
 
