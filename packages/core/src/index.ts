@@ -28,6 +28,10 @@ export interface StoredDelegation {
   expiresAt: string;
   actions: string[];
   path: string;
+  /** Hash of the backend permission policy this delegation was issued for. */
+  policyHash?: string;
+  /** Full multi-resource grant metadata when available. */
+  resources?: ServerInfoPermission[];
 }
 
 // ── Server Info ──────────────────────────────────────────────────────

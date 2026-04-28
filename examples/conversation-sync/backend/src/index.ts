@@ -20,7 +20,7 @@ import {
 
 import { createAuthMiddleware } from "./middleware/auth.js";
 import { createDelegationMiddleware } from "./middleware/delegation.js";
-import { resolveAppPath } from "./manifest.js";
+import { backendDelegationPolicyHash, resolveAppPath } from "./manifest.js";
 import { createAuthRouter } from "./routes/auth.js";
 import { createManifestRouter } from "./routes/manifest.js";
 import { createServerInfoRouter } from "./routes/server-info.js";
@@ -125,6 +125,12 @@ async function main() {
       console.log(`[webhook] delegation expired at ${stored.expiresAt}`);
       return null;
     }
+    if (stored.policyHash !== backendDelegationPolicyHash()) {
+      console.log("[webhook] delegation policy is stale — user needs to sign in again");
+      await delegationStore.remove(address);
+      delegationCache.evict(address);
+      return null;
+    }
 
     // Activate delegation
     try {
@@ -174,6 +180,11 @@ async function main() {
       if (access) return access;
       const stored = await delegationStore.load(address);
       if (!stored || new Date(stored.expiresAt).getTime() <= Date.now()) return null;
+      if (stored.policyHash !== backendDelegationPolicyHash()) {
+        await delegationStore.remove(address);
+        delegationCache.evict(address);
+        return null;
+      }
       try {
         const delegation = deserializeDelegation(stored.serialized);
         access = await node.useDelegation(delegation);

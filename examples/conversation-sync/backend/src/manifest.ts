@@ -1,4 +1,5 @@
 import { readFileSync } from "fs";
+import { createHash } from "crypto";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import {
@@ -146,6 +147,37 @@ export function backendManifestConfig(): BackendDelegationConfig {
       description: permission.description,
     })),
   };
+}
+
+export function backendDelegationResolvedPermissions(): ServerInfoPermission[] {
+  const manifest = loadConversationManifest();
+  validateBackendDelegationPolicy(manifest);
+  return resolveManifestPermissions(manifest, BACKEND_DELEGATION_PERMISSIONS);
+}
+
+export function backendDelegationPolicyHash(): string {
+  const permissions = backendDelegationResolvedPermissions().map((permission) => ({
+    service: permission.service,
+    space: permission.space,
+    path: permission.path,
+    actions: [...permission.actions].sort(),
+  }));
+
+  return createHash("sha256").update(JSON.stringify(permissions)).digest("hex");
+}
+
+export function delegationCoversBackendPolicy(
+  permissions: readonly ServerInfoPermission[],
+): boolean {
+  const requested = backendDelegationResolvedPermissions();
+  const granted = permissions.map((permission) => ({
+    service: permission.service,
+    ...(permission.space !== undefined ? { space: permission.space } : {}),
+    path: permission.path,
+    actions: [...permission.actions],
+  }));
+
+  return isCapabilitySubset(requested, granted).subset;
 }
 
 export function runtimeManifest(): Manifest {

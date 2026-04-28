@@ -3,6 +3,7 @@ import type { TinyCloudNode } from "@tinycloud/node-sdk";
 import { deserializeDelegation } from "@tinycloud/node-sdk";
 import type { DelegationStore, DelegationCache } from "@tinyboilerplate/server";
 import { withTimeout } from "./timeout.js";
+import { backendDelegationPolicyHash } from "../manifest.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -69,6 +70,16 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
         return;
       }
 
+      if (stored.policyHash !== backendDelegationPolicyHash()) {
+        await store.remove(address);
+        cache.evict(address);
+        res.status(403).json({
+          error: "delegation_stale",
+          message: "Delegation permissions are stale. Please sign in again.",
+        });
+        return;
+      }
+
       // Deserialize and activate the delegation
       access = await withTimeout(activateDelegation(node, cache, address, stored.serialized));
       req.delegatedAccess = access;
@@ -109,6 +120,16 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
             res.status(401).json({
               error: "delegation_expired",
               message: "Delegation has expired. Please delegate access again.",
+            });
+            return;
+          }
+
+          if (stored.policyHash !== backendDelegationPolicyHash()) {
+            await store.remove(address);
+            cache.evict(address);
+            res.status(403).json({
+              error: "delegation_stale",
+              message: "Delegation permissions are stale. Please sign in again.",
             });
             return;
           }

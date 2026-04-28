@@ -3,7 +3,8 @@ import type { Request, Response, RequestHandler } from "express";
 import type { TinyCloudNode } from "@tinycloud/node-sdk";
 import { deserializeDelegation } from "@tinycloud/node-sdk";
 import type { DelegationStore, DelegationCache } from "@tinyboilerplate/server";
-import { DEFAULT_DELEGATION_EXPIRY_MS } from "@tinyboilerplate/core";
+import { DEFAULT_DELEGATION_EXPIRY_MS, type ServerInfoPermission } from "@tinyboilerplate/core";
+import { backendDelegationPolicyHash, delegationCoversBackendPolicy } from "../manifest.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -44,6 +45,11 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
     try {
       // Deserialize and validate the delegation
       const delegation = deserializeDelegation(serialized);
+      const resources = extractDelegationResources(delegation);
+
+      if (!delegationCoversBackendPolicy(resources)) {
+        throw new Error("Delegation does not cover the current backend permission policy");
+      }
 
       // Activate the delegation to verify it works
       const access = await node.useDelegation(delegation);
@@ -59,8 +65,10 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
       // Store the delegation keyed by wallet address
       await store.store(address, serialized, {
         expiresAt,
-        actions: delegation.actions ?? [],
-        path: delegation.path ?? "",
+        actions: resources.flatMap((resource) => resource.actions),
+        path: resources.map((resource) => `${resource.service}:${resource.path}`).join(","),
+        resources,
+        policyHash: backendDelegationPolicyHash(),
       });
 
       // Cache the active DelegatedAccess keyed by address
@@ -137,6 +145,17 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
         return;
       }
 
+      if (stored.policyHash !== backendDelegationPolicyHash()) {
+        await store.remove(address);
+        cache.evict(address);
+
+        res.json({
+          status: "none",
+          expiresAt: null,
+        });
+        return;
+      }
+
       res.json({
         status: "active",
         expiresAt: stored.expiresAt,
@@ -151,4 +170,45 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
   });
 
   return router;
+}
+
+function extractDelegationResources(delegation: { resources?: unknown }): ServerInfoPermission[] {
+  if (!Array.isArray(delegation.resources)) return [];
+
+  return delegation.resources.flatMap((resource) => {
+    if (
+      typeof resource !== "object" ||
+      resource === null ||
+      !("service" in resource) ||
+      !("path" in resource) ||
+      !("actions" in resource)
+    ) {
+      return [];
+    }
+
+    const entry = resource as {
+      service?: unknown;
+      space?: unknown;
+      path?: unknown;
+      actions?: unknown;
+    };
+
+    if (
+      typeof entry.service !== "string" ||
+      typeof entry.path !== "string" ||
+      !Array.isArray(entry.actions) ||
+      !entry.actions.every((action) => typeof action === "string")
+    ) {
+      return [];
+    }
+
+    return [
+      {
+        service: entry.service,
+        ...(typeof entry.space === "string" ? { space: entry.space } : {}),
+        path: entry.path,
+        actions: [...entry.actions],
+      },
+    ];
+  });
 }
