@@ -376,11 +376,11 @@ describe("FirefliesClient", () => {
       mockFetch.mockResolvedValueOnce(
         jsonResponse({
           data: null,
-          errors: [{ message: "Rate limit exceeded" }, { message: "Another error" }],
+          errors: [{ message: "Validation failed" }, { message: "Another error" }],
         }),
       );
 
-      expect(client.getUser()).rejects.toThrow("Rate limit exceeded");
+      expect(client.getUser()).rejects.toThrow("Validation failed");
     });
 
     it("lets network errors propagate naturally", async () => {
@@ -432,7 +432,32 @@ describe("FirefliesClient", () => {
         );
       }
 
-      await expect(client.getUser()).rejects.toThrow("429");
+      await expect(client.getUser()).rejects.toThrow("Fireflies rate limit reached");
+      expect(mockFetch.mock.calls.length).toBe(3);
+    });
+
+    it("keeps rate-limit context when Fireflies later returns a generic GraphQL error", async () => {
+      for (let i = 0; i < 2; i++) {
+        mockFetch.mockResolvedValueOnce(
+          jsonResponse({
+            data: null,
+            errors: [
+              {
+                message: "Rate limit. retry after 2026-01-01T00:00:01Z",
+                code: "too_many_requests",
+              },
+            ],
+          }),
+        );
+      }
+      mockFetch.mockResolvedValueOnce(
+        jsonResponse({
+          data: null,
+          errors: [{ message: "Something unexpected happened. Please try again" }],
+        }),
+      );
+
+      await expect(client.getUser()).rejects.toThrow("Fireflies rate limit reached");
       expect(mockFetch.mock.calls.length).toBe(3);
     });
   });

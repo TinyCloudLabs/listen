@@ -1,6 +1,6 @@
 import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
-import { FirefliesClient } from "../services/fireflies-client.js";
+import { FirefliesClient, FirefliesRateLimitError } from "../services/fireflies-client.js";
 import { conversationSql, ensureSchema } from "../schema.js";
 import { persistFullTranscript } from "../services/sync-pipeline.js";
 
@@ -134,6 +134,14 @@ export function createSyncRouter(config: SyncRoutesConfig) {
       });
     } catch (err) {
       console.error("[sync] fireflies sync failed:", err);
+      if (err instanceof FirefliesRateLimitError) {
+        res.status(429).json({
+          error: "fireflies_rate_limited",
+          message: err.message,
+          retryAfterMs: err.retryAfterMs,
+        });
+        return;
+      }
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({
         error: "sync_failed",
@@ -266,8 +274,17 @@ export function createSyncRouter(config: SyncRoutesConfig) {
       // 7. Done
       sendEvent("complete", { synced, skipped, failed, errors, conversations });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
       console.error("[sync] SSE fireflies sync failed:", err);
+      if (err instanceof FirefliesRateLimitError) {
+        sendEvent("error", {
+          code: "fireflies_rate_limited",
+          message: err.message,
+          retryAfterMs: err.retryAfterMs,
+        });
+        res.end();
+        return;
+      }
+      const message = err instanceof Error ? err.message : String(err);
       sendEvent("error", { message: `Sync failed: ${message}` });
     }
 

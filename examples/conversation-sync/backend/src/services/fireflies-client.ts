@@ -8,6 +8,34 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isRateLimitError(error: { message?: string; code?: string }): boolean {
+  const code = error.code?.toLowerCase();
+  const message = error.message?.toLowerCase() ?? "";
+  return (
+    code === "too_many_requests" ||
+    code === "rate_limited" ||
+    /rate limit|too many requests|throttl|retry after/.test(message)
+  );
+}
+
+function retryAfterMsFromMessage(message?: string): number | undefined {
+  const match = message?.match(/retry after (.+?)(\s*\(|$)/i);
+  if (!match) return undefined;
+
+  const waitUntil = new Date(match[1]);
+  if (Number.isNaN(waitUntil.getTime())) return undefined;
+
+  return Math.max(waitUntil.getTime() - Date.now(), 0);
+}
+
+function rateLimitMessage(waitMs?: number): string {
+  if (waitMs && waitMs > 0) {
+    const waitSeconds = Math.ceil(waitMs / 1000);
+    return `Fireflies rate limit reached. Try again in about ${waitSeconds} seconds.`;
+  }
+  return "Fireflies rate limit reached. Please wait a moment and try again.";
+}
+
 // ── Response types ──────────────────────────────────────────────────
 
 export interface FirefliesUser {
@@ -187,6 +215,16 @@ export interface PaginationResult {
   earlyExit: boolean;
 }
 
+export class FirefliesRateLimitError extends Error {
+  retryAfterMs?: number;
+
+  constructor(retryAfterMs?: number) {
+    super(rateLimitMessage(retryAfterMs));
+    this.name = "FirefliesRateLimitError";
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
 // ── Client ──────────────────────────────────────────────────────────
 
 export class FirefliesClient {
@@ -272,6 +310,9 @@ export class FirefliesClient {
   // ── Private ───────────────────────────────────────────────────
 
   private async request<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
+    let sawRateLimit = false;
+    let lastRetryAfterMs: number | undefined;
+
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       const response = await fetch(FIREFLIES_GRAPHQL_URL, {
         method: "POST",
@@ -283,9 +324,17 @@ export class FirefliesClient {
       });
 
       // Handle HTTP 429
-      if (response.status === 429 && attempt < MAX_RETRIES) {
+      if (response.status === 429) {
         const retryAfter = response.headers.get("retry-after");
-        const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : DEFAULT_RATE_LIMIT_WAIT_MS;
+        const retryAfterSeconds = retryAfter ? parseInt(retryAfter, 10) : NaN;
+        const waitMs = Number.isFinite(retryAfterSeconds)
+          ? retryAfterSeconds * 1000
+          : DEFAULT_RATE_LIMIT_WAIT_MS;
+        sawRateLimit = true;
+        lastRetryAfterMs = waitMs;
+        if (attempt >= MAX_RETRIES) {
+          throw new FirefliesRateLimitError(lastRetryAfterMs);
+        }
         console.log(
           `[fireflies] Rate limited (429). Waiting ${Math.ceil(waitMs / 1000)}s (attempt ${attempt}/${MAX_RETRIES})`,
         );
@@ -304,18 +353,22 @@ export class FirefliesClient {
 
       // Handle GraphQL-level rate limits
       if (json.errors?.length) {
-        const rateLimited = json.errors.find((e) => e.code === "too_many_requests");
-        if (rateLimited && attempt < MAX_RETRIES) {
-          const match = rateLimited.message?.match(/retry after (.+?)(\s*\(|$)/i);
-          const waitUntil = match ? new Date(match[1]) : null;
-          const waitMs = waitUntil
-            ? Math.max(waitUntil.getTime() - Date.now(), 0)
-            : DEFAULT_RATE_LIMIT_WAIT_MS;
+        const rateLimited = json.errors.find(isRateLimitError);
+        if (rateLimited) {
+          const waitMs = retryAfterMsFromMessage(rateLimited.message) ?? DEFAULT_RATE_LIMIT_WAIT_MS;
+          sawRateLimit = true;
+          lastRetryAfterMs = waitMs;
+          if (attempt >= MAX_RETRIES) {
+            throw new FirefliesRateLimitError(lastRetryAfterMs);
+          }
           console.log(
             `[fireflies] Rate limited (GraphQL). Waiting ${Math.ceil(waitMs / 1000)}s (attempt ${attempt}/${MAX_RETRIES})`,
           );
           await sleep(waitMs);
           continue;
+        }
+        if (sawRateLimit) {
+          throw new FirefliesRateLimitError(lastRetryAfterMs);
         }
         throw new Error(json.errors[0].message);
       }
