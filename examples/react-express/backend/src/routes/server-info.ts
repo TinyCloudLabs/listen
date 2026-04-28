@@ -21,26 +21,29 @@ export function createServerInfoRouter(did: string) {
 
   // Permissions the backend needs the user to grant. These are the
   // capabilities every authenticated data route (`/api/items`, etc)
-  // touches, across both KV and SQL stores.
+  // touches, across KV, SQL, and DuckDB stores.
   //
-  // `space: "default"` means "the user's default space"; the SDK
-  // resolves this to the real SpaceId at sign-in. `path: ""` means
-  // "no path segment on the resource URI" — the same convention the
-  // TinyCloud default actions table uses, and what the current backend
-  // middleware expects to receive. Shortform actions are expanded to
-  // full URNs by the SDK.
+  // Space is omitted so the manifest default applies: the application
+  // space. Paths are app-relative and resolve under the manifest
+  // `app_id` prefix (`com.example.app/`) during composition.
   const backendPermissions: ServerInfo["permissions"] = [
     {
       service: "tinycloud.kv",
-      space: "default",
-      path: "",
-      actions: ["get", "put", "del", "list", "metadata"],
+      path: "/",
+      actions: ["get", "put", "del", "list"],
+      description: "Read and write Example App item records in KV.",
     },
     {
       service: "tinycloud.sql",
-      space: "default",
-      path: "",
+      path: "/",
       actions: ["read", "write"],
+      description: "Read and write Example App item records in SQL.",
+    },
+    {
+      service: "tinycloud.duckdb",
+      path: "/",
+      actions: ["read", "write"],
+      description: "Read and write Example App item records in DuckDB.",
     },
   ];
 
@@ -48,7 +51,7 @@ export function createServerInfoRouter(did: string) {
     const info: ServerInfo = {
       did,
       status: "ready",
-      name: "TinyBoilerplate Backend",
+      name: "Example App Backend",
       expiry: "7d",
       permissions: backendPermissions,
     };

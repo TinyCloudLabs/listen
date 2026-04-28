@@ -3,50 +3,9 @@ import {
   serializeDelegation,
   type ComposedManifestRequest,
 } from "@tinycloud/web-sdk";
-import {
-  DEFAULT_DELEGATION_ACTIONS,
-  DEFAULT_DELEGATION_EXPIRY_MS,
-  DEFAULT_DELEGATION_PATH,
-  type DelegationResponse,
-} from "@tinyboilerplate/core";
-
-// ── Configuration ────────────────────────────────────────────────────
-
-export interface DelegationOptions {
-  actions?: string[];
-  path?: string;
-  expiryMs?: number;
-}
+import { type DelegationResponse } from "@tinyboilerplate/core";
 
 // ── Create Delegation ────────────────────────────────────────────────
-
-/**
- * Legacy single-(path, actions) delegation helper.
- *
- * Prefer {@link createManifestDelegation} for manifest-driven flows.
- *
- * This function stays for backwards compat; it still calls the legacy
- * `tcw.createDelegation` which will wallet-prompt if the caps exceed
- * the current session.
- */
-export async function createDelegation(
-  tcw: TinyCloudWeb,
-  backendDID: string,
-  options?: DelegationOptions,
-): Promise<string> {
-  const actions = options?.actions ? [...options.actions] : [...DEFAULT_DELEGATION_ACTIONS];
-  const path = options?.path ?? DEFAULT_DELEGATION_PATH;
-  const expiryMs = options?.expiryMs ?? DEFAULT_DELEGATION_EXPIRY_MS;
-
-  const delegation = await tcw.createDelegation({
-    delegateDID: backendDID,
-    path,
-    actions,
-    expiryMs,
-  });
-
-  return serializeDelegation(delegation);
-}
 
 /**
  * Manifest-driven delegation helper.
@@ -75,6 +34,8 @@ export async function createManifestDelegation(
     prompted: result.prompted,
   };
 }
+
+export const createDelegation = createManifestDelegation;
 
 // ── Send Delegation to Backend ───────────────────────────────────────
 

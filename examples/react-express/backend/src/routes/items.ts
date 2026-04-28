@@ -3,6 +3,10 @@ import type { Request, Response } from "express";
 import type { Item, CreateItemInput, UpdateItemInput, StoreType } from "@tinyboilerplate/core";
 import type { DelegatedAccess } from "@tinyboilerplate/server";
 
+const APP_ID = "com.example.app";
+const ITEM_KV_PREFIX = `${APP_ID}/items/`;
+const ITEM_SQL_DATABASE = `${APP_ID}/items`;
+
 // ── Items Router ─────────────────────────────────────────────────────
 
 export function createItemsRouter() {
@@ -19,7 +23,7 @@ export function createItemsRouter() {
 
     try {
       if (storeType === "sql" || storeType === "duckdb") {
-        const svc = storeType === "duckdb" ? access.duckdb : access.sql;
+        const svc = itemDatabase(access, storeType);
         await ensureTable(access, storeType);
 
         // SQL/DuckDB supports search + sort via query params
@@ -45,7 +49,7 @@ export function createItemsRouter() {
         res.json({ items });
       } else {
         // KV list returns { keys: string[] }, then get each value in parallel
-        const listResult = await access.kv.list({ prefix: "items/" });
+        const listResult = await access.kv.list({ prefix: ITEM_KV_PREFIX });
         if (!listResult.ok) {
           res.json({ items: [] });
           return;
@@ -97,7 +101,7 @@ export function createItemsRouter() {
 
     try {
       if (storeType === "sql" || storeType === "duckdb") {
-        const svc = storeType === "duckdb" ? access.duckdb : access.sql;
+        const svc = itemDatabase(access, storeType);
         await ensureTable(access, storeType);
         const insertResult = await svc.execute(
           `INSERT INTO items (id, title, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
@@ -106,7 +110,7 @@ export function createItemsRouter() {
         if (!insertResult.ok)
           throw new Error(`${storeType} insert failed: ${insertResult.error.message}`);
       } else {
-        const putResult = await access.kv.put(`items/${item.id}`, item);
+        const putResult = await access.kv.put(itemKey(item.id), item);
         if (!putResult.ok) throw new Error(`KV put failed: ${putResult.error.message}`);
       }
 
@@ -128,7 +132,7 @@ export function createItemsRouter() {
 
     try {
       if (storeType === "sql" || storeType === "duckdb") {
-        const svc = storeType === "duckdb" ? access.duckdb : access.sql;
+        const svc = itemDatabase(access, storeType);
         await ensureTable(access, storeType);
         const result = await svc.query(
           `SELECT id, title, data, created_at, updated_at FROM items WHERE id = ?`,
@@ -145,7 +149,7 @@ export function createItemsRouter() {
         }
         res.json({ item: rowToItem(rows[0], columns) });
       } else {
-        const result = await access.kv.get(`items/${id}`);
+        const result = await access.kv.get(itemKey(id));
         if (!result.ok || !result.data?.data) {
           res.status(404).json({
             error: "not_found",
@@ -185,7 +189,7 @@ export function createItemsRouter() {
       const now = new Date().toISOString();
 
       if (storeType === "sql" || storeType === "duckdb") {
-        const svc = storeType === "duckdb" ? access.duckdb : access.sql;
+        const svc = itemDatabase(access, storeType);
         await ensureTable(access, storeType);
 
         // Check if exists
@@ -230,7 +234,7 @@ export function createItemsRouter() {
         res.json({ item: rowToItem(rows[0], columns) });
       } else {
         // KV: read-modify-write
-        const result = await access.kv.get(`items/${id}`);
+        const result = await access.kv.get(itemKey(id));
         if (!result.ok || !result.data?.data) {
           res.status(404).json({
             error: "not_found",
@@ -248,7 +252,7 @@ export function createItemsRouter() {
           updatedAt: now,
         };
 
-        const putResult = await access.kv.put(`items/${id}`, updated);
+        const putResult = await access.kv.put(itemKey(id), updated);
         if (!putResult.ok) throw new Error(`KV put failed: ${putResult.error.message}`);
         res.json({ item: updated });
       }
@@ -269,7 +273,7 @@ export function createItemsRouter() {
 
     try {
       if (storeType === "sql" || storeType === "duckdb") {
-        const svc = storeType === "duckdb" ? access.duckdb : access.sql;
+        const svc = itemDatabase(access, storeType);
         await ensureTable(access, storeType);
 
         // Check if exists
@@ -287,7 +291,7 @@ export function createItemsRouter() {
           throw new Error(`${storeType} delete failed: ${deleteResult.error.message}`);
       } else {
         // KV: check existence, then delete
-        const result = await access.kv.get(`items/${id}`);
+        const result = await access.kv.get(itemKey(id));
         if (!result.ok || !result.data?.data) {
           res.status(404).json({
             error: "not_found",
@@ -296,7 +300,7 @@ export function createItemsRouter() {
           return;
         }
 
-        await access.kv.delete(`items/${id}`);
+        await access.kv.delete(itemKey(id));
       }
 
       res.status(204).send();
@@ -317,6 +321,18 @@ function getStoreType(req: Request): StoreType {
   return "kv";
 }
 
+function itemKey(id: string): string {
+  return `${ITEM_KV_PREFIX}${id}`;
+}
+
+type DatabaseService = DelegatedAccess["sql"] | DelegatedAccess["duckdb"];
+
+function itemDatabase(access: DelegatedAccess, storeType: "sql" | "duckdb"): DatabaseService {
+  const service = storeType === "duckdb" ? access.duckdb : access.sql;
+  const maybeScoped = service as DatabaseService & { db?: (name: string) => DatabaseService };
+  return typeof maybeScoped.db === "function" ? maybeScoped.db(ITEM_SQL_DATABASE) : service;
+}
+
 /**
  * Ensure the items table exists. Runs CREATE TABLE IF NOT EXISTS
  * at most once per DelegatedAccess + store type combination.
@@ -331,7 +347,7 @@ async function ensureTable(access: DelegatedAccess, storeType: "sql" | "duckdb")
   }
   if (created.has(storeType)) return;
 
-  const svc = storeType === "duckdb" ? access.duckdb : access.sql;
+  const svc = itemDatabase(access, storeType);
   const result = await svc.execute(`
     CREATE TABLE IF NOT EXISTS items (
       id TEXT PRIMARY KEY,

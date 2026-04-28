@@ -5,9 +5,9 @@ A full-stack demo showing OpenKey authentication, TinyCloud delegation, and CRUD
 **What this demonstrates:**
 - OAuth PKCE sign-in via OpenKey (popup mode)
 - TinyCloud session creation + space auto-provisioning
-- Scoped delegation from user to backend (7-day expiry, items/ path)
+- Manifest-backed delegation from user to backend (7-day expiry, `com.example.app/` app scope)
 - JWT-authenticated API with delegation-based authorization
-- CRUD on user-owned data via both KV and SQL storage
+- CRUD on user-owned data via KV, SQL, and DuckDB storage
 
 ## Prerequisites
 
@@ -43,11 +43,10 @@ BACKEND_PRIVATE_KEY=0x...
 VITE_OPENKEY_CLIENT_ID=your-client-id
 
 # Optional — defaults work for local dev
-TINYCLOUD_HOST=https://node.tinycloud.xyz
+# TINYCLOUD_HOST=https://node.tinycloud.xyz
 OPENKEY_ISSUER_URL=https://openkey.so
 PORT=3001
 VITE_OPENKEY_HOST=https://openkey.so
-VITE_TINYCLOUD_HOST=https://node.tinycloud.xyz
 VITE_BACKEND_URL=http://localhost:3001
 ```
 
@@ -77,7 +76,7 @@ bun run dev:backend    # Just the backend
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/server-info` | Returns `{ did, status }` for the backend |
+| GET | `/api/server-info` | Returns backend DID and app-relative permissions for manifest composition |
 
 ### Authenticated (JWT required)
 
@@ -89,7 +88,7 @@ bun run dev:backend    # Just the backend
 
 ### Authenticated + Delegated (JWT + active delegation required)
 
-All item routes accept `?store=kv` (default) or `?store=sql`.
+All item routes accept `?store=kv` (default), `?store=sql`, or `?store=duckdb`.
 
 | Method | Path | Body | Response |
 |--------|------|------|----------|
@@ -107,7 +106,7 @@ All item routes accept `?store=kv` (default) or `?store=sql`.
 Sign in with OpenKey. This opens a popup for OAuth, connects the wallet, and creates a TinyCloud session. After sign-in, your address and DID are displayed.
 
 ### 2. Delegation
-Fetches the backend's DID from `/api/server-info`, then lets you grant or revoke a delegation. The delegation scopes the backend to `items/` with full KV and SQL access for 7 days. Status is polled every 30 seconds.
+Fetches `/api/server-info`, composes those app-relative backend permissions with `manifest.json`, signs one TinyCloud session request, then materializes the backend delegation. Status is polled every 30 seconds.
 
 ### 3. Items (CRUD)
 Create, read, update, and delete items. Toggle between KV and SQL storage modes. A collapsible "Last API Response" section shows raw JSON for debugging.
@@ -126,10 +125,15 @@ export interface Task {
 }
 ```
 
-**2. Update the delegation path** if needed:
+**2. Update the manifest** if needed:
 ```typescript
-// packages/core/src/index.ts
-export const DEFAULT_DELEGATION_PATH = "tasks/";
+// frontend/public/manifest.json
+{
+  "manifest_version": 1,
+  "app_id": "com.example.app",
+  "name": "Example App",
+  "defaults": true
+}
 ```
 
 **3. Add new routes** — copy `backend/src/routes/items.ts`:

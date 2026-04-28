@@ -106,21 +106,6 @@ export type StoreType = "kv" | "sql" | "duckdb";
 
 // ── Constants ────────────────────────────────────────────────────────
 
-/** Default TinyCloud actions for item CRUD (KV + SQL + DuckDB) */
-export const DEFAULT_DELEGATION_ACTIONS = [
-  "tinycloud.kv/get",
-  "tinycloud.kv/put",
-  "tinycloud.kv/del",
-  "tinycloud.kv/list",
-  "tinycloud.sql/read",
-  "tinycloud.sql/write",
-  "tinycloud.duckdb/read",
-  "tinycloud.duckdb/write",
-] as const;
-
-/** Default delegation path scope — empty string means full access (same as default TinyCloud session) */
-export const DEFAULT_DELEGATION_PATH = "";
-
 /** Default delegation expiry: 1 year */
 export const DEFAULT_DELEGATION_EXPIRY_MS = 365 * 24 * 60 * 60 * 1000;
 
