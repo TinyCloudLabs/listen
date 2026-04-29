@@ -20,6 +20,7 @@ import {
 
 import { createAuthMiddleware } from "./middleware/auth.js";
 import { createDelegationMiddleware } from "./middleware/delegation.js";
+import { activatePortableDelegation } from "./delegation-activation.js";
 import { backendDelegationPolicyHash, resolveAppPath } from "./manifest.js";
 import { createAuthRouter } from "./routes/auth.js";
 import { createManifestRouter } from "./routes/manifest.js";
@@ -135,7 +136,7 @@ async function main() {
     // Activate delegation
     try {
       const delegation = deserializeDelegation(stored.serialized);
-      access = await node.useDelegation(delegation);
+      access = await activatePortableDelegation(node, delegation);
       delegationCache.set(address, access);
       console.log("[webhook] delegation activated from store");
       return access;
@@ -187,7 +188,7 @@ async function main() {
       }
       try {
         const delegation = deserializeDelegation(stored.serialized);
-        access = await node.useDelegation(delegation);
+        access = await activatePortableDelegation(node, delegation);
         delegationCache.set(address, access);
         return access;
       } catch {
@@ -286,7 +287,7 @@ async function main() {
         if (!stored || new Date(stored.expiresAt).getTime() <= Date.now()) return null;
         try {
           const delegation = deserializeDelegation(stored.serialized);
-          access = await node.useDelegation(delegation);
+          access = await activatePortableDelegation(node, delegation);
           delegationCache.set(address, access);
           return access;
         } catch {

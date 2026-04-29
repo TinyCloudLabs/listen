@@ -48,6 +48,7 @@ export function App() {
   const [pendingBanner, setPendingBanner] = useState<string | null>(null);
   const [gmLapsedBanner, setGmLapsedBanner] = useState(false);
   const [liveWritePathPrefix, setLiveWritePathPrefix] = useState<string | null>(null);
+  const [liveWriteHost, setLiveWriteHost] = useState<string | null>(null);
 
   const sessionStoreRef = useRef(new SessionStore());
   const restoreAttemptedRef = useRef(false);
@@ -212,6 +213,7 @@ export function App() {
       setTcw(tcwInstance);
       setApi(apiClient);
       setLiveWritePathPrefix(conversationEventPathPrefix);
+      setLiveWriteHost(tcwInstance.hosts[0] ?? null);
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -229,6 +231,7 @@ export function App() {
     setTcw(null);
     setApi(null);
     setLiveWritePathPrefix(null);
+    setLiveWriteHost(null);
     setAuthError(null);
     setHasKey(null);
     setHasGoogleMeet(null);
@@ -327,10 +330,10 @@ export function App() {
               hasFireflies={hasKey === true}
               hasGoogleMeet={hasGoogleMeet === true}
             />
-            {ENABLE_TINYCLOUD_HOOKS && (
+            {ENABLE_TINYCLOUD_HOOKS && liveWriteHost && (
               <LiveWriteEvents
                 tcw={tcw}
-                hooksHost={tcw?.hosts[0] ?? ""}
+                hooksHost={liveWriteHost}
                 pathPrefix={liveWritePathPrefix}
                 onWrite={() => setRefreshKey((k) => k + 1)}
               />

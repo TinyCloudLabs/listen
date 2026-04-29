@@ -5,6 +5,7 @@ import { deserializeDelegation } from "@tinycloud/node-sdk";
 import type { DelegationStore, DelegationCache } from "@tinyboilerplate/server";
 import { DEFAULT_DELEGATION_EXPIRY_MS, type ServerInfoPermission } from "@tinyboilerplate/core";
 import { backendDelegationPolicyHash, delegationCoversBackendPolicy } from "../manifest.js";
+import { activatePortableDelegation } from "../delegation-activation.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -52,7 +53,7 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
       }
 
       // Activate the delegation to verify it works
-      const access = await node.useDelegation(delegation);
+      const access = await activatePortableDelegation(node, delegation);
 
       // Extract metadata from the delegation itself
       const expiresAt = delegation.expiry
@@ -202,13 +203,30 @@ function extractDelegationResources(delegation: { resources?: unknown }): Server
       return [];
     }
 
+    const service = normalizeDelegationService(entry.service);
+
     return [
       {
-        service: entry.service,
-        ...(typeof entry.space === "string" ? { space: entry.space } : {}),
+        service,
+        ...(typeof entry.space === "string"
+          ? { space: normalizeDelegationSpace(entry.space) }
+          : {}),
         path: entry.path,
-        actions: [...entry.actions],
+        actions: entry.actions.map((action) => normalizeDelegationAction(action, service)),
       },
     ];
   });
+}
+
+function normalizeDelegationService(service: string): string {
+  return service.startsWith("tinycloud.") ? service : `tinycloud.${service}`;
+}
+
+function normalizeDelegationSpace(space: string): string {
+  const parts = space.split(":");
+  return parts.at(-1) || space;
+}
+
+function normalizeDelegationAction(action: string, service: string): string {
+  return action.includes("/") ? action : `${service}/${action}`;
 }

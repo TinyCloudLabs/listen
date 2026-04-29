@@ -84,6 +84,13 @@ describe("resolveManifestPermissions", () => {
         actions: ["tinycloud.sql/read", "tinycloud.sql/write"],
         description: "Conversation records",
       },
+      {
+        service: "tinycloud.capabilities",
+        space: "applications",
+        path: "",
+        actions: ["tinycloud.capabilities/read"],
+        description: undefined,
+      },
     ]);
   });
 });
@@ -128,6 +135,13 @@ describe("resolveManifestDelegationPermissions", () => {
         path: "com.example.app/conversations",
         actions: ["tinycloud.sql/read", "tinycloud.sql/write"],
         description: "Conversation records",
+      },
+      {
+        service: "tinycloud.capabilities",
+        space: "applications",
+        path: "",
+        actions: ["tinycloud.capabilities/read"],
+        description: undefined,
       },
     ]);
   });

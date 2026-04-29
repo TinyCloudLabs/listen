@@ -4,6 +4,7 @@ import { deserializeDelegation } from "@tinycloud/node-sdk";
 import type { DelegationStore, DelegationCache } from "@tinyboilerplate/server";
 import { withTimeout } from "./timeout.js";
 import { backendDelegationPolicyHash } from "../manifest.js";
+import { activatePortableDelegation } from "../delegation-activation.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -168,7 +169,7 @@ async function activateDelegation(
   serialized: string,
 ) {
   const delegation = deserializeDelegation(serialized);
-  const access = await node.useDelegation(delegation);
+  const access = await activatePortableDelegation(node, delegation);
   console.log(
     `[delegation] activated: address=${address} spaceId=${access.spaceId} path=${JSON.stringify(access.path)}`,
   );
