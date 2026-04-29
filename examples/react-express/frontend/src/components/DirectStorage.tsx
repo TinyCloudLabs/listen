@@ -1,6 +1,10 @@
 import { type FC, useCallback, useState } from "react";
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
 
+const APP_ID = "com.example.app";
+const APP_KV_PREFIX = `${APP_ID}/`;
+const APP_DATABASE = `${APP_ID}/items`;
+
 const SQL_EXAMPLE_QUERIES = [
   {
     label: "Create table",
@@ -59,6 +63,21 @@ interface DirectStorageProps {
   tcw: TinyCloudWeb | null;
 }
 
+type DatabaseRunner = {
+  query: (sql: string, params?: unknown[]) => Promise<any>;
+  execute: (sql: string, params?: unknown[]) => Promise<any>;
+};
+
+function appSql(tcw: TinyCloudWeb): DatabaseRunner {
+  const service = tcw.sql as DatabaseRunner & { db?: (name: string) => DatabaseRunner };
+  return typeof service.db === "function" ? service.db(APP_DATABASE) : service;
+}
+
+function appDuckdb(tcw: TinyCloudWeb): DatabaseRunner {
+  const service = tcw.duckdb as DatabaseRunner & { db?: (name: string) => DatabaseRunner };
+  return typeof service.db === "function" ? service.db(APP_DATABASE) : service;
+}
+
 export const DirectStorage: FC<DirectStorageProps> = ({ tcw }) => {
   const [mode, setMode] = useState<"kv" | "sql" | "duckdb">("kv");
   const [loading, setLoading] = useState(false);
@@ -66,11 +85,11 @@ export const DirectStorage: FC<DirectStorageProps> = ({ tcw }) => {
   const [lastResult, setLastResult] = useState<unknown>(null);
 
   // KV state
-  const [kvPrefix, setKvPrefix] = useState("");
+  const [kvPrefix, setKvPrefix] = useState(APP_KV_PREFIX);
   const [kvKeys, setKvKeys] = useState<string[]>([]);
   const [kvSelectedKey, setKvSelectedKey] = useState<string | null>(null);
   const [kvValue, setKvValue] = useState<string | null>(null);
-  const [kvPutKey, setKvPutKey] = useState("");
+  const [kvPutKey, setKvPutKey] = useState(`${APP_KV_PREFIX}scratch`);
   const [kvPutValue, setKvPutValue] = useState("");
 
   // SQL state
@@ -143,7 +162,7 @@ export const DirectStorage: FC<DirectStorageProps> = ({ tcw }) => {
           return;
         }
         setLastResult({ success: true, key: kvPutKey.trim() });
-        setKvPutKey("");
+        setKvPutKey(`${APP_KV_PREFIX}scratch`);
         setKvPutValue("");
       } finally {
         setLoading(false);
@@ -182,7 +201,7 @@ export const DirectStorage: FC<DirectStorageProps> = ({ tcw }) => {
     setError(null);
     setSqlResult(null);
     try {
-      const result = await tcw.sql.query(sqlInput.trim());
+      const result = await appSql(tcw).query(sqlInput.trim());
       if (!result.ok) {
         setError(`SQL query failed: ${result.error.message}`);
         return;
@@ -200,7 +219,7 @@ export const DirectStorage: FC<DirectStorageProps> = ({ tcw }) => {
     setError(null);
     setSqlResult(null);
     try {
-      const result = await tcw.sql.execute(sqlInput.trim());
+      const result = await appSql(tcw).execute(sqlInput.trim());
       if (!result.ok) {
         setError(`SQL execute failed: ${result.error.message}`);
         return;
@@ -220,7 +239,7 @@ export const DirectStorage: FC<DirectStorageProps> = ({ tcw }) => {
     setError(null);
     setSqlResult(null);
     try {
-      const result = await tcw.duckdb.query(sqlInput.trim());
+      const result = await appDuckdb(tcw).query(sqlInput.trim());
       if (!result.ok) {
         setError(`DuckDB query failed: ${result.error.message}`);
         return;
@@ -238,7 +257,7 @@ export const DirectStorage: FC<DirectStorageProps> = ({ tcw }) => {
     setError(null);
     setSqlResult(null);
     try {
-      const result = await tcw.duckdb.execute(sqlInput.trim());
+      const result = await appDuckdb(tcw).execute(sqlInput.trim());
       if (!result.ok) {
         setError(`DuckDB execute failed: ${result.error.message}`);
         return;

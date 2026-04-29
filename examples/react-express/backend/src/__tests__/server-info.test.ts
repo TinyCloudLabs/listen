@@ -57,7 +57,7 @@ describe("GET /api/server-info", () => {
     expect(body).toMatchObject({
       did: TEST_DID,
       status: "ready",
-      name: "TinyBoilerplate Backend",
+      name: "Example App Backend",
       expiry: "7d",
     });
     expect(Array.isArray(body.permissions)).toBe(true);

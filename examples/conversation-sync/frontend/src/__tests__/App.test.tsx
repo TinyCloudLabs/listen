@@ -65,16 +65,6 @@ vi.mock("@tinyboilerplate/client", () => {
       expiryMs: 2592000000,
       includePublicSpace: true,
     })),
-    resolveTinyCloudHosts: vi.fn().mockResolvedValue({
-      hosts: ["https://node.tinycloud.xyz"],
-      location: {
-        subject: "did:pkh:eip155:1:0xabc123",
-        source: "fallback",
-        multiaddrs: ["/dns/node.tinycloud.xyz/tcp/443/tls/http"],
-        attempts: [],
-        resolvedAt: "2026-04-28T00:00:00.000Z",
-      },
-    }),
     resolveManifestPermissions: vi.fn().mockReturnValue([
       {
         service: "tinycloud.kv",

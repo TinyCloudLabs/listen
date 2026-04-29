@@ -1,33 +1,15 @@
 {
-  "id": "com.tinyboilerplate.react-express",
-  "name": "TinyBoilerplate (React + Express example)",
-  "description": "React frontend + Express backend demo for TinyCloud + OpenKey.",
-  "prefix": "",
-  "defaults": false,
+  "manifest_version": 1,
+  "app_id": "com.example.app",
+  "name": "Example App",
+  "description": "A React and Express TinyCloud example app.",
+  "defaults": true,
   "permissions": [
     {
-      "service": "tinycloud.kv",
-      "space": "default",
-      "path": "",
-      "actions": ["get", "put", "del", "list", "metadata"]
-    },
-    {
-      "service": "tinycloud.sql",
-      "space": "default",
-      "path": "",
-      "actions": ["read", "write"]
-    },
-    {
       "service": "tinycloud.duckdb",
-      "space": "default",
-      "path": "",
-      "actions": ["read", "write"]
-    },
-    {
-      "service": "tinycloud.capabilities",
-      "space": "default",
-      "path": "",
-      "actions": ["read"]
+      "path": "/",
+      "actions": ["read", "write"],
+      "description": "Run optional DuckDB examples for Example App data."
     }
   ]
 }

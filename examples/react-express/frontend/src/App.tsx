@@ -24,7 +24,6 @@ import { DirectStorage } from "./components/DirectStorage";
 // ── Environment ─────────────────────────────────────────────────────
 
 const OPENKEY_HOST = import.meta.env.VITE_OPENKEY_HOST || "https://openkey.so";
-const TINYCLOUD_HOST = import.meta.env.VITE_TINYCLOUD_HOST || "https://node.tinycloud.xyz";
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
 
 // ── App ─────────────────────────────────────────────────────────────
@@ -139,7 +138,6 @@ export function App() {
       console.log("[sign-in] Step 4: TinyCloud sign-in with manifest...");
       const { tcw: tcwInstance, session } = await createAndSignIn(web3Provider, {
         nonce,
-        tinycloudHosts: [TINYCLOUD_HOST],
         autoCreateSpace: true,
         capabilityRequest: composed,
       });
@@ -172,9 +170,6 @@ export function App() {
           "Backend /api/server-info did not advertise any permissions — cannot build delegation",
         );
       }
-      // DIAGNOSTIC: dump the signed SIWE so we can inspect the recap
-      console.log("[diagnostic] session.siwe:\n" + session.siwe);
-      console.log("[diagnostic] composed request:", composed);
       const { serialized, prompted } = await createManifestDelegation(
         tcwInstance,
         info.did,

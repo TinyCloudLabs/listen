@@ -4,6 +4,9 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
+  optimizeDeps: {
+    exclude: ["@tinycloud/web-sdk"],
+  },
   server: {
     port: 5173,
     allowedHosts: true,
