@@ -10,7 +10,7 @@ const mockDeserializeDelegation = mock((serialized: string) => ({
     {
       service: "tinycloud.kv",
       space: "applications",
-      path: "com.tinycloud.conversation-sync/",
+      path: "xyz.tinycloud.listen/",
       actions: [
         "tinycloud.kv/get",
         "tinycloud.kv/put",
@@ -22,7 +22,7 @@ const mockDeserializeDelegation = mock((serialized: string) => ({
     {
       service: "tinycloud.sql",
       space: "applications",
-      path: "com.tinycloud.conversation-sync/conversations",
+      path: "xyz.tinycloud.listen/conversations",
       actions: ["tinycloud.sql/read", "tinycloud.sql/write"],
     },
     {
@@ -324,8 +324,8 @@ describe("Delegation Routes", () => {
 
       expect(mockUseDelegation).toHaveBeenCalledTimes(2);
       expect(mockUseDelegation.mock.calls.map((call) => call[0].path)).toEqual([
-        "com.tinycloud.conversation-sync/",
-        "com.tinycloud.conversation-sync/conversations",
+        "xyz.tinycloud.listen/",
+        "xyz.tinycloud.listen/conversations",
       ]);
     });
 
@@ -341,7 +341,7 @@ describe("Delegation Routes", () => {
       expect(stored!.serialized).toBe("persistent-delegation");
       expect(stored!.actions).toContain("tinycloud.kv/get");
       expect(stored!.actions).toContain("tinycloud.sql/write");
-      expect(stored!.path).toContain("tinycloud.sql:com.tinycloud.conversation-sync/conversations");
+      expect(stored!.path).toContain("tinycloud.sql:xyz.tinycloud.listen/conversations");
       expect(stored!.policyHash).toBeDefined();
       expect(stored!.resources?.length).toBe(3);
     });
@@ -353,7 +353,7 @@ describe("Delegation Routes", () => {
           {
             service: "kv",
             space: "tinycloud:pkh:eip155:1:0xTEST:applications",
-            path: "com.tinycloud.conversation-sync/",
+            path: "xyz.tinycloud.listen/",
             actions: [
               "tinycloud.kv/get",
               "tinycloud.kv/put",
@@ -365,7 +365,7 @@ describe("Delegation Routes", () => {
           {
             service: "sql",
             space: "tinycloud:pkh:eip155:1:0xTEST:applications",
-            path: "com.tinycloud.conversation-sync/conversations",
+            path: "xyz.tinycloud.listen/conversations",
             actions: ["tinycloud.sql/read", "tinycloud.sql/write"],
           },
           {
@@ -390,7 +390,7 @@ describe("Delegation Routes", () => {
         {
           service: "tinycloud.kv",
           space: "applications",
-          path: "com.tinycloud.conversation-sync/",
+          path: "xyz.tinycloud.listen/",
           actions: [
             "tinycloud.kv/get",
             "tinycloud.kv/put",
@@ -402,7 +402,7 @@ describe("Delegation Routes", () => {
         {
           service: "tinycloud.sql",
           space: "applications",
-          path: "com.tinycloud.conversation-sync/conversations",
+          path: "xyz.tinycloud.listen/conversations",
           actions: ["tinycloud.sql/read", "tinycloud.sql/write"],
         },
         {

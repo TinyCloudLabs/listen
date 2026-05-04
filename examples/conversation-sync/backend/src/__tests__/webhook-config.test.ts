@@ -30,8 +30,8 @@ function createMockKV() {
 // ── Test Helpers ─────────────────────────────────────────────────────
 
 const TEST_SUB = "test-sub";
-const SECRET_KV_KEY = "com.tinycloud.conversation-sync/webhooks/config/fireflies-secret";
-const PENDING_KV_KEY = "com.tinycloud.conversation-sync/webhooks/pending/fireflies";
+const SECRET_KV_KEY = "xyz.tinycloud.listen/webhooks/config/fireflies-secret";
+const PENDING_KV_KEY = "xyz.tinycloud.listen/webhooks/pending/fireflies";
 
 function mockAuthMiddleware(req: Request, _res: Response, next: NextFunction) {
   req.user = { sub: TEST_SUB };

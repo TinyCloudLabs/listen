@@ -6,7 +6,7 @@ describe("manifest", () => {
     const manifest = runtimeManifest();
 
     expect((manifest as { manifest_version?: number }).manifest_version).toBe(1);
-    expect(manifest.app_id).toBe("com.tinycloud.conversation-sync");
+    expect(manifest.app_id).toBe("xyz.tinycloud.listen");
     expect(manifest.prefix).toBeUndefined();
     expect(manifest.defaults).toBe(true);
     expect(manifest.delegations).toBeUndefined();
@@ -14,7 +14,7 @@ describe("manifest", () => {
     expect(manifest.permissions).toEqual([
       {
         service: "tinycloud.hooks",
-        path: "sql/com.tinycloud.conversation-sync/conversations/conversation",
+        path: "sql/xyz.tinycloud.listen/conversations/conversation",
         actions: ["subscribe"],
         skipPrefix: true,
         description:
@@ -25,10 +25,10 @@ describe("manifest", () => {
 
   test("resolves app-relative paths with the manifest app_id prefix", () => {
     expect(resolveAppPath("config/fireflies-key")).toBe(
-      "com.tinycloud.conversation-sync/config/fireflies-key",
+      "xyz.tinycloud.listen/config/fireflies-key",
     );
     expect(resolveAppPath("conversations", "tinycloud.sql")).toBe(
-      "com.tinycloud.conversation-sync/conversations",
+      "xyz.tinycloud.listen/conversations",
     );
   });
 });

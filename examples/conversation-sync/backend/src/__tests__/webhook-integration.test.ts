@@ -10,8 +10,8 @@ import type { FullTranscript } from "../services/fireflies-client.js";
 // ── Constants ───────────────────────────────────────────────────────
 
 const SECRET = "integration-test-webhook-secret";
-const SECRET_KV_KEY = "com.tinycloud.conversation-sync/webhooks/config/fireflies-secret";
-const PENDING_KV_KEY = "com.tinycloud.conversation-sync/webhooks/pending/fireflies";
+const SECRET_KV_KEY = "xyz.tinycloud.listen/webhooks/config/fireflies-secret";
+const PENDING_KV_KEY = "xyz.tinycloud.listen/webhooks/pending/fireflies";
 const FIREFLIES_KEY_PATH = "config/fireflies-key";
 
 // ── Test Helpers ────────────────────────────────────────────────────

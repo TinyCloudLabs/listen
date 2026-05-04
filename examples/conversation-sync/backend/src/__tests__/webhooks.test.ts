@@ -7,8 +7,8 @@ import { createWebhookRouter } from "../routes/webhooks.js";
 // ── Constants ───────────────────────────────────────────────────────
 
 const SECRET = "test-webhook-secret";
-const SECRET_KV_KEY = "com.tinycloud.conversation-sync/webhooks/config/fireflies-secret";
-const PENDING_KV_KEY = "com.tinycloud.conversation-sync/webhooks/pending/fireflies";
+const SECRET_KV_KEY = "xyz.tinycloud.listen/webhooks/config/fireflies-secret";
+const PENDING_KV_KEY = "xyz.tinycloud.listen/webhooks/pending/fireflies";
 const FIREFLIES_KEY_PATH = "config/fireflies-key";
 
 // ── Helpers ─────────────────────────────────────────────────────────

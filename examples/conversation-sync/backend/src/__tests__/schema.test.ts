@@ -19,7 +19,7 @@ import { conversationSql, ensureSchema, DATABASE_NAME } from "../schema.js";
 describe("schema", () => {
   describe("DATABASE_NAME", () => {
     it("exports the manifest-prefixed conversations database name", () => {
-      expect(DATABASE_NAME).toBe("com.tinycloud.conversation-sync/conversations");
+      expect(DATABASE_NAME).toBe("xyz.tinycloud.listen/conversations");
     });
   });
 

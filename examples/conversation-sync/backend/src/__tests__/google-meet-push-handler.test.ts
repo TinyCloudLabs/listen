@@ -51,8 +51,8 @@ function createMockAccess(opts?: { existingSourceIds?: string[] }) {
 const EXPECTED_AUDIENCE = "https://example.com/api/webhooks/google-meet";
 const EXPECTED_EMAIL = "sa@project.iam.gserviceaccount.com";
 const GOOGLE_TOKENS_PATH = "config/google-tokens";
-const PENDING_KV_KEY = "com.tinycloud.conversation-sync/webhooks/pending/google-meet";
-const FAILED_KV_KEY = "com.tinycloud.conversation-sync/webhooks/failed/google-meet";
+const PENDING_KV_KEY = "xyz.tinycloud.listen/webhooks/pending/google-meet";
+const FAILED_KV_KEY = "xyz.tinycloud.listen/webhooks/failed/google-meet";
 const TEST_CONFERENCE_NAME = "conferenceRecords/def456";
 const TEST_TRANSCRIPT_NAME = "conferenceRecords/def456/transcripts/ghi789";
 
