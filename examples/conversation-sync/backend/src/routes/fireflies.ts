@@ -13,7 +13,7 @@ interface FirefliesRoutesConfig {
 
 // ── Constants ────────────────────────────────────────────────────────
 
-const FIREFLIES_KEY_PATH = "/app.conversations/config/fireflies-key";
+const FIREFLIES_KEY_PATH = "config/fireflies-key";
 
 // ── Fireflies Routes ────────────────────────────────────────────────
 

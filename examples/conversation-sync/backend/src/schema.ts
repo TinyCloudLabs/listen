@@ -1,7 +1,23 @@
 import type { DelegatedAccess } from "@tinyboilerplate/server";
+import { resolveAppPath } from "./manifest.js";
 
 /** Database name for the conversations SQL store. */
-export const DATABASE_NAME = "conversations";
+export const DATABASE_NAME = resolveAppPath("conversations", "tinycloud.sql");
+
+type ConversationSql = Pick<DelegatedAccess["sql"], "query" | "execute">;
+
+/**
+ * Conversation data lives in its own TinyCloud SQL database. The SDK's
+ * `access.sql.query/execute` shortcuts target the SDK default database
+ * named "default", so backend routes must go through this helper.
+ */
+export function conversationSql(access: DelegatedAccess): ConversationSql {
+  const sql = access.sql as DelegatedAccess["sql"] & {
+    db?: (name: string) => ConversationSql;
+  };
+
+  return typeof sql.db === "function" ? sql.db(DATABASE_NAME) : sql;
+}
 
 /**
  * SQL statements to initialize the conversations schema.
@@ -50,8 +66,10 @@ const schemaInitialized = new WeakMap<object, boolean>();
 export async function ensureSchema(access: DelegatedAccess): Promise<void> {
   if (schemaInitialized.has(access)) return;
 
+  const sqlDb = conversationSql(access);
+
   for (const sql of SCHEMA_STATEMENTS) {
-    const result = await access.sql.execute(sql);
+    const result = await sqlDb.execute(sql);
     if (!result.ok) {
       const msg = (result as any).error?.message ?? "unknown error";
       // If table already exists, that's fine — skip
@@ -63,7 +81,7 @@ export async function ensureSchema(access: DelegatedAccess): Promise<void> {
       // the table already exists and the authorizer blocks redundant DDL
       if (msg.includes("not authorized")) {
         // Verify by trying a SELECT — if it works, table exists
-        const check = await access.sql.query("SELECT 1 FROM conversation LIMIT 1");
+        const check = await sqlDb.query("SELECT 1 FROM conversation LIMIT 1");
         if (check.ok) {
           console.log("[schema] Tables exist (verified via SELECT), skipping DDL");
           schemaInitialized.set(access, true);

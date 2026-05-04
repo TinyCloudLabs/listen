@@ -10,9 +10,9 @@ import type { FullTranscript } from "../services/fireflies-client.js";
 // ── Constants ───────────────────────────────────────────────────────
 
 const SECRET = "integration-test-webhook-secret";
-const SECRET_KV_KEY = "/app.webhooks/config/fireflies-secret";
-const PENDING_KV_KEY = "/app.webhooks/pending/fireflies";
-const FIREFLIES_KEY_PATH = "/app.conversations/config/fireflies-key";
+const SECRET_KV_KEY = "com.tinycloud.conversation-sync/webhooks/config/fireflies-secret";
+const PENDING_KV_KEY = "com.tinycloud.conversation-sync/webhooks/pending/fireflies";
+const FIREFLIES_KEY_PATH = "config/fireflies-key";
 
 // ── Test Helpers ────────────────────────────────────────────────────
 
@@ -306,7 +306,7 @@ describe("Webhook Integration Tests", () => {
 
       // Verify transcript blob was stored in KV
       const convId = json.conversationId;
-      const kvKey = `/app.conversations/transcript/${convId}`;
+      const kvKey = `transcript/${convId}`;
       const storedBlob = mockAccess.kv._data.get(kvKey);
       expect(storedBlob).toBeDefined();
       const parsed = JSON.parse(storedBlob!);

@@ -1,0 +1,16 @@
+{
+  "manifest_version": 1,
+  "app_id": "com.tinycloud.conversation-sync",
+  "name": "Conversation Sync",
+  "description": "Sync Fireflies and Google Meet transcripts into a TinyCloud space.",
+  "defaults": true,
+  "permissions": [
+    {
+      "service": "tinycloud.hooks",
+      "path": "sql/com.tinycloud.conversation-sync/conversations/conversation",
+      "actions": ["subscribe"],
+      "skipPrefix": true,
+      "description": "Subscribe to conversation row write events for live updates when hooks are enabled."
+    }
+  ]
+}

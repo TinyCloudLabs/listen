@@ -3,6 +3,14 @@ import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/re
 
 // ── Mocks ────────────────────────────────────────────────────────────
 
+(globalThis as unknown as { HTMLElement?: unknown }).HTMLElement ??= class HTMLElement {};
+(globalThis as unknown as { customElements?: unknown }).customElements ??= {
+  define() {},
+  get() {
+    return undefined;
+  },
+};
+
 const mockGet = vi.fn();
 const mockPost = vi.fn();
 const mockPut = vi.fn();
@@ -33,10 +41,41 @@ vi.mock("@tinyboilerplate/client", () => {
     verifySession: vi.fn(),
     createAndSignIn: vi.fn(),
     createApiClient: vi.fn(() => mockApiClient),
-    createDelegation: vi.fn(),
+    createManifestDelegation: vi.fn(),
     sendDelegation: vi.fn(),
     checkDelegationStatus: vi.fn().mockResolvedValue({ status: "active" }),
     revokeDelegation: vi.fn(),
+    loadAppManifest: vi.fn().mockResolvedValue({
+      app_id: "com.test.listen",
+      name: "Conversation Sync",
+      defaults: true,
+    }),
+    composeManifestWithBackend: vi.fn((manifest) => ({
+      manifests: [manifest],
+      resources: [],
+      delegationTargets: [
+        {
+          did: "did:key:backend",
+          name: "Backend",
+          expiryMs: 604800000,
+          permissions: [],
+        },
+      ],
+      registryRecords: [],
+      expiryMs: 2592000000,
+      includePublicSpace: true,
+    })),
+    resolveManifestPermissions: vi.fn().mockReturnValue([
+      {
+        service: "tinycloud.kv",
+        space: "applications",
+        path: "com.test.listen/",
+        actions: ["tinycloud.kv/get", "tinycloud.kv/put"],
+      },
+    ]),
+    resolveManifestPermissionPath: vi
+      .fn()
+      .mockReturnValue("com.test.listen/conversations/conversation"),
     SessionStore: MockSessionStore,
   };
 });

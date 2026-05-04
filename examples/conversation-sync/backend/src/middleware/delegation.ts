@@ -3,6 +3,8 @@ import type { TinyCloudNode } from "@tinycloud/node-sdk";
 import { deserializeDelegation } from "@tinycloud/node-sdk";
 import type { DelegationStore, DelegationCache } from "@tinyboilerplate/server";
 import { withTimeout } from "./timeout.js";
+import { backendDelegationPolicyHash } from "../manifest.js";
+import { activatePortableDelegation } from "../delegation-activation.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -69,6 +71,16 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
         return;
       }
 
+      if (stored.policyHash !== backendDelegationPolicyHash()) {
+        await store.remove(address);
+        cache.evict(address);
+        res.status(403).json({
+          error: "delegation_stale",
+          message: "Delegation permissions are stale. Please sign in again.",
+        });
+        return;
+      }
+
       // Deserialize and activate the delegation
       access = await withTimeout(activateDelegation(node, cache, address, stored.serialized));
       req.delegatedAccess = access;
@@ -113,6 +125,16 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
             return;
           }
 
+          if (stored.policyHash !== backendDelegationPolicyHash()) {
+            await store.remove(address);
+            cache.evict(address);
+            res.status(403).json({
+              error: "delegation_stale",
+              message: "Delegation permissions are stale. Please sign in again.",
+            });
+            return;
+          }
+
           access = await withTimeout(activateDelegation(node, cache, address, stored.serialized));
           req.delegatedAccess = access;
           next();
@@ -147,7 +169,7 @@ async function activateDelegation(
   serialized: string,
 ) {
   const delegation = deserializeDelegation(serialized);
-  const access = await node.useDelegation(delegation);
+  const access = await activatePortableDelegation(node, delegation);
   console.log(
     `[delegation] activated: address=${address} spaceId=${access.spaceId} path=${JSON.stringify(access.path)}`,
   );

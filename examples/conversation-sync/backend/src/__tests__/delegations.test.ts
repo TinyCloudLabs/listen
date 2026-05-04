@@ -6,6 +6,32 @@ const mockDeserializeDelegation = mock((serialized: string) => ({
   expiry: new Date(Date.now() + 86400_000),
   actions: ["tinycloud.kv/get", "tinycloud.kv/put"],
   path: "",
+  resources: [
+    {
+      service: "tinycloud.kv",
+      space: "applications",
+      path: "com.tinycloud.conversation-sync/",
+      actions: [
+        "tinycloud.kv/get",
+        "tinycloud.kv/put",
+        "tinycloud.kv/del",
+        "tinycloud.kv/list",
+        "tinycloud.kv/metadata",
+      ],
+    },
+    {
+      service: "tinycloud.sql",
+      space: "applications",
+      path: "com.tinycloud.conversation-sync/conversations",
+      actions: ["tinycloud.sql/read", "tinycloud.sql/write"],
+    },
+    {
+      service: "tinycloud.capabilities",
+      space: "applications",
+      path: "",
+      actions: ["tinycloud.capabilities/read"],
+    },
+  ],
   ownerAddress: "0xTEST",
   _serialized: serialized,
 }));
@@ -37,6 +63,8 @@ interface StoredEntry {
   expiresAt: string;
   actions: string[];
   path: string;
+  policyHash?: string;
+  resources?: Array<{ service: string; space?: string; path: string; actions: string[] }>;
 }
 
 function createMockDelegationStore() {
@@ -51,6 +79,8 @@ function createMockDelegationStore() {
         expiresAt: metadata.expiresAt,
         actions: metadata.actions,
         path: metadata.path,
+        policyHash: metadata.policyHash,
+        resources: metadata.resources,
       });
     },
     load: async (identifier: string) => {
@@ -188,6 +218,23 @@ describe("Delegation Routes", () => {
       expect(body.expiresAt).toBeDefined();
     });
 
+    it("returns 'none' and removes stale delegations without the current policy hash", async () => {
+      await store.store(TEST_ADDRESS, "old-delegation", {
+        expiresAt: new Date(Date.now() + 1000).toISOString(),
+        actions: [],
+        path: "items/",
+      });
+      cache.set(TEST_ADDRESS, { kv: {}, sql: {} });
+
+      const res = await fetch(`${baseUrl}/api/delegations/status`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.status).toBe("none");
+
+      expect(await store.load(TEST_ADDRESS)).toBeNull();
+      expect(cache.has(TEST_ADDRESS)).toBe(false);
+    });
+
     it("returns 'expired' for expired delegations", async () => {
       // Manually store an expired delegation
       await store.store(TEST_ADDRESS, "old-delegation", {
@@ -275,7 +322,11 @@ describe("Delegation Routes", () => {
         body: JSON.stringify({ serialized: "activatable" }),
       });
 
-      expect(mockUseDelegation).toHaveBeenCalledTimes(1);
+      expect(mockUseDelegation).toHaveBeenCalledTimes(2);
+      expect(mockUseDelegation.mock.calls.map((call) => call[0].path)).toEqual([
+        "com.tinycloud.conversation-sync/",
+        "com.tinycloud.conversation-sync/conversations",
+      ]);
     });
 
     it("persists delegation to the store", async () => {
@@ -289,7 +340,78 @@ describe("Delegation Routes", () => {
       expect(stored).not.toBeNull();
       expect(stored!.serialized).toBe("persistent-delegation");
       expect(stored!.actions).toContain("tinycloud.kv/get");
-      expect(stored!.path).toBe("");
+      expect(stored!.actions).toContain("tinycloud.sql/write");
+      expect(stored!.path).toContain("tinycloud.sql:com.tinycloud.conversation-sync/conversations");
+      expect(stored!.policyHash).toBeDefined();
+      expect(stored!.resources?.length).toBe(3);
+    });
+
+    it("accepts SDK portable resources with short service names and fully qualified spaces", async () => {
+      mockDeserializeDelegation.mockImplementationOnce((serialized: string) => ({
+        expiry: new Date(Date.now() + 86400_000),
+        resources: [
+          {
+            service: "kv",
+            space: "tinycloud:pkh:eip155:1:0xTEST:applications",
+            path: "com.tinycloud.conversation-sync/",
+            actions: [
+              "tinycloud.kv/get",
+              "tinycloud.kv/put",
+              "tinycloud.kv/del",
+              "tinycloud.kv/list",
+              "tinycloud.kv/metadata",
+            ],
+          },
+          {
+            service: "sql",
+            space: "tinycloud:pkh:eip155:1:0xTEST:applications",
+            path: "com.tinycloud.conversation-sync/conversations",
+            actions: ["tinycloud.sql/read", "tinycloud.sql/write"],
+          },
+          {
+            service: "capabilities",
+            space: "tinycloud:pkh:eip155:1:0xTEST:applications",
+            path: "",
+            actions: ["tinycloud.capabilities/read"],
+          },
+        ],
+        _serialized: serialized,
+      }));
+
+      const res = await fetch(`${baseUrl}/api/delegations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serialized: "sdk-portable-delegation" }),
+      });
+
+      expect(res.status).toBe(200);
+      const stored = await store.load(TEST_ADDRESS);
+      expect(stored!.resources).toEqual([
+        {
+          service: "tinycloud.kv",
+          space: "applications",
+          path: "com.tinycloud.conversation-sync/",
+          actions: [
+            "tinycloud.kv/get",
+            "tinycloud.kv/put",
+            "tinycloud.kv/del",
+            "tinycloud.kv/list",
+            "tinycloud.kv/metadata",
+          ],
+        },
+        {
+          service: "tinycloud.sql",
+          space: "applications",
+          path: "com.tinycloud.conversation-sync/conversations",
+          actions: ["tinycloud.sql/read", "tinycloud.sql/write"],
+        },
+        {
+          service: "tinycloud.capabilities",
+          space: "applications",
+          path: "",
+          actions: ["tinycloud.capabilities/read"],
+        },
+      ]);
     });
 
     it("caches the DelegatedAccess", async () => {

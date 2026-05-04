@@ -2,6 +2,7 @@ import type { DelegatedAccess } from "@tinyboilerplate/server";
 import type { GoogleMeetClient, ConferenceRecord } from "./google-meet-client.js";
 import { normalizeGoogleMeet } from "../adapters/google-meet.js";
 import { persistConversation } from "./persist-conversation.js";
+import { conversationSql } from "../schema.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -24,8 +25,10 @@ export async function syncSingleConference(
   const conferenceRecordName = conferenceRecord.name;
 
   try {
+    const sqlDb = conversationSql(access);
+
     // 1. Dedup check
-    const dedupResult = await access.sql.query(
+    const dedupResult = await sqlDb.query(
       `SELECT source_id FROM conversation WHERE source = 'google-meet' AND source_id = ?`,
       [conferenceRecordName],
     );

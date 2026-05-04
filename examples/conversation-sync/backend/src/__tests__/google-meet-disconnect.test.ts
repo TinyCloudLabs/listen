@@ -6,11 +6,12 @@ import { createConfigRouter } from "../routes/config.js";
 
 // ── Constants ───────────────────────────────────────────────────────
 
-const GOOGLE_TOKENS_PATH = "/app.conversations/config/google-tokens";
-const SUBSCRIPTION_KV_KEY = "/app.webhooks/config/google-meet-subscription";
-const PENDING_KV_KEY = "/app.webhooks/pending/google-meet";
-const FAILED_KV_KEY = "/app.webhooks/failed/google-meet";
-const USER_SUB_KV_PATH = "/app.webhooks/config/google-meet-user-sub";
+const GOOGLE_TOKENS_PATH = "config/google-tokens";
+const SUBSCRIPTION_KV_KEY =
+  "com.tinycloud.conversation-sync/webhooks/config/google-meet-subscription";
+const PENDING_KV_KEY = "com.tinycloud.conversation-sync/webhooks/pending/google-meet";
+const FAILED_KV_KEY = "com.tinycloud.conversation-sync/webhooks/failed/google-meet";
+const USER_SUB_KV_PATH = "com.tinycloud.conversation-sync/webhooks/config/google-meet-user-sub";
 
 const MOCK_TOKENS = {
   access_token: "ya29.test",

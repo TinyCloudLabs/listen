@@ -4,7 +4,8 @@ import type { DelegatedAccess } from "@tinyboilerplate/server";
 import { verifyFirefliesSignature } from "../services/webhook-verify.js";
 import { syncSingleTranscript, type SyncSingleResult } from "../services/sync-pipeline.js";
 import { FirefliesClient } from "../services/fireflies-client.js";
-import { ensureSchema } from "../schema.js";
+import { resolveAppPath } from "../manifest.js";
+import { conversationSql, ensureSchema } from "../schema.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -32,9 +33,9 @@ interface WebhookRoutesConfig {
 
 // ── Constants ────────────────────────────────────────────────────────
 
-const SECRET_KV_KEY = "/app.webhooks/config/fireflies-secret";
-const PENDING_KV_KEY = "/app.webhooks/pending/fireflies";
-const FIREFLIES_KEY_PATH = "/app.conversations/config/fireflies-key";
+const SECRET_KV_KEY = resolveAppPath("webhooks/config/fireflies-secret");
+const PENDING_KV_KEY = resolveAppPath("webhooks/pending/fireflies");
+const FIREFLIES_KEY_PATH = "config/fireflies-key";
 
 // ── Webhook Routes ──────────────────────────────────────────────────
 
@@ -311,8 +312,10 @@ async function updateSummary(
   access: DelegatedAccess,
   client: Pick<FirefliesClient, "getTranscript">,
 ): Promise<"updated" | "not_found" | "no_summary"> {
+  const sqlDb = conversationSql(access);
+
   // Find existing conversation by source_id
-  const result = await access.sql.query(
+  const result = await sqlDb.query(
     `SELECT id, metadata FROM conversation WHERE source = 'fireflies' AND source_id = ?`,
     [meetingId],
   );
@@ -341,7 +344,7 @@ async function updateSummary(
   metadata.meeting_type = transcript.summary?.meeting_type ?? null;
 
   const now = new Date().toISOString();
-  await access.sql.execute(
+  await sqlDb.execute(
     `UPDATE conversation SET summary = ?, metadata = ?, updated_at = ? WHERE id = ?`,
     [overview, JSON.stringify(metadata), now, convId],
   );

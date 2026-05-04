@@ -8,15 +8,33 @@ import { createConfigRouter } from "../routes/config.js";
 
 function createMockKV() {
   const data = new Map<string, string>();
+  let failPut: string | null = null;
+  let failGet: string | null = null;
 
   return {
     _data: data,
+    _failNextPut(message = "write denied") {
+      failPut = message;
+    },
+    _failNextGet(message = "read denied") {
+      failGet = message;
+    },
     get: async (key: string) => {
+      if (failGet) {
+        const message = failGet;
+        failGet = null;
+        return { ok: false, error: { code: "AUTH_UNAUTHORIZED", message } };
+      }
       const val = data.get(key);
-      if (val === undefined) return { ok: true, data: { data: null } };
+      if (val === undefined) return { ok: false, error: { code: "KV_NOT_FOUND" } };
       return { ok: true, data: { data: val } };
     },
     put: async (key: string, value: string) => {
+      if (failPut) {
+        const message = failPut;
+        failPut = null;
+        return { ok: false, error: { code: "AUTH_UNAUTHORIZED", message } };
+      }
       data.set(key, value);
       return { ok: true };
     },
@@ -30,7 +48,7 @@ function createMockKV() {
 // ── Test Helpers ─────────────────────────────────────────────────────
 
 const TEST_SUB = "test-sub";
-const KV_KEY = "/app.conversations/config/fireflies-key";
+const KV_KEY = "config/fireflies-key";
 
 function mockAuthMiddleware(req: Request, _res: Response, next: NextFunction) {
   req.user = { sub: TEST_SUB };
@@ -150,6 +168,35 @@ describe("Config Routes", () => {
       expect(res.status).toBe(200);
       expect(mockKV._data.get(KV_KEY)).toBe("new-key");
     });
+
+    it("returns 500 when TinyCloud rejects the KV write", async () => {
+      mockKV._failNextPut("delegation missing kv/put");
+
+      const res = await fetch(`http://localhost:${port}/api/config/fireflies-key`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: "new-key" }),
+      });
+
+      expect(res.status).toBe(500);
+      const body = await res.json();
+      expect(body.error).toBe("store_failed");
+      expect(mockKV._data.has(KV_KEY)).toBe(false);
+    });
+
+    it("returns 500 when the post-write verification read fails", async () => {
+      mockKV._failNextGet("delegation missing kv/get");
+
+      const res = await fetch(`http://localhost:${port}/api/config/fireflies-key`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: "new-key" }),
+      });
+
+      expect(res.status).toBe(500);
+      const body = await res.json();
+      expect(body.error).toBe("store_verification_failed");
+    });
   });
 
   // ── DELETE /api/config/fireflies-key ──────────────────────────────
@@ -196,6 +243,16 @@ describe("Config Routes", () => {
       expect(await res.json()).toEqual({ exists: false });
     });
 
+    it("returns 500 when TinyCloud rejects the existence check", async () => {
+      mockKV._failNextGet("delegation missing kv/get");
+
+      const res = await fetch(`http://localhost:${port}/api/config/fireflies-key/exists`);
+
+      expect(res.status).toBe(500);
+      const body = await res.json();
+      expect(body.error).toBe("check_failed");
+    });
+
     it("does not reveal the key value", async () => {
       mockKV._data.set(KV_KEY, "secret-api-key");
 
@@ -208,7 +265,7 @@ describe("Config Routes", () => {
 
   // ── Google Meet config routes ────────────────────────────────────
 
-  const GOOGLE_TOKENS_PATH = "/app.conversations/config/google-tokens";
+  const GOOGLE_TOKENS_PATH = "config/google-tokens";
 
   describe("GET /api/config/google-meet/connected", () => {
     it("returns connected: false when no tokens stored", async () => {

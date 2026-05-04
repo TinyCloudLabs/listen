@@ -9,6 +9,8 @@ export interface DelegationMetadata {
   expiresAt: string;
   actions: string[];
   path: string;
+  policyHash?: string;
+  resources?: StoredDelegation["resources"];
 }
 
 // ── Delegation Store ─────────────────────────────────────────────────
@@ -33,6 +35,8 @@ export class DelegationStore {
       expiresAt: metadata.expiresAt,
       actions: metadata.actions,
       path: metadata.path,
+      policyHash: metadata.policyHash,
+      resources: metadata.resources,
     };
 
     await withSessionRefresh(this.node, () => this.node.kv.put(key, record));

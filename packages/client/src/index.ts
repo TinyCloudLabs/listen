@@ -5,6 +5,15 @@ export { connectWallet, type ConnectWalletConfig, type ConnectWalletResult } fro
 export { createTinyCloudWeb, createAndSignIn, type TinyCloudWebConfig } from "./tinycloud.js";
 
 export {
+  loadAppManifest,
+  backendManifestFromServerInfo,
+  composeManifestWithBackend,
+  resolveManifestPermissions,
+  resolveManifestDelegationPermissions,
+  resolveManifestPermissionPath,
+} from "./manifest.js";
+
+export {
   loadPersistedSession,
   clearPersistedSession,
   type PersistedTinyCloudSession,
@@ -12,10 +21,10 @@ export {
 
 export {
   createDelegation,
+  createManifestDelegation,
   sendDelegation,
   checkDelegationStatus,
   revokeDelegation,
-  type DelegationOptions,
 } from "./delegation.js";
 
 export { requestNonce, verifySession, type VerifyResponse } from "./auth.js";

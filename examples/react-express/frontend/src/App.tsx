@@ -5,12 +5,14 @@ import {
   connectWallet,
   createAndSignIn,
   createApiClient,
-  createDelegation,
+  createManifestDelegation,
   sendDelegation,
   checkDelegationStatus,
   revokeDelegation,
   requestNonce,
   verifySession,
+  loadAppManifest,
+  composeManifestWithBackend,
   SessionStore,
   type ApiClient,
 } from "@tinyboilerplate/client";
@@ -22,7 +24,6 @@ import { DirectStorage } from "./components/DirectStorage";
 // ── Environment ─────────────────────────────────────────────────────
 
 const OPENKEY_HOST = import.meta.env.VITE_OPENKEY_HOST || "https://openkey.so";
-const TINYCLOUD_HOST = import.meta.env.VITE_TINYCLOUD_HOST || "https://node.tinycloud.xyz";
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
 
 // ── App ─────────────────────────────────────────────────────────────
@@ -103,55 +104,82 @@ export function App() {
       });
       console.log("[sign-in] Step 1 complete. Address:", addr);
 
-      // 2. Get nonce from backend
-      console.log("[sign-in] Step 2: Requesting nonce...");
-      const nonce = await requestNonce(BACKEND_URL, addr);
-      console.log("[sign-in] Step 2 complete. Nonce received.");
+      // 2. Get nonce from backend AND fetch the backend's advertised
+      //    permissions up front. We need those permissions BEFORE
+      //    signing in so we can compose the manifest that drives the
+      //    SIWE recap. Running both fetches in parallel keeps the
+      //    wall-clock overhead negligible.
+      console.log("[sign-in] Step 2: Fetching nonce + server-info in parallel...");
+      const [nonce, info] = await Promise.all([
+        requestNonce(BACKEND_URL, addr),
+        (async (): Promise<ServerInfo> => {
+          const res = await fetch(`${BACKEND_URL}/api/server-info`);
+          if (!res.ok) throw new Error(`Server info: ${res.statusText}`);
+          return res.json();
+        })(),
+      ]);
+      console.log("[sign-in] Step 2 complete. Backend DID:", info.did);
 
-      // 3. Create TinyCloudWeb with nonce and sign in — SDK embeds nonce in SIWE
-      console.log("[sign-in] Step 3: TinyCloud sign-in with nonce...");
+      // 3. Load the app manifest from /manifest.json and compose it
+      //    with the backend delegation the server-info response
+      //    declared. This is the object that drives the SIWE recap:
+      //    the session key acquires coverage for both the app's own
+      //    permissions and the backend's pre-declared delegation in
+      //    one unified capability set.
+      console.log("[sign-in] Step 3: Loading + composing manifest...");
+      const appManifest = await loadAppManifest("/manifest.json");
+      const composed = composeManifestWithBackend(appManifest, info);
+      console.log(
+        `[sign-in] Step 3 complete. Request has ${composed.delegationTargets.length} delegation target(s).`,
+      );
+
+      // 4. Create TinyCloudWeb with the composed capability request and
+      //    sign in. ONE wallet prompt covers the full app + backend union.
+      console.log("[sign-in] Step 4: TinyCloud sign-in with manifest...");
       const { tcw: tcwInstance, session } = await createAndSignIn(web3Provider, {
         nonce,
-        tinycloudHosts: [TINYCLOUD_HOST],
         autoCreateSpace: true,
+        capabilityRequest: composed,
       });
-      console.log("[sign-in] Step 3 complete. DID:", tcwInstance.did);
+      console.log("[sign-in] Step 4 complete. DID:", tcwInstance.did);
 
-      // 4. Send the SDK's SIWE message + signature to backend for verification
-      console.log("[sign-in] Step 4: Verifying SIWE with backend...");
+      // 5. Send the SDK's SIWE message + signature to backend for verification
+      console.log("[sign-in] Step 5: Verifying SIWE with backend...");
       const { token, expiresIn } = await verifySession(
         BACKEND_URL,
         session.siwe,
         session.signature,
       );
       sessionStoreRef.current.setSession(token, expiresIn, addr);
-      console.log("[sign-in] Step 4 complete. Session token received.");
+      console.log("[sign-in] Step 5 complete. Session token received.");
 
-      // 5. Create API client with session-based auth
+      // 6. Create API client with session-based auth
       const apiClient = createApiClient(BACKEND_URL, {
         sessionStore: sessionStoreRef.current,
       });
-      console.log("[sign-in] Step 5: API client created.");
-
-      // 6. Auto-delegate to backend
-      console.log("[sign-in] Step 6: Fetching server-info...");
-      const infoRes = await fetch(`${BACKEND_URL}/api/server-info`);
-      if (!infoRes.ok) throw new Error(`Server info: ${infoRes.statusText}`);
-      const info: ServerInfo = await infoRes.json();
-      const backendDID = info.did;
-      console.log("[sign-in] Step 6 complete. Backend DID:", backendDID);
+      console.log("[sign-in] Step 6: API client created.");
 
       const sessionToken = sessionStoreRef.current.getToken();
       if (!sessionToken) throw new Error("No session token after sign-in");
 
-      // Always create a fresh delegation on sign-in to pick up any
-      // config changes (path, actions, expiry). Sending a new delegation
-      // overwrites the previous one on the backend.
-      console.log("[sign-in] Step 7: Creating delegation...");
-      const serialized = await createDelegation(tcwInstance, backendDID);
-      console.log("[sign-in] Step 7 complete. Sending delegation...");
+      // 7. Materialize the backend delegation via the capability-chain flow.
+      //    Delivery remains app logic.
+      console.log("[sign-in] Step 7: Issuing backend delegation...");
+      if (composed.delegationTargets.length === 0) {
+        throw new Error(
+          "Backend /api/server-info did not advertise any permissions — cannot build delegation",
+        );
+      }
+      const { serialized, prompted } = await createManifestDelegation(
+        tcwInstance,
+        info.did,
+        composed,
+      );
+      console.log(`[sign-in] Step 7 complete. Delegation issued (wallet prompted: ${prompted}).`);
+
+      console.log("[sign-in] Step 8: Sending delegation to backend...");
       await sendDelegation(BACKEND_URL, serialized, sessionToken);
-      console.log("[sign-in] Step 8: Delegation sent. Sign-in complete!");
+      console.log("[sign-in] Step 8 complete. Sign-in complete!");
 
       // Update state — api being non-null signals delegation is ready
       setAddress(addr);

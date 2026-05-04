@@ -1,13 +1,29 @@
 import { TinyCloudWeb, BrowserSessionStorage } from "@tinycloud/web-sdk";
-import type { ClientSession, SiweConfig } from "@tinycloud/web-sdk";
+import type {
+  ClientSession,
+  ComposedManifestRequest,
+  Manifest,
+  SiweConfig,
+} from "@tinycloud/web-sdk";
 import type { providers } from "ethers";
 
 // ── Configuration ────────────────────────────────────────────────────
 
 export interface TinyCloudWebConfig {
   tinycloudHosts?: string[];
+  tinycloudRegistryUrl?: string | null;
+  tinycloudFallbackHosts?: string[] | null;
   autoCreateSpace?: boolean;
   siweConfig?: SiweConfig;
+  /**
+   * Manifest driving the SIWE recap at sign-in. If `capabilityRequest`
+   * is present, it takes precedence and is signed directly.
+   */
+  manifest?: Manifest;
+  /** Pre-composed manifest request that may include app and delegate manifests. */
+  capabilityRequest?: ComposedManifestRequest;
+  /** Include implicit account registry permissions when composing `manifest`. Default true in the SDK. */
+  includeAccountRegistryPermissions?: boolean;
 }
 
 // ── TinyCloudWeb Instance ────────────────────────────────────────────
@@ -21,13 +37,18 @@ export function createTinyCloudWeb(
 ): TinyCloudWeb {
   const tcw = new (TinyCloudWeb as any)({
     providers: { web3: { driver: web3Provider } },
-    tinycloudHosts: config?.tinycloudHosts ?? ["https://node.tinycloud.xyz"],
+    tinycloudHosts: config?.tinycloudHosts,
+    tinycloudRegistryUrl: config?.tinycloudRegistryUrl,
+    tinycloudFallbackHosts: config?.tinycloudFallbackHosts,
     autoCreateSpace: config?.autoCreateSpace ?? true,
     sessionStorage: new BrowserSessionStorage(),
     siweConfig: config?.siweConfig,
+    manifest: config?.manifest,
+    capabilityRequest: config?.capabilityRequest,
+    includeAccountRegistryPermissions: config?.includeAccountRegistryPermissions,
   });
 
-  // Set provider for createDelegation() signing (SDK bug workaround)
+  // Set provider for SDK signing paths that still read the provider property.
   tcw.provider = web3Provider;
 
   return tcw;
@@ -37,8 +58,9 @@ export function createTinyCloudWeb(
  * Create a TinyCloudWeb instance and sign in.
  *
  * Accepts an optional `nonce` to pass through to the SDK's SIWE message
- * construction. The SDK's signIn() returns a ClientSession containing
- * the signed SIWE message and signature.
+ * construction, and optional manifest/capability request inputs that drive
+ * the session's granted capabilities. The SDK's `signIn()` returns a `ClientSession`
+ * containing the signed SIWE message and signature.
  */
 export async function createAndSignIn(
   web3Provider: providers.Web3Provider,

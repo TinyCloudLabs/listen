@@ -227,7 +227,7 @@ function createMockClientFactory() {
 // ── Test Helpers ─────────────────────────────────────────────────────
 
 const TEST_ADDRESS = "0xTEST";
-const KV_KEY = "/app.conversations/config/fireflies-key";
+const KV_KEY = "config/fireflies-key";
 
 function mockAuthMiddleware(req: Request, _res: Response, next: NextFunction) {
   req.user = { address: TEST_ADDRESS };
@@ -571,7 +571,7 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
 
     // Verify KV was written with the conversation ID
     const conversationId = body.conversations[0].id;
-    const kvKey = `/app.conversations/transcript/${conversationId}`;
+    const kvKey = `transcript/${conversationId}`;
     const storedBlob = mockKV._data.get(kvKey);
     expect(storedBlob).toBeDefined();
 

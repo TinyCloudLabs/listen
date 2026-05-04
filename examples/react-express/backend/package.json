@@ -10,7 +10,7 @@
   "dependencies": {
     "@tinyboilerplate/core": "workspace:*",
     "@tinyboilerplate/server": "workspace:*",
-    "@tinycloud/node-sdk": "2.1.0-beta.0",
+    "@tinycloud/node-sdk": "2.2.0-beta.6",
     "@scalar/express-api-reference": "^0.4.0",
     "cors": "^2.8.5",
     "express": "^4.21.0",

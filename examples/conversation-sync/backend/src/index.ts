@@ -20,7 +20,10 @@ import {
 
 import { createAuthMiddleware } from "./middleware/auth.js";
 import { createDelegationMiddleware } from "./middleware/delegation.js";
+import { activatePortableDelegation } from "./delegation-activation.js";
+import { backendDelegationPolicyHash, resolveAppPath } from "./manifest.js";
 import { createAuthRouter } from "./routes/auth.js";
+import { createManifestRouter } from "./routes/manifest.js";
 import { createServerInfoRouter } from "./routes/server-info.js";
 import { createDelegationRouter } from "./routes/delegations.js";
 import { createConfigRouter } from "./routes/config.js";
@@ -89,7 +92,7 @@ async function main() {
   } as any;
 
   // Resolve delegated access for webhook processing (single-user mode)
-  const WEBHOOK_USER_ADDRESS_PATH = "/app.webhooks/config/user-address";
+  const WEBHOOK_USER_ADDRESS_PATH = resolveAppPath("webhooks/config/user-address");
   const tryGetDelegatedAccess = async () => {
     const addrResult = await backendKV.get(WEBHOOK_USER_ADDRESS_PATH);
     const address =
@@ -123,11 +126,17 @@ async function main() {
       console.log(`[webhook] delegation expired at ${stored.expiresAt}`);
       return null;
     }
+    if (stored.policyHash !== backendDelegationPolicyHash()) {
+      console.log("[webhook] delegation policy is stale — user needs to sign in again");
+      await delegationStore.remove(address);
+      delegationCache.evict(address);
+      return null;
+    }
 
     // Activate delegation
     try {
       const delegation = deserializeDelegation(stored.serialized);
-      access = await node.useDelegation(delegation);
+      access = await activatePortableDelegation(node, delegation);
       delegationCache.set(address, access);
       console.log("[webhook] delegation activated from store");
       return access;
@@ -158,7 +167,9 @@ async function main() {
   // Google Meet push endpoint — after JSON parsing, before CSRF (public, OIDC-verified)
   const pubSubConfig = parsePubSubConfig();
   if (pubSubConfig) {
-    const GOOGLE_MEET_USER_ADDRESS_PATH = "/app.webhooks/config/google-meet-user-address";
+    const GOOGLE_MEET_USER_ADDRESS_PATH = resolveAppPath(
+      "webhooks/config/google-meet-user-address",
+    );
     const tryGetGoogleMeetAccess = async () => {
       const addrResult = await backendKV.get(GOOGLE_MEET_USER_ADDRESS_PATH);
       const address =
@@ -170,9 +181,14 @@ async function main() {
       if (access) return access;
       const stored = await delegationStore.load(address);
       if (!stored || new Date(stored.expiresAt).getTime() <= Date.now()) return null;
+      if (stored.policyHash !== backendDelegationPolicyHash()) {
+        await delegationStore.remove(address);
+        delegationCache.evict(address);
+        return null;
+      }
       try {
         const delegation = deserializeDelegation(stored.serialized);
-        access = await node.useDelegation(delegation);
+        access = await activatePortableDelegation(node, delegation);
         delegationCache.set(address, access);
         return access;
       } catch {
@@ -222,6 +238,7 @@ async function main() {
   app.use(generalLimiter);
 
   // 7. Mount routes
+  app.use("/api/manifest", createManifestRouter(did));
   app.use("/api/server-info", createServerInfoRouter(did));
 
   app.use(
@@ -270,7 +287,7 @@ async function main() {
         if (!stored || new Date(stored.expiresAt).getTime() <= Date.now()) return null;
         try {
           const delegation = deserializeDelegation(stored.serialized);
-          access = await node.useDelegation(delegation);
+          access = await activatePortableDelegation(node, delegation);
           delegationCache.set(address, access);
           return access;
         } catch {

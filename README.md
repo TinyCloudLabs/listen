@@ -81,7 +81,7 @@ Shared types and constants used by both client and server.
 
 - `Item`, `CreateItemInput`, `UpdateItemInput` — CRUD entity types
 - `DelegationInfo`, `StoredDelegation`, `ServerInfo` — delegation/server types
-- `DEFAULT_DELEGATION_ACTIONS`, `DEFAULT_DELEGATION_PATH`, `DEFAULT_DELEGATION_EXPIRY_MS` — constants
+- `DEFAULT_DELEGATION_EXPIRY_MS`, `DELEGATION_CACHE_TTL_MS` — delegation lifetime constants
 
 ### `@tinyboilerplate/client`
 
@@ -94,7 +94,9 @@ Framework-agnostic browser helpers.
 | `connectWallet(openkey)` | Connect wallet, return EIP-1193 provider |
 | `createTinyCloudWeb(provider, config?)` | Create TinyCloudWeb instance |
 | `signIn(tcw)` | Sign into TinyCloud, sets `tcw.did` and `tcw.spaceId` |
-| `createDelegation(tcw, backendDID, options?)` | Create scoped delegation to backend |
+| `loadAppManifest(url)` | Load and validate a manifest |
+| `composeManifestWithBackend(manifest, serverInfo)` | Compose the app manifest with backend-requested delegation permissions |
+| `createManifestDelegation(tcw, backendDID, capabilityRequest)` | Materialize a manifest-declared delegation to backend |
 | `sendDelegation(url, serialized, token)` | POST delegation to backend |
 | `checkDelegationStatus(url, token)` | Check if backend has active delegation |
 | `revokeDelegation(url, token)` | Revoke backend's delegation |
@@ -144,7 +146,7 @@ Frontend                    Backend                    TinyCloud
    │── GET /api/server-info ──►│                           │
    │◄── { did: "did:key:..." } │                           │
    │                           │                           │
-   │ createDelegation(tcw, backendDID)                     │
+   │ materializeDelegation(backendDID)                     │
    │── POST /api/delegations ─►│                           │
    │                           │── store delegation ──────►│ (BE's KV)
    │                           │── cache DelegatedAccess   │
@@ -156,7 +158,7 @@ Frontend                    Backend                    TinyCloud
 ```
 Frontend                    Backend                    TinyCloud
    │── GET /api/items ────────►│                           │
-   │                           │── kv.list("items/") ────►│ (User's space)
+   │                           │── kv.list("com.example.app/items/") ─►│
    │◄── { items: [...] } ──────│                           │
 ```
 
@@ -178,7 +180,7 @@ The `DirectStorage` panel uses the `TinyCloudWeb` instance directly — `tcw.kv.
 ## Building Your Own App
 
 1. **Define your model** in `packages/core/src/index.ts` (replace `Item` with your types)
-2. **Update delegation scope** — change `DEFAULT_DELEGATION_PATH` and `DEFAULT_DELEGATION_ACTIONS`
+2. **Update the manifest** — change `app_id`, name, description, and any permissions in `manifest.json`
 3. **Write your routes** — copy `examples/react-express/backend/src/routes/items.ts` as a template
 4. **Wire up the frontend** — use `createApiClient` to call your new routes
 5. **Store type** — the example supports both `kv` and `sql` via `?store=kv|sql` query param
@@ -202,7 +204,6 @@ The delegation chain is the same regardless of your data model: authenticate (JW
 |----------|----------|---------|-------------|
 | `VITE_OPENKEY_CLIENT_ID` | Yes | — | Your OpenKey OAuth client ID |
 | `VITE_OPENKEY_HOST` | No | `https://openkey.so` | OpenKey host |
-| `VITE_TINYCLOUD_HOST` | No | `https://node.tinycloud.xyz` | TinyCloud node URL |
 | `VITE_BACKEND_URL` | No | `http://localhost:3001` | Backend URL |
 
 ## Known Constraints

@@ -38,7 +38,7 @@ describe("GET /api/server-info", () => {
     if (server) await closeServer(server);
   });
 
-  it("returns 200 with did and status 'ready'", async () => {
+  it("returns 200 with did, status, and backend TinyCloud permissions", async () => {
     const app = createApp();
     const result = await startServer(app);
     server = result.server;
@@ -48,10 +48,23 @@ describe("GET /api/server-info", () => {
     expect(res.status).toBe(200);
 
     const body = await res.json();
-    expect(body).toEqual({
+    expect(body).toMatchObject({
       did: TEST_DID,
       status: "ready",
+      name: "Conversation Sync Backend",
+      expiry: "7d",
     });
+    expect(Array.isArray(body.permissions)).toBe(true);
+    const services = new Set<string>(
+      (body.permissions as Array<{ service: string }>).map((p) => p.service),
+    );
+    expect(services.has("tinycloud.kv")).toBe(true);
+    expect(services.has("tinycloud.sql")).toBe(true);
+    const sqlPermission = (
+      body.permissions as Array<{ service: string; path: string; description?: string }>
+    ).find((p) => p.service === "tinycloud.sql");
+    expect(sqlPermission?.path).toBe("conversations");
+    expect(sqlPermission?.description).toContain("conversation records");
   });
 
   it("does not require authentication", async () => {

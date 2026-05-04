@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TinyCloud Manifest Flow</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f7f7f3;
+        --text: #1d2522;
+        --muted: #5f6f67;
+        --line: #d7ddd6;
+        --panel: #ffffff;
+        --accent: #117b68;
+        --accent-2: #3b5bdb;
+        --code: #eef3ef;
+        --diagram-bg: #ffffff;
+        --diagram-fg: #1d2522;
+        --diagram-accent: #117b68;
+        --diagram-line: #aab7af;
+        --diagram-surface: #f3f7f4;
+        --diagram-border: #d7ddd6;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family:
+          Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.55;
+      }
+
+      header,
+      main,
+      footer {
+        width: min(1120px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+
+      header {
+        padding: 44px 0 24px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: clamp(2rem, 4vw, 3.4rem);
+        line-height: 1.04;
+        letter-spacing: 0;
+      }
+
+      h2 {
+        margin-top: 36px;
+        font-size: 1.55rem;
+        line-height: 1.2;
+        letter-spacing: 0;
+      }
+
+      h3 {
+        margin-top: 20px;
+        font-size: 1rem;
+        letter-spacing: 0;
+      }
+
+      p {
+        color: var(--muted);
+      }
+
+      .lede {
+        max-width: 780px;
+        margin-top: 14px;
+        font-size: 1.05rem;
+      }
+
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 20px;
+      }
+
+      .pill {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        border-radius: 999px;
+        padding: 6px 10px;
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+
+      main {
+        padding: 8px 0 44px;
+      }
+
+      section {
+        padding: 26px 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+        margin-top: 18px;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 18px;
+      }
+
+      .panel p,
+      li {
+        color: var(--muted);
+      }
+
+      ul {
+        padding-left: 20px;
+        margin: 10px 0 0;
+      }
+
+      code,
+      pre {
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      }
+
+      code {
+        background: var(--code);
+        border-radius: 4px;
+        padding: 1px 5px;
+        color: #173c34;
+      }
+
+      pre {
+        overflow: auto;
+        margin: 14px 0 0;
+        padding: 16px;
+        border-radius: 8px;
+        background: #10211d;
+        color: #e9f3ef;
+        font-size: 0.9rem;
+      }
+
+      table {
+        width: 100%;
+        margin-top: 16px;
+        border-collapse: collapse;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      th,
+      td {
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        color: var(--text);
+        background: #eef3ef;
+        font-weight: 650;
+      }
+
+      td {
+        color: var(--muted);
+      }
+
+      tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .diagram {
+        margin-top: 16px;
+        min-height: 260px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--diagram-bg);
+        overflow: auto;
+      }
+
+      .diagram svg {
+        width: 100%;
+        height: auto;
+        display: block;
+      }
+
+      .diagram pre {
+        display: none;
+      }
+
+      footer {
+        padding: 20px 0 36px;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      a {
+        color: var(--accent-2);
+      }
+
+      @media (max-width: 780px) {
+        header,
+        main,
+        footer {
+          width: min(100% - 24px, 1120px);
+        }
+
+        .grid {
+          grid-template-columns: 1fr;
+        }
+
+        th,
+        td {
+          padding: 10px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>TinyCloud Manifest Flow</h1>
+      <p class="lede">
+        Conversation Sync uses one manifest file to define the app namespace, default user
+        capabilities, and the backend delegation template. The backend serves a runtime copy with
+        its live DID inserted, and the frontend signs in from that manifest.
+      </p>
+      <div class="meta">
+        <span class="pill">Source: <code>examples/conversation-sync/manifest.json</code></span>
+        <span class="pill">Runtime endpoint: <code>GET /api/manifest</code></span>
+        <span class="pill">Namespace: <code>com.tinycloud.conversation-sync</code></span>
+      </div>
+    </header>
+
+    <main>
+      <section>
+        <h2>Current Manifest</h2>
+        <p>
+          The file omits <code>prefix</code> and <code>defaults</code>. That is intentional:
+          <code>prefix</code> defaults to <code>id</code>, and <code>defaults</code> defaults to
+          <code>true</code>.
+        </p>
+        <pre><code>{
+  "id": "com.tinycloud.conversation-sync",
+  "name": "Conversation Sync",
+  "description": "Sync Fireflies and Google Meet transcripts into a TinyCloud space.",
+  "permissions": [
+    {
+      "service": "tinycloud.hooks",
+      "space": "default",
+      "path": "sql/com.tinycloud.conversation-sync/conversations/conversation",
+      "actions": ["subscribe"],
+      "skipPrefix": true
+    }
+  ],
+  "backend": {
+    "name": "Conversation Sync Backend",
+    "expiry": "7d",
+    "permissions": [
+      {
+        "service": "tinycloud.kv",
+        "space": "default",
+        "path": "/",
+        "actions": ["get", "put", "del", "list", "metadata"]
+      },
+      {
+        "service": "tinycloud.sql",
+        "space": "default",
+        "path": "conversations",
+        "actions": ["read", "write"]
+      }
+    ]
+  }
+}</code></pre>
+      </section>
+
+      <section>
+        <h2>Runtime Flow</h2>
+        <p>
+          The backend does not maintain a second permission list. It reads the manifest, injects its
+          DID into the <code>backend</code> template, and returns a normal TinyCloud manifest with a
+          real <code>delegations[*]</code> entry.
+        </p>
+        <div class="diagram" data-mermaid>
+          <pre>
+sequenceDiagram
+  participant File as manifest.json
+  participant Backend
+  participant Browser
+  participant SDK as TinyCloud SDK
+  participant Wallet
+
+  Browser->>Backend: GET /api/manifest
+  Backend->>File: read single manifest file
+  Backend->>Backend: inject live backend DID
+  Backend-->>Browser: runtime manifest with delegations[0]
+  Browser->>SDK: createAndSignIn({ manifest })
+  SDK->>Wallet: SIWE recap with defaults and backend delegation
+  Wallet-->>SDK: signed session
+  Browser->>SDK: resolveManifestDelegationPermissions(manifest, backendDid)
+  Browser->>SDK: delegateTo(backendDid, resolved permissions)
+  SDK-->>Browser: serialized UCAN, no extra prompt
+  Browser->>Backend: POST /api/delegations
+  Backend->>SDK: useDelegation(serialized UCAN)
+          </pre>
+        </div>
+      </section>
+
+      <section>
+        <h2>Capability State</h2>
+        <p>
+          App-relative paths are resolved before signing. The backend then uses relative KV keys and
+          the resolved SQL database name.
+        </p>
+        <div class="diagram" data-mermaid>
+          <pre>
+stateDiagram-v2
+  [*] --> ManifestTemplate
+  ManifestTemplate --> RuntimeManifest: backend inserts DID
+  RuntimeManifest --> SignedSession: wallet signs recap
+  SignedSession --> DerivedDelegation: delegateTo resolved permissions
+  DerivedDelegation --> BackendActive: backend useDelegation
+  BackendActive --> UserKV: kv prefix com.tinycloud.conversation-sync
+  BackendActive --> UserSQL: db com.tinycloud.conversation-sync/conversations
+  BackendActive --> Expired: expiry reached
+  Expired --> RuntimeManifest: sign in again
+          </pre>
+        </div>
+      </section>
+
+      <section>
+        <h2>Resolved Paths</h2>
+        <div class="grid">
+          <div class="panel">
+            <h3>KV</h3>
+            <p>
+              Manifest backend permission <code>path: "/"</code> resolves to
+              <code>com.tinycloud.conversation-sync/</code>. Backend code writes app-relative keys
+              such as <code>config/fireflies-key</code> and <code>transcript/{id}</code>.
+            </p>
+          </div>
+          <div class="panel">
+            <h3>SQL</h3>
+            <p>
+              Manifest backend permission <code>path: "conversations"</code> resolves to
+              <code>com.tinycloud.conversation-sync/conversations</code>. Backend SQL code calls
+              <code>access.sql.db(resolvedName)</code>.
+            </p>
+          </div>
+          <div class="panel">
+            <h3>Hooks</h3>
+            <p>
+              The hook grant authorizes the meta-resource
+              <code>hooks/sql/com.tinycloud.conversation-sync/conversations/conversation</code>. It
+              uses <code>skipPrefix: true</code> because hook scopes include the watched service and
+              the already-resolved SQL table path.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Live Hooks</h2>
+        <p>
+          Live write-event hooks are disabled by default with
+          <code>VITE_ENABLE_TINYCLOUD_HOOKS=false</code>. The hosted node currently advertises no
+          <code>hooks</code> feature and returns <code>404</code> for
+          <code>POST /hooks/tickets</code>, while a local TinyCloud node with hooks enabled exposes
+          the endpoint. Turn the flag on only when the selected TinyCloud host supports hook
+          tickets.
+        </p>
+      </section>
+
+      <section>
+        <h2>Manifest Options</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Option</th>
+              <th>Default</th>
+              <th>Use it for</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>id</code></td>
+              <td>Required</td>
+              <td>App identity and default namespace prefix.</td>
+            </tr>
+            <tr>
+              <td><code>prefix</code></td>
+              <td><code>id</code></td>
+              <td>
+                Omit for normal boilerplate isolation. Set <code>""</code> only when paths should be
+                global or already fully scoped. Set a custom string to migrate namespace.
+              </td>
+            </tr>
+            <tr>
+              <td><code>defaults</code></td>
+              <td><code>true</code></td>
+              <td>
+                <code>true</code> grants standard KV, SQL read/write, and capabilities read under
+                the prefix. <code>false</code> disables automatic entries. <code>"admin"</code> adds
+                SQL DDL and capability admin. <code>"all"</code> adds every supported service.
+              </td>
+            </tr>
+            <tr>
+              <td><code>permissions</code></td>
+              <td>Empty</td>
+              <td>Add app runtime needs beyond defaults, such as <code>tinycloud.hooks</code>.</td>
+            </tr>
+            <tr>
+              <td><code>backend.permissions</code></td>
+              <td>Required by this boilerplate</td>
+              <td>
+                App-relative permissions the backend needs. The backend turns these into a real
+                manifest delegation by inserting its DID at runtime.
+              </td>
+            </tr>
+            <tr>
+              <td><code>skipPrefix</code></td>
+              <td><code>false</code></td>
+              <td>
+                Opt a permission out of prefixing for shared or meta resources. The hook grant uses
+                this because its path already contains the resolved SQL path.
+              </td>
+            </tr>
+            <tr>
+              <td><code>expiry</code></td>
+              <td><code>30d</code></td>
+              <td>
+                Sets the session default. A backend delegation can override it with
+                <code>backend.expiry</code>.
+              </td>
+            </tr>
+            <tr>
+              <td><code>includePublicSpace</code></td>
+              <td><code>true</code></td>
+              <td>
+                Controls public-space companion capabilities when the SDK prepares the session.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Boilerplate Rule</h2>
+        <p>
+          Keep paths app-relative in the manifest. Let the SDK resolve the namespace. Backend code
+          should derive full service paths from the manifest when the service does not apply a
+          delegated prefix itself, such as named SQL databases and backend-owned KV bookkeeping.
+        </p>
+      </section>
+    </main>
+
+    <footer>
+      Mermaid diagrams are rendered with
+      <a href="https://github.com/lukilabs/beautiful-mermaid">beautiful-mermaid</a>.
+    </footer>
+
+    <script type="module">
+      import { renderMermaidSVG } from "https://esm.sh/beautiful-mermaid@1.1.3?bundle";
+
+      const theme = {
+        bg: "var(--diagram-bg)",
+        fg: "var(--diagram-fg)",
+        accent: "var(--diagram-accent)",
+        line: "var(--diagram-line)",
+        surface: "var(--diagram-surface)",
+        border: "var(--diagram-border)",
+        transparent: true,
+        padding: 28,
+      };
+
+      function escapeHtml(value) {
+        return value
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;");
+      }
+
+      for (const node of document.querySelectorAll("[data-mermaid]")) {
+        const source = node.querySelector("pre")?.textContent?.trim() ?? "";
+        if (!source) continue;
+
+        try {
+          node.innerHTML = renderMermaidSVG(source, theme);
+        } catch (error) {
+          node.innerHTML = `<pre>${escapeHtml(source)}</pre>`;
+          console.error("Failed to render Mermaid diagram", error);
+        }
+      }
+    </script>
+  </body>
+</html>

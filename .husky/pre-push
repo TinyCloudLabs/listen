@@ -1,5 +1,5 @@
 bun run lint
 bun run format:check
 bun run build
-bun test packages/ examples/react-express/backend examples/conversation-sync/backend
+bun test packages/client/src packages/server/src examples/react-express/backend/src examples/conversation-sync/backend/src
 cd examples/conversation-sync/frontend && bunx vitest run

@@ -17,7 +17,7 @@ interface GoogleMeetStatusRoutesConfig {
 
 // ── Constants ────────────────────────────────────────────────────────
 
-const GOOGLE_TOKENS_PATH = "/app.conversations/config/google-tokens";
+const GOOGLE_TOKENS_PATH = "config/google-tokens";
 
 // ── Status Router ───────────────────────────────────────────────────
 

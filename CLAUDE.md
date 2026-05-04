@@ -55,11 +55,11 @@ startOAuthFlow(openkey, { clientId, redirectUri }): Promise<OAuthTokens>
 connectWallet(openkey, { clientId, redirectUri }): Promise<{ address, provider, openkey }>
 
 // TinyCloud
-createTinyCloudWeb(eip1193Provider, config?: { tinycloudHosts?, signStrategy?, autoCreateSpace? }): TinyCloudWeb
+createTinyCloudWeb(eip1193Provider, config?: { tinycloudHosts?, tinycloudRegistryUrl?, tinycloudFallbackHosts?, autoCreateSpace?, manifest?, capabilityRequest? }): TinyCloudWeb
 signIn(tcw: TinyCloudWeb): Promise<session>
 
 // Delegation
-createDelegation(tcw, backendDID, options?: { actions?, path?, expiryMs? }): Promise<string>  // serialized
+createManifestDelegation(tcw, backendDID, capabilityRequest): Promise<{ serialized, prompted }>
 sendDelegation(backendUrl, serialized, accessToken): Promise<DelegationResponse>
 checkDelegationStatus(backendUrl, accessToken): Promise<DelegationResponse>
 revokeDelegation(backendUrl, accessToken): Promise<void>
@@ -115,9 +115,7 @@ interface ServerInfo { did, status }
 type StoreType = "kv" | "sql"
 
 // Constants
-DEFAULT_DELEGATION_ACTIONS = ["tinycloud.kv/get", "tinycloud.kv/put", "tinycloud.kv/del", "tinycloud.kv/list", "tinycloud.sql/read", "tinycloud.sql/write"]
-DEFAULT_DELEGATION_PATH = "items/"
-DEFAULT_DELEGATION_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000  // 7 days
+DEFAULT_DELEGATION_EXPIRY_MS = 365 * 24 * 60 * 60 * 1000  // 1 year fallback
 DELEGATION_CACHE_TTL_MS = 50 * 60 * 1000  // 50 minutes
 ```
 
@@ -190,7 +188,6 @@ interface Request {
 |----------|---------|-------|
 | `VITE_OPENKEY_CLIENT_ID` | (required) | Register at openkey.so |
 | `VITE_OPENKEY_HOST` | `https://openkey.so` | |
-| `VITE_TINYCLOUD_HOST` | `https://node.tinycloud.xyz` | |
 | `VITE_BACKEND_URL` | `http://localhost:3001` | |
 
 ## Common Patterns

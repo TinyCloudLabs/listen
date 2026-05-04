@@ -1,11 +1,28 @@
 import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
+import { resolveAppPath } from "../manifest.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
 interface BackendKV {
-  get(key: string): Promise<{ ok: boolean; data: { data: string | null } }>;
-  put(key: string, value: string): Promise<{ ok: boolean }>;
+  get(key: string): Promise<KVResult<string | null>>;
+  put(key: string, value: string): Promise<KVWriteResult>;
+}
+
+interface KVError {
+  code?: string;
+  message?: string;
+}
+
+interface KVResult<T = unknown> {
+  ok: boolean;
+  data?: { data?: T | null };
+  error?: KVError;
+}
+
+interface KVWriteResult {
+  ok: boolean;
+  error?: KVError;
 }
 
 interface SubscriptionMetadata {
@@ -26,15 +43,33 @@ interface ConfigRoutesConfig {
 
 // ── Constants ────────────────────────────────────────────────────────
 
-const FIREFLIES_KEY_PATH = "/app.conversations/config/fireflies-key";
-const GOOGLE_TOKENS_PATH = "/app.conversations/config/google-tokens";
-const WEBHOOK_SECRET_PATH = "/app.webhooks/config/fireflies-secret";
-const WEBHOOK_USER_ADDRESS_PATH = "/app.webhooks/config/user-address";
-const WEBHOOK_PENDING_PATH = "/app.webhooks/pending/fireflies";
-const GMEET_SUBSCRIPTION_KV_PATH = "/app.webhooks/config/google-meet-subscription";
-const GMEET_PENDING_KV_PATH = "/app.webhooks/pending/google-meet";
-const GMEET_FAILED_KV_PATH = "/app.webhooks/failed/google-meet";
-const GMEET_USER_SUB_KV_PATH = "/app.webhooks/config/google-meet-user-sub";
+const FIREFLIES_KEY_PATH = "config/fireflies-key";
+const GOOGLE_TOKENS_PATH = "config/google-tokens";
+const WEBHOOK_SECRET_PATH = resolveAppPath("webhooks/config/fireflies-secret");
+const WEBHOOK_USER_ADDRESS_PATH = resolveAppPath("webhooks/config/user-address");
+const WEBHOOK_PENDING_PATH = resolveAppPath("webhooks/pending/fireflies");
+const GMEET_SUBSCRIPTION_KV_PATH = resolveAppPath("webhooks/config/google-meet-subscription");
+const GMEET_PENDING_KV_PATH = resolveAppPath("webhooks/pending/google-meet");
+const GMEET_FAILED_KV_PATH = resolveAppPath("webhooks/failed/google-meet");
+const GMEET_USER_SUB_KV_PATH = resolveAppPath("webhooks/config/google-meet-user-sub");
+
+function kvData(result: KVResult): unknown | null {
+  return result.ok ? (result.data?.data ?? null) : null;
+}
+
+function kvError(result: unknown): KVError | undefined {
+  if (!result || typeof result !== "object" || !("error" in result)) return undefined;
+  return (result as { error?: KVError }).error;
+}
+
+function kvErrorMessage(result: unknown, fallback: string): string {
+  const error = kvError(result);
+  return error?.message ?? error?.code ?? fallback;
+}
+
+function isKvNotFound(result: KVResult): boolean {
+  return !result.ok && result.error?.code === "KV_NOT_FOUND";
+}
 
 // ── Config Routes ────────────────────────────────────────────────────
 
@@ -60,7 +95,31 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
     }
 
     try {
-      await req.delegatedAccess!.kv.put(FIREFLIES_KEY_PATH, apiKey);
+      const putResult = await req.delegatedAccess!.kv.put(FIREFLIES_KEY_PATH, apiKey);
+      if (!putResult.ok) {
+        const message = kvErrorMessage(putResult, "TinyCloud rejected the API key write");
+        console.error("[config] failed to store fireflies key:", putResult.error);
+        res.status(500).json({
+          error: "store_failed",
+          message: `Failed to store API key in TinyCloud: ${message}`,
+        });
+        return;
+      }
+
+      const verifyResult = await req.delegatedAccess!.kv.get(FIREFLIES_KEY_PATH);
+      if (!verifyResult.ok || kvData(verifyResult) == null) {
+        const message = kvErrorMessage(
+          verifyResult,
+          "TinyCloud did not return the API key after storing it",
+        );
+        console.error("[config] failed to verify stored fireflies key:", kvError(verifyResult));
+        res.status(500).json({
+          error: "store_verification_failed",
+          message: `Stored API key could not be verified in TinyCloud: ${message}`,
+        });
+        return;
+      }
+
       res.json({ ok: true });
     } catch (err) {
       console.error("[config] failed to store fireflies key:", err);
@@ -74,7 +133,16 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
   // ── DELETE /api/config/fireflies-key — remove API key ───────────
   router.delete("/fireflies-key", delegationMiddleware, async (req: Request, res: Response) => {
     try {
-      await req.delegatedAccess!.kv.delete(FIREFLIES_KEY_PATH);
+      const deleteResult = await req.delegatedAccess!.kv.delete(FIREFLIES_KEY_PATH);
+      if (!deleteResult.ok) {
+        const message = kvErrorMessage(deleteResult, "TinyCloud rejected the API key delete");
+        console.error("[config] failed to delete fireflies key:", deleteResult.error);
+        res.status(500).json({
+          error: "delete_failed",
+          message: `Failed to delete API key from TinyCloud: ${message}`,
+        });
+        return;
+      }
       res.json({ ok: true });
     } catch (err) {
       console.error("[config] failed to delete fireflies key:", err);
@@ -89,7 +157,15 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
   router.get("/fireflies-key/exists", delegationMiddleware, async (req: Request, res: Response) => {
     try {
       const result = await req.delegatedAccess!.kv.get(FIREFLIES_KEY_PATH);
-      res.json({ exists: result.ok && result.data.data != null });
+      if (!result.ok && !isKvNotFound(result)) {
+        const message = kvErrorMessage(result, "TinyCloud rejected the API key lookup");
+        res.status(500).json({
+          error: "check_failed",
+          message: `Failed to check API key existence in TinyCloud: ${message}`,
+        });
+        return;
+      }
+      res.json({ exists: kvData(result) != null });
     } catch (err) {
       console.error("[config] failed to check fireflies key:", err);
       res.status(500).json({
@@ -108,7 +184,12 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
     async (req: Request, res: Response) => {
       try {
         const result = await req.delegatedAccess!.kv.get(GOOGLE_TOKENS_PATH);
-        res.json({ connected: result.ok && result.data.data != null });
+        if (!result.ok && !isKvNotFound(result)) {
+          const message = kvErrorMessage(result, "TinyCloud rejected the Google token lookup");
+          res.status(500).json({ error: "check_failed", message });
+          return;
+        }
+        res.json({ connected: kvData(result) != null });
       } catch (err) {
         console.error("[config] failed to check google-meet connection:", err);
         res.status(500).json({ error: "check_failed", message: "Failed to check connection" });
@@ -123,15 +204,16 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
 
       // 1. Read tokens (needed for Workspace Events API delete call)
       const tokensResult = await access.kv.get(GOOGLE_TOKENS_PATH);
-      const tokensRaw = tokensResult.ok && tokensResult.data.data ? tokensResult.data.data : null;
+      const tokensRaw = kvData(tokensResult);
 
       // 2. Read subscription metadata from backend KV
       let metadata: SubscriptionMetadata | null = null;
       if (backendKV) {
         const metaResult = await backendKV.get(GMEET_SUBSCRIPTION_KV_PATH);
-        if (metaResult.ok && metaResult.data.data) {
+        const metaRaw = kvData(metaResult);
+        if (metaRaw) {
           try {
-            metadata = JSON.parse(metaResult.data.data);
+            metadata = JSON.parse(String(metaRaw));
           } catch {}
         }
       }
@@ -148,7 +230,12 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
       }
 
       // 4. Delete user tokens
-      await access.kv.delete(GOOGLE_TOKENS_PATH);
+      const deleteResult = await access.kv.delete(GOOGLE_TOKENS_PATH);
+      if (!deleteResult.ok) {
+        const message = kvErrorMessage(deleteResult, "TinyCloud rejected the Google token delete");
+        res.status(500).json({ error: "disconnect_failed", message });
+        return;
+      }
 
       // 5. Clear webhook KV entries
       if (backendKV) {
@@ -201,14 +288,15 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
       try {
         // Check if secret is configured
         const secretResult = await backendKV.get(WEBHOOK_SECRET_PATH);
-        const configured = secretResult.ok && secretResult.data.data != null;
+        const configured = kvData(secretResult) != null;
 
         // Count pending webhooks
         let pendingCount = 0;
         const pendingResult = await backendKV.get(WEBHOOK_PENDING_PATH);
-        if (pendingResult.ok && pendingResult.data.data != null) {
+        const pendingRaw = kvData(pendingResult);
+        if (pendingRaw != null) {
           try {
-            const pending = JSON.parse(pendingResult.data.data);
+            const pending = JSON.parse(String(pendingRaw));
             pendingCount = Array.isArray(pending) ? pending.length : 0;
           } catch {
             // Invalid JSON — treat as 0 pending

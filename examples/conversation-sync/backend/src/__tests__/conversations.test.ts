@@ -277,7 +277,7 @@ describe("Conversations Routes — GET /api/conversations/:id", () => {
   it("returns conversation with participants and transcript", async () => {
     mockKV = createMockKV();
     const transcript = [{ speaker_name: "Alice", text: "Hello", start_time: 0.5, end_time: 2.1 }];
-    mockKV._data.set("/app.conversations/transcript/conv-1", JSON.stringify(transcript));
+    mockKV._data.set("transcript/conv-1", JSON.stringify(transcript));
 
     mockSQL = createMockSQL({
       detailRow: {
