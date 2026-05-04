@@ -8,6 +8,7 @@ export {
   loadAppManifest,
   backendManifestFromServerInfo,
   composeManifestWithBackend,
+  composeManifestWithDelegatees,
   resolveManifestPermissions,
   resolveManifestDelegationPermissions,
   resolveManifestPermissionPath,

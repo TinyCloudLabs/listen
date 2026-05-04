@@ -51,7 +51,23 @@ export function composeManifestWithBackend(
   appManifest: Manifest,
   info: ServerInfo,
 ): ComposedManifestRequest {
-  return composeManifestRequest([appManifest, backendManifestFromServerInfo(appManifest, info)]);
+  return composeManifestWithDelegatees(appManifest, [info]);
+}
+
+/**
+ * Compose the app manifest and one or more delegate manifests (e.g. backend +
+ * agent) into a single capability request. Each entry produces a delegate
+ * manifest via {@link backendManifestFromServerInfo}; permissions union into
+ * the SIWE recap so a single wallet prompt at sign-in covers every delegatee.
+ */
+export function composeManifestWithDelegatees(
+  appManifest: Manifest,
+  infos: readonly ServerInfo[],
+): ComposedManifestRequest {
+  return composeManifestRequest([
+    appManifest,
+    ...infos.map((info) => backendManifestFromServerInfo(appManifest, info)),
+  ]);
 }
 
 /**

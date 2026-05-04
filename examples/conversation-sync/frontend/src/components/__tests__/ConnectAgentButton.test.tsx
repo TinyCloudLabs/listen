@@ -1,31 +1,46 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { TinyCloudWeb } from "@tinycloud/web-sdk";
+import type { ComposedManifestRequest, TinyCloudWeb } from "@tinycloud/web-sdk";
+import type { ServerInfo } from "@tinyboilerplate/core";
 
 // Mock the named export from @tinyboilerplate/client BEFORE importing the component.
 vi.mock("@tinyboilerplate/client", () => ({
-  createDelegation: vi.fn(),
+  createManifestDelegation: vi.fn(),
 }));
 
-import { createDelegation } from "@tinyboilerplate/client";
+import { createManifestDelegation } from "@tinyboilerplate/client";
 import { ConnectAgentButton } from "../ConnectAgentButton";
 
-const mockedCreateDelegation = vi.mocked(createDelegation);
+const mockedCreateManifestDelegation = vi.mocked(createManifestDelegation);
 
 const FAKE_SERIALIZED =
   '{"cid":"bafyreitestfixture","delegateDID":"did:pkh:eip155:1:0xAGENT","actions":["tinycloud.kv/get"],"expiry":"2026-12-31T00:00:00.000Z"}';
 
 const VALID_AGENT_DID = "did:pkh:eip155:1:0x1204f2e9f634B5A8c09CA1579d351B99B27faE50";
 
-// Minimal tcw stub — createDelegation() is mocked so tcw's methods aren't called.
+// Minimal tcw stub — createManifestDelegation() is mocked so tcw's methods aren't called.
 const fakeTcw = {} as unknown as TinyCloudWeb;
+
+// Opaque capability request — the component just forwards it to the SDK helper.
+const fakeCapabilityRequest = {} as unknown as ComposedManifestRequest;
+
+const fakeAgentInfo: ServerInfo = {
+  did: VALID_AGENT_DID,
+  status: "ready",
+  name: "Test Agent",
+  expiry: "7d",
+  permissions: [
+    { service: "tinycloud.kv", path: "/", actions: ["get", "put"] },
+    { service: "tinycloud.sql", path: "/", actions: ["read", "write"] },
+  ],
+};
 
 let fetchMock: ReturnType<typeof vi.fn>;
 let onRefresh: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
-  mockedCreateDelegation.mockReset();
+  mockedCreateManifestDelegation.mockReset();
   fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
   onRefresh = vi.fn();
@@ -41,6 +56,7 @@ describe("ConnectAgentButton — initial render", () => {
     render(
       <ConnectAgentButton
         tcw={fakeTcw}
+        capabilityRequest={fakeCapabilityRequest}
         onRefresh={onRefresh}
         refreshLabel="Refresh conversations"
       />,
@@ -52,39 +68,60 @@ describe("ConnectAgentButton — initial render", () => {
   });
 
   test("Connect button is disabled when input is empty", () => {
-    render(<ConnectAgentButton tcw={fakeTcw} onRefresh={onRefresh} />);
+    render(
+      <ConnectAgentButton
+        tcw={fakeTcw}
+        capabilityRequest={fakeCapabilityRequest}
+        onRefresh={onRefresh}
+      />,
+    );
 
     expect(screen.getByRole("button", { name: /connect agent/i })).toBeDisabled();
   });
 
   test("refresh button is hidden when onRefresh is not provided", () => {
-    render(<ConnectAgentButton tcw={fakeTcw} />);
+    render(<ConnectAgentButton tcw={fakeTcw} capabilityRequest={fakeCapabilityRequest} />);
 
     expect(screen.queryByRole("button", { name: /refresh/i })).not.toBeInTheDocument();
   });
 });
 
 describe("ConnectAgentButton — validation", () => {
-  test("malformed DID surfaces an inline error and never calls createDelegation", async () => {
+  test("malformed DID surfaces an inline error and never calls createManifestDelegation", async () => {
     const user = userEvent.setup();
-    render(<ConnectAgentButton tcw={fakeTcw} onRefresh={onRefresh} />);
+    render(
+      <ConnectAgentButton
+        tcw={fakeTcw}
+        capabilityRequest={fakeCapabilityRequest}
+        onRefresh={onRefresh}
+      />,
+    );
 
     await user.type(screen.getByPlaceholderText(/did:pkh:eip155/), "not-a-did");
     await user.click(screen.getByRole("button", { name: /connect agent/i }));
 
     expect(await screen.findByText(/starting with did:pkh: or did:key:/i)).toBeInTheDocument();
-    expect(mockedCreateDelegation).not.toHaveBeenCalled();
+    expect(mockedCreateManifestDelegation).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
 describe("ConnectAgentButton — happy path", () => {
   test("valid DID + 200 response flips to the connected state with OpenCode link", async () => {
-    mockedCreateDelegation.mockResolvedValue(FAKE_SERIALIZED);
+    mockedCreateManifestDelegation.mockResolvedValue({
+      serialized: FAKE_SERIALIZED,
+      prompted: false,
+    });
     fetchMock.mockResolvedValue(new Response('{"ok":true,"bytes":42}', { status: 200 }));
 
     const user = userEvent.setup();
-    render(<ConnectAgentButton tcw={fakeTcw} onRefresh={onRefresh} />);
+    render(
+      <ConnectAgentButton
+        tcw={fakeTcw}
+        capabilityRequest={fakeCapabilityRequest}
+        onRefresh={onRefresh}
+      />,
+    );
 
     await user.type(screen.getByPlaceholderText(/did:pkh:eip155/), VALID_AGENT_DID);
     await user.click(screen.getByRole("button", { name: /connect agent/i }));
@@ -95,20 +132,11 @@ describe("ConnectAgentButton — happy path", () => {
       "http://localhost:4096/L3dvcmtzcGFjZQ",
     );
 
-    // Verify the SDK helper was called with the right scope.
-    expect(mockedCreateDelegation).toHaveBeenCalledWith(
+    // Manifest flow: forwards the composed capability request to the SDK helper.
+    expect(mockedCreateManifestDelegation).toHaveBeenCalledWith(
       fakeTcw,
       VALID_AGENT_DID,
-      expect.objectContaining({
-        path: "",
-        expiryMs: 7 * 24 * 3600 * 1000,
-        actions: expect.arrayContaining([
-          "tinycloud.kv/get",
-          "tinycloud.kv/put",
-          "tinycloud.sql/read",
-          "tinycloud.sql/write",
-        ]),
-      }),
+      fakeCapabilityRequest,
     );
 
     // Verify the POST body.
@@ -121,14 +149,33 @@ describe("ConnectAgentButton — happy path", () => {
     );
   });
 
+  test("agentInfo.did pre-fills the input so users skip the copy-paste step", () => {
+    render(
+      <ConnectAgentButton
+        tcw={fakeTcw}
+        capabilityRequest={fakeCapabilityRequest}
+        agentInfo={fakeAgentInfo}
+        onRefresh={onRefresh}
+      />,
+    );
+
+    const input = screen.getByPlaceholderText(/did:pkh:eip155/) as HTMLInputElement;
+    expect(input.value).toBe(VALID_AGENT_DID);
+    expect(screen.getByRole("button", { name: /connect agent/i })).not.toBeDisabled();
+  });
+
   test("agentEndpoint prop overrides the default POST target", async () => {
-    mockedCreateDelegation.mockResolvedValue(FAKE_SERIALIZED);
+    mockedCreateManifestDelegation.mockResolvedValue({
+      serialized: FAKE_SERIALIZED,
+      prompted: false,
+    });
     fetchMock.mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
 
     const user = userEvent.setup();
     render(
       <ConnectAgentButton
         tcw={fakeTcw}
+        capabilityRequest={fakeCapabilityRequest}
         agentEndpoint="http://example.test:9999"
         onRefresh={onRefresh}
       />,
@@ -146,11 +193,20 @@ describe("ConnectAgentButton — happy path", () => {
   });
 
   test("Disconnect after connected resets back to the form", async () => {
-    mockedCreateDelegation.mockResolvedValue(FAKE_SERIALIZED);
+    mockedCreateManifestDelegation.mockResolvedValue({
+      serialized: FAKE_SERIALIZED,
+      prompted: false,
+    });
     fetchMock.mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
 
     const user = userEvent.setup();
-    render(<ConnectAgentButton tcw={fakeTcw} onRefresh={onRefresh} />);
+    render(
+      <ConnectAgentButton
+        tcw={fakeTcw}
+        capabilityRequest={fakeCapabilityRequest}
+        onRefresh={onRefresh}
+      />,
+    );
 
     await user.type(screen.getByPlaceholderText(/did:pkh:eip155/), VALID_AGENT_DID);
     await user.click(screen.getByRole("button", { name: /connect agent/i }));
@@ -165,12 +221,18 @@ describe("ConnectAgentButton — happy path", () => {
   });
 });
 
-describe("ConnectAgentButton — createDelegation error", () => {
-  test("shows the thrown message when createDelegation rejects", async () => {
-    mockedCreateDelegation.mockRejectedValue(new Error("delegation chain too short"));
+describe("ConnectAgentButton — createManifestDelegation error", () => {
+  test("shows the thrown message when createManifestDelegation rejects", async () => {
+    mockedCreateManifestDelegation.mockRejectedValue(new Error("delegation chain too short"));
 
     const user = userEvent.setup();
-    render(<ConnectAgentButton tcw={fakeTcw} onRefresh={onRefresh} />);
+    render(
+      <ConnectAgentButton
+        tcw={fakeTcw}
+        capabilityRequest={fakeCapabilityRequest}
+        onRefresh={onRefresh}
+      />,
+    );
 
     await user.type(screen.getByPlaceholderText(/did:pkh:eip155/), VALID_AGENT_DID);
     await user.click(screen.getByRole("button", { name: /connect agent/i }));
@@ -182,11 +244,20 @@ describe("ConnectAgentButton — createDelegation error", () => {
 
 describe("ConnectAgentButton — endpoint unreachable fallback", () => {
   test("fetch reject exposes the serialized delegation in a copyable textarea", async () => {
-    mockedCreateDelegation.mockResolvedValue(FAKE_SERIALIZED);
+    mockedCreateManifestDelegation.mockResolvedValue({
+      serialized: FAKE_SERIALIZED,
+      prompted: false,
+    });
     fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
 
     const user = userEvent.setup();
-    render(<ConnectAgentButton tcw={fakeTcw} onRefresh={onRefresh} />);
+    render(
+      <ConnectAgentButton
+        tcw={fakeTcw}
+        capabilityRequest={fakeCapabilityRequest}
+        onRefresh={onRefresh}
+      />,
+    );
 
     await user.type(screen.getByPlaceholderText(/did:pkh:eip155/), VALID_AGENT_DID);
     await user.click(screen.getByRole("button", { name: /connect agent/i }));
@@ -202,11 +273,20 @@ describe("ConnectAgentButton — endpoint unreachable fallback", () => {
   });
 
   test("non-2xx response also triggers the fallback state", async () => {
-    mockedCreateDelegation.mockResolvedValue(FAKE_SERIALIZED);
+    mockedCreateManifestDelegation.mockResolvedValue({
+      serialized: FAKE_SERIALIZED,
+      prompted: false,
+    });
     fetchMock.mockResolvedValue(new Response("Internal Error", { status: 500 }));
 
     const user = userEvent.setup();
-    render(<ConnectAgentButton tcw={fakeTcw} onRefresh={onRefresh} />);
+    render(
+      <ConnectAgentButton
+        tcw={fakeTcw}
+        capabilityRequest={fakeCapabilityRequest}
+        onRefresh={onRefresh}
+      />,
+    );
 
     await user.type(screen.getByPlaceholderText(/did:pkh:eip155/), VALID_AGENT_DID);
     await user.click(screen.getByRole("button", { name: /connect agent/i }));
@@ -223,6 +303,7 @@ describe("ConnectAgentButton — refresh button", () => {
     render(
       <ConnectAgentButton
         tcw={fakeTcw}
+        capabilityRequest={fakeCapabilityRequest}
         onRefresh={onRefresh}
         refreshLabel="Refresh conversations"
       />,

@@ -51,6 +51,27 @@ const SIDECAR_DIR = process.env.DELEGATION_SIDECAR_DIR ?? "/var/lib/delegation-e
 const TC_PROFILES_ROOT = process.env.TC_PROFILES_ROOT ?? "/root/.tinycloud";
 const TC_PROFILE_NAME = process.env.TC_PROFILE_NAME ?? "default";
 const REFRESH_INTERVAL_MS = Number(process.env.REFRESH_INTERVAL_MS ?? 25 * 60 * 1000);
+const AGENT_NAME = process.env.AGENT_NAME ?? "TinyCloud Agent";
+const AGENT_DELEGATION_EXPIRY = process.env.AGENT_DELEGATION_EXPIRY ?? "7d";
+
+// What the agent advertises in GET /info. Matches the ServerInfoPermission
+// shape from @tinyboilerplate/core so the frontend can splice these into the
+// manifest at sign-in time and cover them in the SIWE recap (single wallet
+// prompt). Path "/" mirrors the backend convention for full-space access.
+const AGENT_PERMISSIONS = [
+  {
+    service: "tinycloud.kv",
+    path: "/",
+    actions: ["get", "put", "del", "list", "metadata"],
+    description: "Read and write any KV entry the user can access.",
+  },
+  {
+    service: "tinycloud.sql",
+    path: "/",
+    actions: ["read", "write"],
+    description: "Read and write any SQL row the user can access.",
+  },
+];
 
 // Persistent state inside the sidecar volume. The Layer-1 image wrote
 // `delegation.txt` (plain text) to the same volume root; we read that as a
@@ -308,6 +329,18 @@ function handleGetHealth(state: SidecarState): Response {
   });
 }
 
+// Server-info-shaped advertisement so the frontend can compose the agent into
+// the manifest before sign-in (parity with the backend's /api/server-info).
+function handleGetInfo(state: SidecarState): Response {
+  return json(200, {
+    did: state.agentDid,
+    status: "ready",
+    name: AGENT_NAME,
+    expiry: AGENT_DELEGATION_EXPIRY,
+    permissions: AGENT_PERMISSIONS,
+  });
+}
+
 // ── Boot ──────────────────────────────────────────────────────────────
 
 bootstrap()
@@ -329,6 +362,9 @@ bootstrap()
         }
         if (url.pathname === "/health" && req.method === "GET") {
           return handleGetHealth(state);
+        }
+        if (url.pathname === "/info" && req.method === "GET") {
+          return handleGetInfo(state);
         }
         return json(404, {
           error: { code: "not_found", message: `${req.method} ${url.pathname}` },

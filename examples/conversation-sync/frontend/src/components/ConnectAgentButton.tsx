@@ -1,9 +1,12 @@
 import { useState, type FC } from "react";
-import { createDelegation } from "@tinyboilerplate/client";
-import type { TinyCloudWeb } from "@tinycloud/web-sdk";
+import { createManifestDelegation } from "@tinyboilerplate/client";
+import type { ServerInfo } from "@tinyboilerplate/core";
+import type { ComposedManifestRequest, TinyCloudWeb } from "@tinycloud/web-sdk";
 
 interface ConnectAgentButtonProps {
   tcw: TinyCloudWeb;
+  capabilityRequest: ComposedManifestRequest;
+  agentInfo?: ServerInfo | null;
   agentEndpoint?: string;
   opencodeUrl?: string;
   onRefresh?: () => void;
@@ -23,25 +26,17 @@ const DEFAULT_AGENT_ENDPOINT = import.meta.env.VITE_AGENT_ENDPOINT || "http://lo
 // container `/` on fresh boots and hides the app's CLAUDE.md + `tc-agent` CLI).
 // btoa("/workspace").replace(/=/g, "") === "L3dvcmtzcGFjZQ".
 const DEFAULT_OPENCODE_URL = "http://localhost:4096/L3dvcmtzcGFjZQ";
-const DELEGATION_EXPIRY_MS = 7 * 24 * 3600 * 1000;
-
-const AGENT_ACTIONS = [
-  "tinycloud.kv/get",
-  "tinycloud.kv/put",
-  "tinycloud.kv/del",
-  "tinycloud.kv/list",
-  "tinycloud.sql/read",
-  "tinycloud.sql/write",
-];
 
 export const ConnectAgentButton: FC<ConnectAgentButtonProps> = ({
   tcw,
+  capabilityRequest,
+  agentInfo,
   agentEndpoint = DEFAULT_AGENT_ENDPOINT,
   opencodeUrl = DEFAULT_OPENCODE_URL,
   onRefresh,
   refreshLabel = "Refresh",
 }) => {
-  const [agentDid, setAgentDid] = useState("");
+  const [agentDid, setAgentDid] = useState(agentInfo?.did ?? "");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [copied, setCopied] = useState(false);
 
@@ -59,11 +54,8 @@ export const ConnectAgentButton: FC<ConnectAgentButtonProps> = ({
 
     let serialized: string;
     try {
-      serialized = await createDelegation(tcw, trimmed, {
-        actions: AGENT_ACTIONS,
-        path: "",
-        expiryMs: DELEGATION_EXPIRY_MS,
-      });
+      const result = await createManifestDelegation(tcw, trimmed, capabilityRequest);
+      serialized = result.serialized;
     } catch (err) {
       setStatus({
         kind: "error",

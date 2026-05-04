@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { TinyCloudWeb } from "@tinycloud/web-sdk";
+import type { ComposedManifestRequest, TinyCloudWeb } from "@tinycloud/web-sdk";
 import type { ServerInfo } from "@tinyboilerplate/core";
 import {
   connectWallet,
@@ -12,7 +12,7 @@ import {
   checkDelegationStatus,
   revokeDelegation,
   SessionStore,
-  composeManifestWithBackend,
+  composeManifestWithDelegatees,
   loadAppManifest,
   resolveManifestPermissionPath,
   type ApiClient,
@@ -30,8 +30,19 @@ import { ConnectAgentButton } from "./components/ConnectAgentButton";
 
 const OPENKEY_HOST = import.meta.env.VITE_OPENKEY_HOST || "https://openkey.so";
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
+const AGENT_ENDPOINT = import.meta.env.VITE_AGENT_ENDPOINT || "http://localhost:4097";
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const ENABLE_TINYCLOUD_HOOKS = import.meta.env.VITE_ENABLE_TINYCLOUD_HOOKS === "true";
+
+async function fetchAgentInfo(endpoint: string): Promise<ServerInfo | null> {
+  try {
+    const res = await fetch(`${endpoint}/info`);
+    if (!res.ok) return null;
+    return (await res.json()) as ServerInfo;
+  } catch {
+    return null;
+  }
+}
 
 // ── App ─────────────────────────────────────────────────────────────
 
@@ -50,6 +61,8 @@ export function App() {
   const [gmLapsedBanner, setGmLapsedBanner] = useState(false);
   const [liveWritePathPrefix, setLiveWritePathPrefix] = useState<string | null>(null);
   const [liveWriteHost, setLiveWriteHost] = useState<string | null>(null);
+  const [agentInfo, setAgentInfo] = useState<ServerInfo | null>(null);
+  const [capabilityRequest, setCapabilityRequest] = useState<ComposedManifestRequest | null>(null);
 
   const sessionStoreRef = useRef(new SessionStore());
   const restoreAttemptedRef = useRef(false);
@@ -174,24 +187,26 @@ export function App() {
     setAuthError(null);
     try {
       const { address: addr, web3Provider } = await connectWallet({ host: OPENKEY_HOST });
-      const [nonce, info] = await Promise.all([
+      const [nonce, info, agent] = await Promise.all([
         requestNonce(BACKEND_URL, addr),
         (async (): Promise<ServerInfo> => {
           const res = await fetch(`${BACKEND_URL}/api/server-info`);
           if (!res.ok) throw new Error(`Server info: ${res.statusText}`);
           return res.json();
         })(),
+        fetchAgentInfo(AGENT_ENDPOINT),
       ]);
       const appManifest = await loadAppManifest(`${BACKEND_URL}/api/manifest`);
       const conversationEventPathPrefix = ENABLE_TINYCLOUD_HOOKS
         ? resolveManifestPermissionPath(appManifest, "tinycloud.sql", "conversations/conversation")
         : null;
-      const capabilityRequest = composeManifestWithBackend(appManifest, info);
+      const delegatees: ServerInfo[] = agent ? [info, agent] : [info];
+      const composedRequest = composeManifestWithDelegatees(appManifest, delegatees);
 
       const { tcw: tcwInstance, session } = await createAndSignIn(web3Provider, {
         nonce,
         autoCreateSpace: true,
-        capabilityRequest,
+        capabilityRequest: composedRequest,
       });
       const { token, expiresIn } = await verifySession(
         BACKEND_URL,
@@ -203,16 +218,14 @@ export function App() {
         sessionStore: sessionStoreRef.current,
       });
 
-      const { serialized } = await createManifestDelegation(
-        tcwInstance,
-        info.did,
-        capabilityRequest,
-      );
+      const { serialized } = await createManifestDelegation(tcwInstance, info.did, composedRequest);
       await sendDelegation(BACKEND_URL, serialized, token);
       setAddress(addr);
       setDid(tcwInstance.did ?? null);
       setTcw(tcwInstance);
       setApi(apiClient);
+      setAgentInfo(agent);
+      setCapabilityRequest(composedRequest);
       setLiveWritePathPrefix(conversationEventPathPrefix);
       setLiveWriteHost(tcwInstance.hosts[0] ?? null);
     } catch (err) {
@@ -231,6 +244,8 @@ export function App() {
     setDid(null);
     setTcw(null);
     setApi(null);
+    setAgentInfo(null);
+    setCapabilityRequest(null);
     setLiveWritePathPrefix(null);
     setLiveWriteHost(null);
     setAuthError(null);
@@ -264,9 +279,12 @@ export function App() {
           onSignOut={handleSignOut}
         />
 
-        {isSignedIn && tcw && (
+        {isSignedIn && tcw && capabilityRequest && (
           <ConnectAgentButton
             tcw={tcw}
+            capabilityRequest={capabilityRequest}
+            agentInfo={agentInfo}
+            agentEndpoint={AGENT_ENDPOINT}
             onRefresh={() => setRefreshKey((k) => k + 1)}
             refreshLabel="Refresh conversations"
           />
