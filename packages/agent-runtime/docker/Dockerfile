@@ -36,12 +36,13 @@ RUN set -eu; \
 
 # The @tinycloud/node-sdk-wasm package loads its .wasm via an absolute path
 # computed at build time (__dirname-based). `bun build --compile` bakes that
-# path into the binary but doesn't embed the .wasm file itself — so at runtime
-# the binary tries to read the wasm from /build/node_modules/... which doesn't
-# exist in the stripped-down runtime stage. Mirror just the wasm files to the
-# same path in the runtime image.
-RUN mkdir -p /out/wasm && \
-    find /build/node_modules -name "*.wasm" -path "*node-sdk-wasm*" -exec cp {} /out/wasm/ \;
+# path into the binary but doesn't embed the .wasm file itself, so preserve the
+# builder's node_modules-relative WASM path and mirror it into the runtime image.
+RUN set -eu; \
+    mkdir -p /out/wasm-root; \
+    find /build/node_modules -name "*.wasm" -path "*node-sdk-wasm*" \
+      -exec sh -c 'for wasm_path do target="/out/wasm-root$wasm_path"; mkdir -p "$(dirname "$target")"; cp "$wasm_path" "$target"; done' sh {} +; \
+    test -n "$(find /out/wasm-root -name "*.wasm" -print -quit)"
 
 # ---------- runtime: ubuntu + Node + opencode + tc ----------
 FROM ubuntu:22.04
@@ -61,10 +62,9 @@ RUN apt-get update \
 COPY --from=builder /out/delegation-endpoint /usr/local/bin/delegation-endpoint
 RUN chmod +x /usr/local/bin/delegation-endpoint
 
-# Mirror the WASM file at the exact absolute path the sidecar binary expects.
+# Mirror the WASM files at the exact absolute paths the sidecar binary expects.
 # See the builder stage comment for why.
-COPY --from=builder /out/wasm/tinycloud_web_sdk_rs_bg.wasm \
-     /build/node_modules/.bun/@tinycloud+node-sdk-wasm@1.7.3-beta.1/node_modules/@tinycloud/node-sdk-wasm/dist/wasm/tinycloud_web_sdk_rs_bg.wasm
+COPY --from=builder /out/wasm-root/ /
 
 # Static config + entrypoint. The CLAUDE.md that teaches the agent about
 # this app's schema/KV layout is app-specific — mount it at runtime via
