@@ -64,7 +64,7 @@ RUN chmod +x /usr/local/bin/delegation-endpoint
 # Mirror the WASM file at the exact absolute path the sidecar binary expects.
 # See the builder stage comment for why.
 COPY --from=builder /out/wasm/tinycloud_web_sdk_rs_bg.wasm \
-     /build/node_modules/.bun/@tinycloud+node-sdk-wasm@1.7.2-beta.0/node_modules/@tinycloud/node-sdk-wasm/dist/wasm/tinycloud_web_sdk_rs_bg.wasm
+     /build/node_modules/.bun/@tinycloud+node-sdk-wasm@1.7.3-beta.1/node_modules/@tinycloud/node-sdk-wasm/dist/wasm/tinycloud_web_sdk_rs_bg.wasm
 
 # Static config + entrypoint. The CLAUDE.md that teaches the agent about
 # this app's schema/KV layout is app-specific — mount it at runtime via
