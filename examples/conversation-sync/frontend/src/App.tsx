@@ -23,6 +23,8 @@ import { SourcesSetup } from "./components/SourcesSetup";
 import { SyncControl } from "./components/SyncControl";
 import { ConversationList } from "./components/ConversationList";
 import { ConversationDetail } from "./components/ConversationDetail";
+import { ChatScreen } from "./components/ChatScreen";
+import { ConnectionsScreen } from "./components/ConnectionsScreen";
 import { LiveWriteEvents } from "./components/LiveWriteEvents";
 import { ConnectAgentButton } from "./components/ConnectAgentButton";
 import { AppShell, type ShellRoute, type ShellSourceConfig } from "./components/AppShell";
@@ -254,10 +256,7 @@ function LandingPage({
           <nav className="landing-nav" aria-label="Main navigation">
             <a href="#features">Features</a>
             <a href="#sources">Sources</a>
-            <a href="#">Pricing</a>
-            <a href="#">Changelog</a>
             <span className="landing-divider" />
-            <a href="#">Sign in</a>
             <button className="landing-btn landing-btn-solid" onClick={onSignIn} disabled={loading}>
               {signInLabel}
             </button>
@@ -276,8 +275,8 @@ function LandingPage({
                 Operate on data.
               </h1>
               <p className="landing-hero-lede">
-                One inbox for every transcript - Fireflies, Google Meet, and your own audio. Search
-                across all of it. Ask anything.
+                One inbox for every synced transcript from Fireflies and Google Meet. Search across
+                all of it and open the source transcript.
               </p>
               <div className="landing-hero-meta">
                 <span>
@@ -311,11 +310,8 @@ function LandingPage({
             </div>
             <div className="landing-sources-row">
               {[
-                ["Granola", "desktop - realtime"],
                 ["Fireflies", "meet bot - webhook"],
-                ["Otter", "api - backfill"],
                 ["Google Meet", "captions sync"],
-                ["Audio import", "whisper - diarized"],
               ].map(([name, meta]) => (
                 <div key={name} className="landing-source-cell">
                   <span className="landing-dot" />
@@ -332,17 +328,17 @@ function LandingPage({
                 [
                   "01",
                   "One inbox",
-                  "Every meeting and import lands in a single chronological feed. Filter by source, person, or date.",
+                  "Fireflies and Google Meet transcripts land in a single chronological feed. Filter by source, person, or date.",
                 ],
                 [
                   "02",
                   "Real summaries",
-                  "Per-transcript summaries you can read like documents. Re-generate, copy, edit, and sync.",
+                  "Per-transcript summaries you can read like documents. Copy, export, and sync the records you need.",
                 ],
                 [
                   "03",
-                  "Ask anything",
-                  "Chat with one transcript or your whole library. Every answer traces back to the source.",
+                  "Search in chat",
+                  "Ask across your transcript library in a chat-like flow. Every result traces back to the source.",
                 ],
               ].map(([num, title, description]) => (
                 <div key={num} className="landing-feature">
@@ -396,12 +392,6 @@ function LandingPage({
               <div>
                 <h3>Company</h3>
                 <a href="mailto:hello@listen.app">Contact</a>
-                <a href="#preview">Changelog</a>
-              </div>
-              <div>
-                <h3>Legal</h3>
-                <a href="#privacy">Privacy</a>
-                <a href="#terms">Terms</a>
               </div>
             </div>
             <div className="landing-footer-bottom">
@@ -867,9 +857,13 @@ export function App() {
             ? "sources / reconnect"
             : activePage === "sources"
               ? "sources / manage"
-              : hasUsableInbox
-                ? `inbox · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`
-                : "onboarding / sources";
+              : activePage === "connections"
+                ? "settings / sources"
+                : activePage === "chat"
+                  ? "library / chat"
+                  : hasUsableInbox
+                    ? `inbox · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`
+                    : "onboarding / sources";
   const pageTitle = !isSignedIn
     ? "Capture thoughts. Operate on data."
     : selectedConversationId
@@ -882,28 +876,24 @@ export function App() {
             ? "Reconnect wallet."
             : activePage === "sources"
               ? "Add sources."
-              : hasUsableInbox
-                ? "Everything you've said."
-                : "Connect what you already have.";
+              : activePage === "connections"
+                ? "Connections."
+                : activePage === "chat"
+                  ? "Ask your transcripts."
+                  : hasUsableInbox
+                    ? "Everything you've said."
+                    : "Connect what you already have.";
 
-  const sourceItems: ShellSourceConfig[] = [
-    { key: "granola", name: "Granola", count: null },
-    { key: "fireflies", name: "Fireflies", count: null },
-    { key: "otter", name: "Otter", count: null },
-    { key: "gmeet", name: "Google Meet", count: null },
-    { key: "audio", name: "Audio imports", count: null },
-  ];
-
-  const folderItems = [
-    { name: "Sales calls", count: 0 },
-    { name: "1:1s", count: 0 },
-    { name: "Personal", count: 0 },
-    { name: "Hiring", count: 0 },
-  ];
+  const sourceItems: ShellSourceConfig[] = [{ key: "fireflies", name: "Fireflies", count: null }];
+  if (GOOGLE_CLIENT_ID) {
+    sourceItems.push({ key: "gmeet", name: "Google Meet", count: null });
+  }
 
   const userInitials = address ? `${address.slice(2, 3)}${address.slice(-1)}`.toUpperCase() : "??";
   const userName = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "Signed in";
-  const userPlan = did ? "CONNECTED · 5 sources" : "RESTORED · 5 sources";
+  const userPlan = did
+    ? `CONNECTED · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`
+    : `RESTORED · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`;
 
   const handleRouteChange = (route: ShellRoute) => {
     setSelectedConversationId(null);
@@ -931,7 +921,7 @@ export function App() {
       topbarActions={topbarActions}
       user={{ initials: userInitials, name: userName, plan: userPlan }}
       sources={sourceItems}
-      folders={folderItems}
+      folders={[]}
     >
       {showWorkspaceLoading && <WorkspaceStatusPanel mode="checking" />}
 
@@ -1079,6 +1069,29 @@ export function App() {
             refreshKey={refreshKey}
           />
         </>
+      )}
+
+      {hasUsableInbox && activePage === "chat" && api && (
+        <ChatScreen
+          api={api}
+          refreshKey={refreshKey}
+          onOpenConversation={(id) => {
+            setSelectedConversationId(id);
+            setActivePage("inbox");
+          }}
+        />
+      )}
+
+      {hasUsableInbox && activePage === "connections" && api && (
+        <ConnectionsScreen
+          api={api}
+          hasFireflies={firefliesConnected}
+          hasGoogleMeet={hasGoogleMeet === true}
+          hasFirefliesBackendAccess={hasFirefliesBackendAccess === true}
+          showGoogleMeet={!!GOOGLE_CLIENT_ID}
+          onAddSource={() => setActivePage("sources")}
+          onRefresh={() => setRefreshKey((k) => k + 1)}
+        />
       )}
 
       {/* Account controls — kept accessible until other agents fold them into a user menu */}

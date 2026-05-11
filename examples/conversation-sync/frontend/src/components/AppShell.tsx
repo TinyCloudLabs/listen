@@ -2,9 +2,9 @@ import type { CSSProperties, FC, ReactNode } from "react";
 
 // ── Types ───────────────────────────────────────────────────────────
 
-export type ShellRoute = "inbox" | "sources";
+export type ShellRoute = "inbox" | "chat" | "connections" | "sources";
 
-export type ShellSourceKey = "granola" | "fireflies" | "otter" | "gmeet" | "audio";
+export type ShellSourceKey = "fireflies" | "gmeet";
 
 export interface ShellSourceConfig {
   key: ShellSourceKey;
@@ -32,7 +32,7 @@ interface AppShellProps {
   user: ShellUser;
   sources: ShellSourceConfig[];
   folders: ShellFolderConfig[];
-  navCounts?: Partial<Record<Exclude<ShellRoute, "sources">, number | null>>;
+  navCounts?: Partial<Record<Exclude<ShellRoute, "connections" | "sources">, number | null>>;
   children: ReactNode;
 }
 
@@ -110,12 +110,15 @@ function ShellIcon({ name, size = 14 }: { name: IconName; size?: number }) {
 // ── Nav config ──────────────────────────────────────────────────────
 
 interface NavItem {
-  key: Exclude<ShellRoute, "sources">;
+  key: Exclude<ShellRoute, "connections" | "sources">;
   label: string;
   icon: IconName;
 }
 
-const NAV_ITEMS: NavItem[] = [{ key: "inbox", label: "Inbox", icon: "inbox" }];
+const NAV_ITEMS: NavItem[] = [
+  { key: "inbox", label: "Inbox", icon: "inbox" },
+  { key: "chat", label: "Chat", icon: "sparkle" },
+];
 
 // ── AppShell ────────────────────────────────────────────────────────
 
@@ -140,25 +143,35 @@ export const AppShell: FC<AppShellProps> = ({
             <span className="listen-brand-mark" />
             <span style={shell.brandWord}>listen</span>
           </div>
-          <button type="button" style={shell.iconBtn} aria-label="Settings">
+          <button
+            type="button"
+            style={shell.iconBtn}
+            aria-label="Settings"
+            onClick={() => onRouteChange("connections")}
+          >
             <ShellIcon name="settings" size={12} />
           </button>
         </div>
 
-        {/* Search pill (decorative) */}
+        {/* Search */}
         <div style={shell.searchWrap}>
-          <div style={shell.searchPill}>
+          <button
+            type="button"
+            style={shell.searchPill}
+            onClick={() => onRouteChange("chat")}
+            aria-label="Search transcripts"
+          >
             <ShellIcon name="search" size={13} />
             <span style={shell.searchLabel}>Search transcripts</span>
             <span style={shell.searchKbd}>⌘K</span>
-          </div>
+          </button>
         </div>
 
-        {/* Import audio CTA */}
+        {/* Source management */}
         <div style={shell.ctaWrap}>
-          <button type="button" style={shell.ctaSolid}>
+          <button type="button" style={shell.ctaSolid} onClick={() => onRouteChange("connections")}>
             <ShellIcon name="plus" size={12} />
-            <span>Import audio</span>
+            <span>Add source</span>
           </button>
         </div>
 
@@ -184,24 +197,28 @@ export const AppShell: FC<AppShellProps> = ({
           })}
         </nav>
 
-        {/* Folders */}
-        <div style={shell.sectionHeading}>
-          <span style={shell.sectionDash}>— folders</span>
-        </div>
-        <div>
-          {folders.map((folder) => (
-            <button
-              key={folder.name}
-              type="button"
-              onClick={() => onRouteChange("inbox")}
-              style={shell.sideRow}
-            >
-              <ShellIcon name="folder" size={13} />
-              <span style={shell.sideRowLabel}>{folder.name}</span>
-              <span style={shell.sideRowCount}>{folder.count}</span>
-            </button>
-          ))}
-        </div>
+        {folders.length > 0 && (
+          <>
+            {/* Folders */}
+            <div style={shell.sectionHeading}>
+              <span style={shell.sectionDash}>— folders</span>
+            </div>
+            <div>
+              {folders.map((folder) => (
+                <button
+                  key={folder.name}
+                  type="button"
+                  onClick={() => onRouteChange("inbox")}
+                  style={shell.sideRow}
+                >
+                  <ShellIcon name="folder" size={13} />
+                  <span style={shell.sideRowLabel}>{folder.name}</span>
+                  <span style={shell.sideRowCount}>{folder.count}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
 
         {/* Sources */}
         <div style={shell.sectionHeading}>
@@ -212,7 +229,7 @@ export const AppShell: FC<AppShellProps> = ({
             <button
               key={source.key}
               type="button"
-              onClick={() => onRouteChange("sources")}
+              onClick={() => onRouteChange("connections")}
               style={shell.sideRow}
             >
               <span style={shell.sourceDot} />
@@ -294,13 +311,17 @@ const shell: Record<string, CSSProperties> = {
     padding: "14px 14px 6px",
   },
   searchPill: {
+    fontFamily: FONT,
+    width: "100%",
     display: "flex",
     alignItems: "center",
     border: "var(--lst-border)",
+    background: "transparent",
     borderRadius: 999,
     padding: "6px 12px",
     gap: 8,
     color: "var(--lst-blue)",
+    cursor: "pointer",
   },
   searchLabel: {
     fontFamily: FONT,
