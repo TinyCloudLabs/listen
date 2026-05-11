@@ -194,7 +194,7 @@ export const AppShell: FC<AppShellProps> = ({
         <div style={shell.ctaWrap}>
           <button type="button" style={shell.ctaSolid} onClick={() => onRouteChange("connections")}>
             <ShellIcon name="plus" size={12} />
-            <span>Add source</span>
+            <span>Add source or transcript</span>
           </button>
         </div>
 

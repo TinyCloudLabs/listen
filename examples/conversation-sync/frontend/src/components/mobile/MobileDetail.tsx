@@ -25,6 +25,7 @@ type DetailTab = "summary" | "transcript";
 
 function srcLabel(s: string): string {
   if (s === "google-meet") return "MEET";
+  if (s === "manual") return "MANUAL";
   return s.toUpperCase();
 }
 

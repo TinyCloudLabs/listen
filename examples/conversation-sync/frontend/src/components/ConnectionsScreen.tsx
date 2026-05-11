@@ -8,6 +8,7 @@ interface ConnectionsScreenProps {
   hasFirefliesBackendAccess: boolean;
   showGoogleMeet: boolean;
   onAddSource: () => void;
+  onAddTranscript?: () => void;
   onRefresh: () => void;
 }
 
@@ -28,11 +29,13 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
   hasFirefliesBackendAccess,
   showGoogleMeet,
   onAddSource,
+  onAddTranscript,
   onRefresh,
 }) => {
   const [busySource, setBusySource] = useState<SourceId | "all" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const openTranscriptImport = onAddTranscript ?? onAddSource;
 
   const sources: SourceRow[] = [
     {
@@ -116,11 +119,11 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
               {busySource === "all" ? "Syncing" : "Sync connected"}
             </button>
             <button type="button" style={s.btnPrimary} onClick={onAddSource}>
-              Add source
+              Add source or transcript
             </button>
           </div>
         </div>
-        <p style={s.lede}>Manage the transcript sources that write into your Listen inbox.</p>
+        <p style={s.lede}>Manage synced sources or import a transcript into your Listen inbox.</p>
       </header>
 
       {message && <div style={s.notice}>{message}</div>}
@@ -171,12 +174,25 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
         )}
 
         <div style={{ ...s.sectionLabelRow, marginTop: 28 }}>
-          <span style={s.sectionLabel}>— available · {available.length}</span>
+          <span style={s.sectionLabel}>— available · {available.length + 1}</span>
           <span style={s.sectionRule} />
         </div>
 
+        <div style={s.availableCard}>
+          <span style={s.markIdle} />
+          <div>
+            <div style={s.sourceName}>Transcript import</div>
+            <p style={s.availableDesc}>
+              Paste text or upload a transcript file with editable fields.
+            </p>
+          </div>
+          <button type="button" style={s.btnGhostSm} onClick={openTranscriptImport}>
+            Import
+          </button>
+        </div>
+
         {available.length === 0 ? (
-          <div style={s.empty}>All configured sources are connected.</div>
+          <div style={s.empty}>All provider sources are connected.</div>
         ) : (
           available.map((source) => (
             <div key={source.id} style={s.availableCard}>

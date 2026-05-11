@@ -271,7 +271,9 @@ describe("App manual sign-in processing", () => {
   });
 
   it("posts backend delegation during manual sign-in when none is stored", async () => {
-    vi.mocked(checkDelegationStatus).mockResolvedValue({ status: "none", expiresAt: null });
+    vi.mocked(checkDelegationStatus)
+      .mockResolvedValueOnce({ status: "none", expiresAt: null })
+      .mockResolvedValue({ status: "active" });
 
     await renderAndSignIn();
 
@@ -291,6 +293,25 @@ describe("App manual sign-in processing", () => {
         ]),
       }),
     );
+  });
+
+  it("renews backend delegation when the connected workspace sees an expired record", async () => {
+    vi.mocked(checkDelegationStatus)
+      .mockResolvedValueOnce({ status: "active" })
+      .mockResolvedValueOnce({
+        status: "expired",
+        expiresAt: "2026-05-10T00:46:27.000Z",
+      });
+
+    await renderAndSignIn();
+
+    await waitFor(() => {
+      expect(sendDelegation).toHaveBeenCalledWith(
+        "http://localhost:3001",
+        "mock-delegation",
+        "mock-token",
+      );
+    });
   });
 
   it("requires Fireflies access when the backend cannot read the shared secret", async () => {
