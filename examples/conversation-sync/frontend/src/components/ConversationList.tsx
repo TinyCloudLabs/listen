@@ -1,5 +1,8 @@
-import { useState, useEffect, useCallback, type FC } from "react";
+import { useState, useEffect, useCallback, useRef, type FC, type MouseEvent } from "react";
 import type { ApiClient } from "@tinyboilerplate/client";
+import { InboxFilters, type SourceFilter } from "./InboxFilters";
+import { InboxBulkBar } from "./InboxBulkBar";
+import { InboxRow, InboxRowGrid } from "./InboxRow";
 
 interface Conversation {
   id: string;
@@ -26,30 +29,28 @@ interface ConversationListProps {
 
 const PAGE_SIZE = 20;
 
-function formatDuration(secs: number): string {
-  if (secs >= 3600) return `${Math.round(secs / 3600)} hr`;
-  return `${Math.round(secs / 60)} min`;
+function formatGroupDate(isoString: string): string {
+  return new Date(isoString).toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
 }
 
-function formatDate(isoString: string): string {
-  return new Date(isoString).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
+async function copyText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
 
-function sourceLabel(source: string): string {
-  if (source === "fireflies") return "FF";
-  if (source === "google-meet") return "GM";
-  return source.toUpperCase();
-}
-
-/** Strip markdown artifacts and collapse to a clean plain-text snippet. */
-function cleanSummary(str: string, max: number): string {
-  const clean = str
-    .replace(/\*\*(.+?)\*\*/g, "$1") // bold
-    .replace(/^[-*]\s+/gm, "") // bullet prefixes
-    .replace(/\n+/g, " ") // newlines → spaces
-    .replace(/\s{2,}/g, " ") // collapse whitespace
-    .trim();
-  return clean.length > max ? clean.slice(0, max - 1) + "\u2026" : clean;
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
 }
 
 export const ConversationList: FC<ConversationListProps> = ({
@@ -62,12 +63,16 @@ export const ConversationList: FC<ConversationListProps> = ({
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sourceFilter, setSourceFilter] = useState<string>("all");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
   const fetchConversations = useCallback(
     async (offset: number, append: boolean) => {
+      const sourceParam = sourceFilter !== "all" ? `&source=${sourceFilter}` : "";
       try {
-        const sourceParam = sourceFilter !== "all" ? `&source=${sourceFilter}` : "";
         const data = await api.get<ConversationsResponse>(
           `/api/conversations?limit=${PAGE_SIZE}&offset=${offset}${sourceParam}`,
         );
@@ -88,13 +93,72 @@ export const ConversationList: FC<ConversationListProps> = ({
   useEffect(() => {
     setLoading(true);
     setConversations([]);
+    setSelected(new Set());
     fetchConversations(0, false).finally(() => setLoading(false));
   }, [fetchConversations, refreshKey]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [contextMenu]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 1800);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
 
   const handleLoadMore = async () => {
     setLoadingMore(true);
     await fetchConversations(conversations.length, true);
     setLoadingMore(false);
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelected(new Set());
+
+  const openContextMenu = (event: MouseEvent, id: string) => {
+    event.preventDefault();
+    setContextMenu({ x: event.clientX, y: event.clientY, id });
+  };
+
+  const selectedConversations = conversations.filter((conversation) =>
+    selected.has(conversation.id),
+  );
+  const selectedSummaries = selectedConversations.filter((conversation) => conversation.summary);
+
+  const copySelectedSummaries = async () => {
+    const text = selectedSummaries
+      .map((conversation) => `${conversation.title}\n${conversation.summary}`)
+      .join("\n\n");
+    await copyText(text);
+    setNotice(
+      `Copied ${selectedSummaries.length} summar${selectedSummaries.length === 1 ? "y" : "ies"}`,
+    );
+  };
+
+  const copySummary = async (conversation: Conversation) => {
+    if (!conversation.summary) return;
+    await copyText(`${conversation.title}\n${conversation.summary}`);
+    setNotice("Summary copied");
+    setContextMenu(null);
   };
 
   if (loading) {
@@ -131,7 +195,7 @@ export const ConversationList: FC<ConversationListProps> = ({
   const hasMore = conversations.length < total;
   const groupedConversations = conversations.reduce<Array<{ date: string; items: Conversation[] }>>(
     (groups, conversation) => {
-      const date = formatDate(conversation.started_at);
+      const date = formatGroupDate(conversation.started_at);
       const last = groups[groups.length - 1];
       if (last?.date === date) {
         last.items.push(conversation);
@@ -144,55 +208,62 @@ export const ConversationList: FC<ConversationListProps> = ({
   );
 
   return (
-    <section style={s.card}>
+    <section style={s.card} ref={containerRef}>
       <div style={s.headerRow}>
         <span style={s.countLabel}>
           {total} conversation{total !== 1 ? "s" : ""}
         </span>
-        <div style={s.filterRow}>
-          {(["all", "fireflies", "google-meet"] as const).map((src) => (
-            <button
-              key={src}
-              style={{
-                ...s.filterChip,
-                ...(sourceFilter === src ? s.filterChipActive : {}),
-              }}
-              onClick={() => setSourceFilter(src)}
-            >
-              {src === "all" ? "All" : src === "fireflies" ? "Fireflies" : "Google Meet"}
-            </button>
-          ))}
-        </div>
+      </div>
+
+      <InboxFilters
+        total={total}
+        sourceFilter={sourceFilter}
+        onSourceFilterChange={setSourceFilter}
+        showingCount={conversations.length}
+      />
+
+      {selected.size > 0 && (
+        <InboxBulkBar
+          selectedCount={selected.size}
+          hasSummaries={selectedSummaries.length > 0}
+          onCopySummaries={copySelectedSummaries}
+          onClear={clearSelection}
+        />
+      )}
+
+      {notice && <div style={s.notice}>{notice}</div>}
+
+      <div style={s.columnHeader}>
+        <span />
+        <span style={s.colLabel}>TIME</span>
+        <span style={s.colLabel}>SOURCE</span>
+        <span style={s.colLabel}>TITLE / PREVIEW</span>
+        <span style={s.colLabel}>PEOPLE</span>
+        <span style={{ ...s.colLabel, textAlign: "right" }}>DUR</span>
+        <span style={{ ...s.colLabel, textAlign: "center" }}>SUM</span>
+        <span />
       </div>
 
       <div style={s.list}>
         {groupedConversations.map((group) => (
           <div key={group.date}>
             <div style={s.groupHeader}>
-              <span>{group.date}</span>
+              <span>— {group.date.toUpperCase()}</span>
               <span style={s.groupRule} />
               <span>
                 {group.items.length} record{group.items.length === 1 ? "" : "s"}
               </span>
             </div>
             {group.items.map((c) => (
-              <div key={c.id} style={s.row} onClick={() => onSelectConversation(c.id)}>
-                <span style={s.date}>{formatDate(c.started_at)}</span>
-                <span style={s.sourceBadge}>{sourceLabel(c.source)}</span>
-                <span style={s.rowBody}>
-                  <span style={s.rowTop}>
-                    <span style={s.title}>{c.title}</span>
-                    <span style={s.meta}>
-                      <span>{formatDuration(c.duration_secs)}</span>
-                      <span style={s.metaDot}>&middot;</span>
-                      <span>
-                        {c.participant_count} participant{c.participant_count !== 1 ? "s" : ""}
-                      </span>
-                    </span>
-                  </span>
-                  {c.summary && <span style={s.summary}>{cleanSummary(c.summary, 120)}</span>}
-                </span>
-              </div>
+              <InboxRow
+                key={c.id}
+                conversation={c}
+                selected={selected.has(c.id)}
+                onToggleSelect={toggleSelect}
+                onOpen={onSelectConversation}
+                onContextMenu={openContextMenu}
+                onMenu={openContextMenu}
+              />
             ))}
           </div>
         ))}
@@ -206,6 +277,48 @@ export const ConversationList: FC<ConversationListProps> = ({
         >
           {loadingMore ? "Loading\u2026" : "Load More"}
         </button>
+      )}
+
+      {contextMenu && (
+        <div
+          style={{ ...s.contextMenu, top: contextMenu.y, left: contextMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+          role="menu"
+        >
+          {(() => {
+            const conversation = conversations.find((item) => item.id === contextMenu.id);
+            if (!conversation) return null;
+            return (
+              <>
+                <button
+                  type="button"
+                  style={s.contextItem}
+                  role="menuitem"
+                  onClick={() => {
+                    setContextMenu(null);
+                    onSelectConversation(conversation.id);
+                  }}
+                >
+                  <span style={{ flex: 1 }}>Open transcript</span>
+                  <span style={s.contextShortcut}>↵</span>
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    ...s.contextItem,
+                    ...(!conversation.summary ? s.contextItemDisabled : {}),
+                  }}
+                  role="menuitem"
+                  disabled={!conversation.summary}
+                  onClick={() => copySummary(conversation)}
+                >
+                  <span style={{ flex: 1 }}>Copy summary</span>
+                  <span style={s.contextShortcut}>⌘⇧C</span>
+                </button>
+              </>
+            );
+          })()}
+        </div>
       )}
     </section>
   );
@@ -223,12 +336,13 @@ const s: Record<string, React.CSSProperties> = {
     border: "var(--lst-border)",
     borderRadius: 0,
     overflow: "hidden",
+    position: "relative",
   },
   headerRow: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: "14px 20px",
+    padding: "14px 32px",
     borderBottom: "var(--lst-border)",
   },
   countLabel: {
@@ -239,123 +353,36 @@ const s: Record<string, React.CSSProperties> = {
     letterSpacing: "0.08em",
     textTransform: "uppercase" as const,
   },
-  filterRow: {
-    display: "flex",
-    gap: 4,
+  columnHeader: {
+    ...InboxRowGrid,
+    padding: "10px 32px",
+    borderBottom: "var(--lst-border)",
+    position: "sticky",
+    top: 0,
+    background: "var(--lst-bg)",
+    zIndex: 2,
   },
-  filterChip: {
-    fontFamily: FONT,
-    fontSize: 11,
-    fontWeight: 500,
-    color: "var(--lst-blue)",
-    background: "transparent",
-    border: "var(--lst-border)",
-    borderRadius: 999,
-    padding: "4px 10px",
-    cursor: "pointer",
+  colLabel: {
+    fontFamily: MONO,
+    fontSize: 10,
+    color: "var(--lst-ink-55)",
+    letterSpacing: "0.08em",
   },
-  filterChipActive: {
-    color: "var(--lst-bg)",
-    background: "var(--lst-blue)",
-    borderColor: "var(--lst-blue)",
-  },
-  list: {
-    margin: 0,
-    padding: 0,
-  },
+  list: { margin: 0, padding: 0 },
   groupHeader: {
     display: "flex",
     alignItems: "center",
     gap: 12,
-    padding: "18px 20px 8px",
+    padding: "20px 32px 8px",
     fontFamily: MONO,
     fontSize: 11,
     color: "var(--lst-ink-55)",
     letterSpacing: "0.08em",
-    textTransform: "uppercase" as const,
   },
   groupRule: {
     height: 1,
     background: "var(--lst-rule-soft)",
     flex: 1,
-  },
-  row: {
-    fontFamily: FONT,
-    width: "100%",
-    display: "grid",
-    gridTemplateColumns: "78px 100px minmax(0, 1fr)",
-    gap: 14,
-    alignItems: "start",
-    padding: "14px 20px",
-    color: "var(--lst-blue)",
-    background: "transparent",
-    border: "none",
-    borderBottom: "var(--lst-hair)",
-    textAlign: "left" as const,
-    cursor: "pointer",
-    transition: "background 0.12s",
-  },
-  rowBody: {
-    display: "flex",
-    flexDirection: "column" as const,
-    gap: 3,
-    minWidth: 0,
-  },
-  rowTop: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "baseline",
-    gap: 14,
-  },
-  title: {
-    fontSize: 15,
-    fontWeight: 500,
-    color: "var(--lst-blue)",
-    letterSpacing: 0,
-    minWidth: 0,
-  },
-  rowRight: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    flexShrink: 0,
-  },
-  sourceBadge: {
-    fontFamily: MONO,
-    fontSize: 10,
-    fontWeight: 500,
-    color: "var(--lst-ink-70)",
-    letterSpacing: "0.08em",
-    paddingTop: 2,
-  },
-  date: {
-    fontFamily: MONO,
-    fontSize: 11,
-    fontWeight: 400,
-    color: "var(--lst-ink-55)",
-    flexShrink: 0,
-    paddingTop: 2,
-  },
-  meta: {
-    display: "flex",
-    alignItems: "center",
-    gap: 5,
-    fontSize: 12,
-    color: "var(--lst-ink-55)",
-    whiteSpace: "nowrap" as const,
-  },
-  metaDot: {
-    color: "var(--lst-ink-35)",
-  },
-  summary: {
-    fontSize: 13,
-    color: "var(--lst-ink-70)",
-    margin: 0,
-    lineHeight: 1.45,
-    display: "-webkit-box",
-    WebkitLineClamp: 2,
-    WebkitBoxOrient: "vertical" as const,
-    overflow: "hidden",
   },
   loadMore: {
     fontFamily: FONT,
@@ -370,10 +397,7 @@ const s: Record<string, React.CSSProperties> = {
     borderTop: "var(--lst-border)",
     cursor: "pointer",
   },
-  loadMoreDisabled: {
-    opacity: 0.5,
-    cursor: "not-allowed",
-  },
+  loadMoreDisabled: { opacity: 0.5, cursor: "not-allowed" },
   loadingCard: {
     fontFamily: FONT,
     display: "flex",
@@ -386,10 +410,7 @@ const s: Record<string, React.CSSProperties> = {
     borderRadius: 0,
     animation: "fadeSlideIn 0.3s ease-out",
   },
-  loadingDots: {
-    display: "flex",
-    gap: 6,
-  },
+  loadingDots: { display: "flex", gap: 6 },
   loadingDot: {
     width: 8,
     height: 8,
@@ -418,11 +439,7 @@ const s: Record<string, React.CSSProperties> = {
     color: "var(--lst-blue)",
     margin: "0 0 4px",
   },
-  emptySub: {
-    fontSize: 13,
-    color: "var(--lst-ink-55)",
-    margin: 0,
-  },
+  emptySub: { fontSize: 13, color: "var(--lst-ink-55)", margin: 0 },
   errorCard: {
     fontFamily: FONT,
     display: "flex",
@@ -448,5 +465,49 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: 11,
     fontWeight: 700,
     flexShrink: 0,
+  },
+  contextMenu: {
+    position: "fixed",
+    zIndex: 50,
+    background: "var(--lst-bg)",
+    border: "var(--lst-border)",
+    borderRadius: 14,
+    minWidth: 240,
+    boxShadow: "0 8px 0 rgba(28,53,184,0.08)",
+    padding: "6px 0",
+    fontFamily: FONT,
+  },
+  contextItem: {
+    width: "100%",
+    padding: "8px 14px",
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    fontSize: 13,
+    fontFamily: FONT,
+    cursor: "pointer",
+    color: "var(--lst-blue)",
+    border: "none",
+    background: "transparent",
+    textAlign: "left",
+  },
+  contextItemDisabled: {
+    opacity: 0.45,
+    cursor: "not-allowed",
+  },
+  contextShortcut: {
+    fontFamily: MONO,
+    color: "var(--lst-ink-55)",
+    fontSize: 10,
+  },
+  notice: {
+    padding: "8px 32px",
+    borderBottom: "var(--lst-border)",
+    background: "var(--lst-ink-08)",
+    color: "var(--lst-blue)",
+    fontFamily: MONO,
+    fontSize: 11,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
   },
 };
