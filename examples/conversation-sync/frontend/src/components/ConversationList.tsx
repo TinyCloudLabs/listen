@@ -29,26 +29,28 @@ interface ConversationListProps {
 
 const PAGE_SIZE = 20;
 
-const CONTEXT_MENU_ITEMS: Array<
-  { kind: "item"; label: string; shortcut?: string } | { kind: "divider" }
-> = [
-  { kind: "item", label: "Copy transcript text", shortcut: "⌘C" },
-  { kind: "item", label: "Copy summary", shortcut: "⌘⇧C" },
-  { kind: "item", label: "Re-generate summary" },
-  { kind: "item", label: "Star / pin", shortcut: "S" },
-  { kind: "item", label: "Open transcript", shortcut: "↵" },
-  { kind: "divider" },
-  { kind: "item", label: "Move to folder…" },
-  { kind: "item", label: "Add tag…", shortcut: "T" },
-  { kind: "item", label: "Delete", shortcut: "⌫" },
-];
-
 function formatGroupDate(isoString: string): string {
   return new Date(isoString).toLocaleDateString("en-US", {
     weekday: "short",
     month: "short",
     day: "numeric",
   });
+}
+
+async function copyText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
 }
 
 export const ConversationList: FC<ConversationListProps> = ({
@@ -64,6 +66,7 @@ export const ConversationList: FC<ConversationListProps> = ({
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const fetchConversations = useCallback(
@@ -105,6 +108,12 @@ export const ConversationList: FC<ConversationListProps> = ({
     };
   }, [contextMenu]);
 
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 1800);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
   const handleLoadMore = async () => {
     setLoadingMore(true);
     await fetchConversations(conversations.length, true);
@@ -128,6 +137,28 @@ export const ConversationList: FC<ConversationListProps> = ({
   const openContextMenu = (event: MouseEvent, id: string) => {
     event.preventDefault();
     setContextMenu({ x: event.clientX, y: event.clientY, id });
+  };
+
+  const selectedConversations = conversations.filter((conversation) =>
+    selected.has(conversation.id),
+  );
+  const selectedSummaries = selectedConversations.filter((conversation) => conversation.summary);
+
+  const copySelectedSummaries = async () => {
+    const text = selectedSummaries
+      .map((conversation) => `${conversation.title}\n${conversation.summary}`)
+      .join("\n\n");
+    await copyText(text);
+    setNotice(
+      `Copied ${selectedSummaries.length} summar${selectedSummaries.length === 1 ? "y" : "ies"}`,
+    );
+  };
+
+  const copySummary = async (conversation: Conversation) => {
+    if (!conversation.summary) return;
+    await copyText(`${conversation.title}\n${conversation.summary}`);
+    setNotice("Summary copied");
+    setContextMenu(null);
   };
 
   if (loading) {
@@ -191,7 +222,16 @@ export const ConversationList: FC<ConversationListProps> = ({
         showingCount={conversations.length}
       />
 
-      {selected.size > 0 && <InboxBulkBar selectedCount={selected.size} onClear={clearSelection} />}
+      {selected.size > 0 && (
+        <InboxBulkBar
+          selectedCount={selected.size}
+          hasSummaries={selectedSummaries.length > 0}
+          onCopySummaries={copySelectedSummaries}
+          onClear={clearSelection}
+        />
+      )}
+
+      {notice && <div style={s.notice}>{notice}</div>}
 
       <div style={s.columnHeader}>
         <span />
@@ -245,16 +285,39 @@ export const ConversationList: FC<ConversationListProps> = ({
           onClick={(e) => e.stopPropagation()}
           role="menu"
         >
-          {CONTEXT_MENU_ITEMS.map((item, i) =>
-            item.kind === "divider" ? (
-              <div key={i} style={s.contextDivider} />
-            ) : (
-              <div key={i} style={s.contextItem} role="menuitem">
-                <span style={{ flex: 1 }}>{item.label}</span>
-                {item.shortcut && <span style={s.contextShortcut}>{item.shortcut}</span>}
-              </div>
-            ),
-          )}
+          {(() => {
+            const conversation = conversations.find((item) => item.id === contextMenu.id);
+            if (!conversation) return null;
+            return (
+              <>
+                <button
+                  type="button"
+                  style={s.contextItem}
+                  role="menuitem"
+                  onClick={() => {
+                    setContextMenu(null);
+                    onSelectConversation(conversation.id);
+                  }}
+                >
+                  <span style={{ flex: 1 }}>Open transcript</span>
+                  <span style={s.contextShortcut}>↵</span>
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    ...s.contextItem,
+                    ...(!conversation.summary ? s.contextItemDisabled : {}),
+                  }}
+                  role="menuitem"
+                  disabled={!conversation.summary}
+                  onClick={() => copySummary(conversation)}
+                >
+                  <span style={{ flex: 1 }}>Copy summary</span>
+                  <span style={s.contextShortcut}>⌘⇧C</span>
+                </button>
+              </>
+            );
+          })()}
         </div>
       )}
     </section>
@@ -415,22 +478,36 @@ const s: Record<string, React.CSSProperties> = {
     fontFamily: FONT,
   },
   contextItem: {
+    width: "100%",
     padding: "8px 14px",
     display: "flex",
     alignItems: "center",
     gap: 12,
     fontSize: 13,
+    fontFamily: FONT,
     cursor: "pointer",
     color: "var(--lst-blue)",
+    border: "none",
+    background: "transparent",
+    textAlign: "left",
   },
-  contextDivider: {
-    height: 1,
-    background: "var(--lst-rule-soft)",
-    margin: "6px 0",
+  contextItemDisabled: {
+    opacity: 0.45,
+    cursor: "not-allowed",
   },
   contextShortcut: {
     fontFamily: MONO,
     color: "var(--lst-ink-55)",
     fontSize: 10,
+  },
+  notice: {
+    padding: "8px 32px",
+    borderBottom: "var(--lst-border)",
+    background: "var(--lst-ink-08)",
+    color: "var(--lst-blue)",
+    fontFamily: MONO,
+    fontSize: 11,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
   },
 };

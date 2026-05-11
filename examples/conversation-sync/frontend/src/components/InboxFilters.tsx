@@ -35,13 +35,6 @@ export const InboxFilters: FC<InboxFiltersProps> = ({
         </button>
       );
     })}
-    <span style={s.divider} />
-    <button type="button" style={s.chip} disabled>
-      + tag
-    </button>
-    <button type="button" style={s.chip} disabled>
-      + person
-    </button>
     <span style={s.spacer} />
     <span style={s.showing}>
       showing {showingCount} of {total}
@@ -76,12 +69,6 @@ const s: Record<string, React.CSSProperties> = {
     color: "var(--lst-bg)",
     background: "var(--lst-blue)",
     borderColor: "var(--lst-blue)",
-  },
-  divider: {
-    width: 1,
-    height: 16,
-    background: "var(--lst-rule-soft)",
-    margin: "0 6px",
   },
   spacer: { marginLeft: "auto" },
   showing: {

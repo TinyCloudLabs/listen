@@ -419,7 +419,7 @@ describe("ConversationList", () => {
 
     fireEvent.contextMenu(screen.getByText("Sprint Planning"));
 
-    expect(screen.getByText(/copy transcript text/i)).toBeInTheDocument();
-    expect(screen.getByText(/move to folder/i)).toBeInTheDocument();
+    expect(screen.getByText(/open transcript/i)).toBeInTheDocument();
+    expect(screen.getByText(/copy summary/i)).toBeInTheDocument();
   });
 });

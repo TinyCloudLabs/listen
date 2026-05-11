@@ -2,21 +2,29 @@ import type { FC } from "react";
 
 interface InboxBulkBarProps {
   selectedCount: number;
+  hasSummaries: boolean;
+  onCopySummaries: () => void;
   onClear: () => void;
 }
 
-const ACTIONS = ["Star", "Move to folder", "Tag", "Re-generate summaries", "Export", "Delete"];
-
-export const InboxBulkBar: FC<InboxBulkBarProps> = ({ selectedCount, onClear }) => (
+export const InboxBulkBar: FC<InboxBulkBarProps> = ({
+  selectedCount,
+  hasSummaries,
+  onCopySummaries,
+  onClear,
+}) => (
   <div style={s.wrap} role="region" aria-label="Bulk actions">
     <input type="checkbox" checked readOnly style={s.checkbox} />
     <span style={s.count}>{selectedCount} SELECTED</span>
     <span style={s.divider} />
-    {ACTIONS.map((label) => (
-      <button key={label} type="button" style={s.btn}>
-        {label}
-      </button>
-    ))}
+    <button
+      type="button"
+      style={{ ...s.btn, ...(!hasSummaries ? s.btnDisabled : {}) }}
+      onClick={onCopySummaries}
+      disabled={!hasSummaries}
+    >
+      Copy summaries
+    </button>
     <span style={s.spacer} />
     <button type="button" style={s.iconBtn} onClick={onClear} aria-label="Clear selection">
       ×
@@ -59,6 +67,10 @@ const s: Record<string, React.CSSProperties> = {
     borderRadius: 999,
     padding: "6px 14px",
     cursor: "pointer",
+  },
+  btnDisabled: {
+    opacity: 0.45,
+    cursor: "not-allowed",
   },
   spacer: { marginLeft: "auto" },
   iconBtn: {
