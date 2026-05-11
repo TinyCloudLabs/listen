@@ -1,4 +1,4 @@
-import type { CSSProperties, FC, ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type FC, type ReactNode } from "react";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -30,6 +30,7 @@ interface AppShellProps {
   pageTitle: string;
   topbarActions?: ReactNode;
   user: ShellUser;
+  userMenu?: ReactNode;
   sources: ShellSourceConfig[];
   folders: ShellFolderConfig[];
   navCounts?: Partial<Record<Exclude<ShellRoute, "connections" | "sources">, number | null>>;
@@ -129,11 +130,33 @@ export const AppShell: FC<AppShellProps> = ({
   pageTitle,
   topbarActions,
   user,
+  userMenu,
   sources,
   folders,
   navCounts,
   children,
 }) => {
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!userMenuOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!userMenuRef.current?.contains(event.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setUserMenuOpen(false);
+    };
+    window.addEventListener("pointerdown", closeOnOutsidePointer);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeOnOutsidePointer);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [userMenuOpen]);
+
   return (
     <div className="listen-shell">
       <aside className="listen-sidebar">
@@ -239,14 +262,22 @@ export const AppShell: FC<AppShellProps> = ({
           ))}
         </div>
 
-        {/* User footer */}
-        <div style={shell.userFooter}>
-          <div style={shell.avatar}>{user.initials}</div>
-          <div style={shell.userMeta}>
-            <div style={shell.userName}>{user.name}</div>
-            <div style={shell.userPlan}>{user.plan}</div>
-          </div>
-          <ShellIcon name="chev-d" size={12} />
+        <div style={shell.userFooterWrap} ref={userMenuRef}>
+          {userMenu && userMenuOpen && <div style={shell.userMenu}>{userMenu}</div>}
+          <button
+            type="button"
+            style={shell.userFooterButton}
+            onClick={() => userMenu && setUserMenuOpen((open) => !open)}
+            aria-haspopup={userMenu ? "menu" : undefined}
+            aria-expanded={userMenu ? userMenuOpen : undefined}
+          >
+            <div style={shell.avatar}>{user.initials}</div>
+            <div style={shell.userMeta}>
+              <div style={shell.userName}>{user.name}</div>
+              <div style={shell.userPlan}>{user.plan}</div>
+            </div>
+            <ShellIcon name="chev-d" size={12} />
+          </button>
         </div>
       </aside>
 
@@ -443,13 +474,35 @@ const shell: Record<string, CSSProperties> = {
     display: "inline-block",
     flexShrink: 0,
   },
-  userFooter: {
+  userFooterWrap: {
     marginTop: "auto",
+    position: "relative",
     borderTop: "var(--lst-border)",
+  },
+  userFooterButton: {
+    fontFamily: FONT,
+    width: "100%",
     padding: "14px 20px",
     display: "flex",
     alignItems: "center",
     gap: 10,
+    border: "none",
+    background: "transparent",
+    color: "var(--lst-blue)",
+    cursor: "pointer",
+    textAlign: "left",
+  },
+  userMenu: {
+    position: "absolute",
+    left: 12,
+    right: 12,
+    bottom: "calc(100% + 8px)",
+    border: "var(--lst-border)",
+    background: "var(--lst-bg)",
+    boxShadow: "0 18px 50px rgba(28, 53, 184, 0.16)",
+    maxHeight: "62vh",
+    overflowY: "auto",
+    zIndex: 5,
   },
   avatar: {
     width: 28,
