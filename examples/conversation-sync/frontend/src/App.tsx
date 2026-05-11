@@ -915,6 +915,64 @@ export function App() {
     </>
   );
 
+  const userMenu = (
+    <div style={s.userMenuStack}>
+      <AuthPanel
+        isSignedIn={isSignedIn}
+        address={address}
+        did={did}
+        loading={authLoading}
+        error={authError}
+        onSignIn={handleSignIn}
+        onSignOut={handleSignOut}
+      />
+      {tcw && capabilityRequest && (
+        <ConnectAgentButton
+          tcw={tcw}
+          capabilityRequest={capabilityRequest}
+          agentInfo={agentInfo}
+          agentEndpoint={AGENT_ENDPOINT}
+          onRefresh={() => setRefreshKey((k) => k + 1)}
+          refreshLabel="Refresh conversations"
+        />
+      )}
+      {(hasKey || hasGoogleMeet) && (
+        <div style={s.userMenuSourceSection}>
+          <span style={s.userMenuLabel}>Sources</span>
+          {hasKey && tcw && (
+            <button
+              type="button"
+              style={s.userMenuAction}
+              onClick={async () => {
+                const unlockResult = await tcw.secrets.unlock();
+                if (!unlockResult.ok) throw new Error(unlockResult.error.message);
+                const result = await tcw.secrets.delete(FIREFLIES_SECRET_NAME);
+                if (!result.ok) throw new Error(result.error.message);
+                setHasKey(false);
+                setHasFirefliesBackendAccess(null);
+              }}
+            >
+              Disconnect Fireflies
+            </button>
+          )}
+          {hasGoogleMeet && (
+            <button
+              type="button"
+              style={s.userMenuAction}
+              onClick={async () => {
+                if (!api) return;
+                await api.del("/api/config/google-meet");
+                setHasGoogleMeet(false);
+              }}
+            >
+              Disconnect Google Meet
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
   if (
     isMobile &&
     hasUsableInbox &&
@@ -951,6 +1009,7 @@ export function App() {
       pageTitle={pageTitle}
       topbarActions={topbarActions}
       user={{ initials: userInitials, name: userName, plan: userPlan }}
+      userMenu={userMenu}
       sources={sourceItems}
       folders={[]}
     >
@@ -1124,59 +1183,6 @@ export function App() {
           onRefresh={() => setRefreshKey((k) => k + 1)}
         />
       )}
-
-      {/* Account controls — kept accessible until other agents fold them into a user menu */}
-      {activePage === "inbox" && (
-        <div style={s.accountControls}>
-          <AuthPanel
-            isSignedIn={isSignedIn}
-            address={address}
-            did={did}
-            loading={authLoading}
-            error={authError}
-            onSignIn={handleSignIn}
-            onSignOut={handleSignOut}
-          />
-          {tcw && capabilityRequest && (
-            <ConnectAgentButton
-              tcw={tcw}
-              capabilityRequest={capabilityRequest}
-              agentInfo={agentInfo}
-              agentEndpoint={AGENT_ENDPOINT}
-              onRefresh={() => setRefreshKey((k) => k + 1)}
-              refreshLabel="Refresh conversations"
-            />
-          )}
-          {hasKey && tcw && (
-            <button
-              style={s.disconnectLink}
-              onClick={async () => {
-                if (!tcw) return;
-                const unlockResult = await tcw.secrets.unlock();
-                if (!unlockResult.ok) throw new Error(unlockResult.error.message);
-                const result = await tcw.secrets.delete(FIREFLIES_SECRET_NAME);
-                if (!result.ok) throw new Error(result.error.message);
-                setHasKey(false);
-                setHasFirefliesBackendAccess(null);
-              }}
-            >
-              Disconnect Fireflies
-            </button>
-          )}
-          {hasGoogleMeet && (
-            <button
-              style={s.disconnectLink}
-              onClick={async () => {
-                if (!api) return;
-                await api.del("/api/config/google-meet");
-                setHasGoogleMeet(false);
-              }}
-            >
-              Disconnect Google Meet
-            </button>
-          )}
-        </div>
-      )}
     </AppShell>
   );
 }
@@ -1283,17 +1289,34 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: 13,
     lineHeight: 1.4,
   },
-  disconnectLink: {
+  userMenuStack: {
+    display: "flex",
+    flexDirection: "column" as const,
+  },
+  userMenuSourceSection: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 10,
+    padding: "14px 20px",
+  },
+  userMenuLabel: {
+    fontFamily: MONO,
+    fontSize: 10,
+    color: "var(--lst-ink-55)",
+    letterSpacing: "0.08em",
+    textTransform: "uppercase" as const,
+  },
+  userMenuAction: {
     fontFamily: FONT,
     display: "inline-flex",
     justifyContent: "flex-start",
     color: "var(--lst-blue)",
     background: "transparent",
-    border: "none",
-    padding: 0,
+    border: "var(--lst-border)",
+    borderRadius: 999,
+    padding: "7px 12px",
     fontSize: 12,
     cursor: "pointer",
-    opacity: 0.72,
   },
   pendingBanner: {
     display: "flex",
@@ -1346,14 +1369,5 @@ const s: Record<string, React.CSSProperties> = {
     borderRadius: 999,
     padding: "6px 12px",
     cursor: "pointer",
-  },
-  accountControls: {
-    display: "flex",
-    flexDirection: "column" as const,
-    gap: 10,
-    padding: "16px 18px",
-    border: "var(--lst-border)",
-    background: "var(--lst-bg)",
-    marginTop: 14,
   },
 };
