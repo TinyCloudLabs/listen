@@ -51,6 +51,13 @@ function createMockAccess(apiKey?: string) {
         return { ok: true };
       },
     },
+    secrets: {
+      get: async () => {
+        const val = kvData.get(FIREFLIES_KEY_PATH);
+        if (val === undefined) return { ok: false, error: { code: "KEY_NOT_FOUND" } };
+        return { ok: true, data: val };
+      },
+    },
     sql: {
       query: async () => ({ ok: true, data: { rows: [], columns: [] } }),
       execute: async () => ({ ok: true, data: { changes: 1 } }),

@@ -1,5 +1,13 @@
 import type { DelegatedAccess } from "@tinyboilerplate/server";
 
+interface DelegatedSecrets {
+  get(name: string): Promise<{
+    ok: boolean;
+    data?: string;
+    error?: { code?: string; message?: string };
+  }>;
+}
+
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
@@ -9,7 +17,7 @@ declare global {
         address: string;
       };
       /** Activated delegation for the authenticated user */
-      delegatedAccess?: DelegatedAccess;
+      delegatedAccess?: DelegatedAccess & { secrets?: DelegatedSecrets };
     }
   }
 }

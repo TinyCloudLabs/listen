@@ -57,7 +57,19 @@ function mockAuthMiddleware(req: Request, _res: Response, next: NextFunction) {
 
 function createApp(mockKV: ReturnType<typeof createMockKV>) {
   const mockDelegationMiddleware = (req: Request, _res: Response, next: NextFunction) => {
-    req.delegatedAccess = { kv: mockKV } as any;
+    req.delegatedAccess = {
+      kv: mockKV,
+      secrets: {
+        get: async () => {
+          const result = await mockKV.get(KV_KEY);
+          if (result.ok) return { ok: true, data: result.data?.data };
+          if (result.error?.code === "KV_NOT_FOUND") {
+            return { ok: false, error: { code: "KEY_NOT_FOUND" } };
+          }
+          return result;
+        },
+      },
+    } as any;
     next();
   };
 
@@ -103,125 +115,6 @@ describe("Config Routes", () => {
 
   afterEach(async () => {
     await closeServer(server);
-  });
-
-  // ── PUT /api/config/fireflies-key ─────────────────────────────────
-
-  describe("PUT /api/config/fireflies-key", () => {
-    it("stores API key in KV and returns ok", async () => {
-      const res = await fetch(`http://localhost:${port}/api/config/fireflies-key`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: "test-api-key-123" }),
-      });
-
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ ok: true });
-      expect(mockKV._data.get(KV_KEY)).toBe("test-api-key-123");
-    });
-
-    it("returns 400 when apiKey is missing", async () => {
-      const res = await fetch(`http://localhost:${port}/api/config/fireflies-key`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-
-      expect(res.status).toBe(400);
-      const body = await res.json();
-      expect(body.error).toBe("invalid_body");
-    });
-
-    it("returns 400 when apiKey is empty string", async () => {
-      const res = await fetch(`http://localhost:${port}/api/config/fireflies-key`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: "" }),
-      });
-
-      expect(res.status).toBe(400);
-      const body = await res.json();
-      expect(body.error).toBe("invalid_body");
-    });
-
-    it("returns 400 when apiKey is not a string", async () => {
-      const res = await fetch(`http://localhost:${port}/api/config/fireflies-key`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: 12345 }),
-      });
-
-      expect(res.status).toBe(400);
-      const body = await res.json();
-      expect(body.error).toBe("invalid_body");
-    });
-
-    it("overwrites an existing key", async () => {
-      mockKV._data.set(KV_KEY, "old-key");
-
-      const res = await fetch(`http://localhost:${port}/api/config/fireflies-key`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: "new-key" }),
-      });
-
-      expect(res.status).toBe(200);
-      expect(mockKV._data.get(KV_KEY)).toBe("new-key");
-    });
-
-    it("returns 500 when TinyCloud rejects the KV write", async () => {
-      mockKV._failNextPut("delegation missing kv/put");
-
-      const res = await fetch(`http://localhost:${port}/api/config/fireflies-key`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: "new-key" }),
-      });
-
-      expect(res.status).toBe(500);
-      const body = await res.json();
-      expect(body.error).toBe("store_failed");
-      expect(mockKV._data.has(KV_KEY)).toBe(false);
-    });
-
-    it("returns 500 when the post-write verification read fails", async () => {
-      mockKV._failNextGet("delegation missing kv/get");
-
-      const res = await fetch(`http://localhost:${port}/api/config/fireflies-key`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: "new-key" }),
-      });
-
-      expect(res.status).toBe(500);
-      const body = await res.json();
-      expect(body.error).toBe("store_verification_failed");
-    });
-  });
-
-  // ── DELETE /api/config/fireflies-key ──────────────────────────────
-
-  describe("DELETE /api/config/fireflies-key", () => {
-    it("deletes the key from KV and returns ok", async () => {
-      mockKV._data.set(KV_KEY, "some-key");
-
-      const res = await fetch(`http://localhost:${port}/api/config/fireflies-key`, {
-        method: "DELETE",
-      });
-
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ ok: true });
-      expect(mockKV._data.has(KV_KEY)).toBe(false);
-    });
-
-    it("succeeds even when no key exists", async () => {
-      const res = await fetch(`http://localhost:${port}/api/config/fireflies-key`, {
-        method: "DELETE",
-      });
-
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ ok: true });
-    });
   });
 
   // ── GET /api/config/fireflies-key/exists ──────────────────────────
@@ -361,11 +254,7 @@ describe("Config Routes", () => {
       const { server: s, port: p } = await startServer(app);
 
       try {
-        const res = await fetch(`http://localhost:${p}/api/config/fireflies-key`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ apiKey: "test" }),
-        });
+        const res = await fetch(`http://localhost:${p}/api/config/fireflies-key/exists`);
         expect(res.status).toBe(403);
       } finally {
         await closeServer(s);

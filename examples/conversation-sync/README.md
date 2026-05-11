@@ -67,9 +67,20 @@ The frontend lets the TinyCloud SDK resolve the user's node during sign-in. Use 
 # From this directory (examples/conversation-sync)
 bun run dev
 
+# Or run with stable HTTPS Portless URLs
+bun run dev:portless
+
 # Or run separately
 bun run dev:frontend   # Just the frontend (https://localhost:5173)
 bun run dev:backend    # Just the backend (http://localhost:3001)
+```
+
+The Portless flow serves the frontend at `https://listen.localhost` and the
+backend at `https://api.listen.localhost`. On first use, Portless may ask to
+trust its local development certificate authority. The root shortcut is:
+
+```bash
+bun run dev:conversation-sync:portless
 ```
 
 ## API Reference

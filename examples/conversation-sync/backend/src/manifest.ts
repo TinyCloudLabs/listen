@@ -31,21 +31,59 @@ export const MANIFEST_PATH = resolve(__dirname, "../../manifest.json");
 const MANIFEST_VERSION = 1;
 const BACKEND_DELEGATION_NAME = "Conversation Sync Backend";
 const BACKEND_DELEGATION_EXPIRY = "7d";
-const BACKEND_DELEGATION_PERMISSIONS: ServerInfoPermission[] = [
-  {
-    service: "tinycloud.kv",
-    path: "/",
-    actions: ["get", "put", "del", "list", "metadata"],
-    description:
-      "Store per-user sync configuration, transcript blobs, webhook state, and external service tokens.",
-  },
-  {
-    service: "tinycloud.sql",
-    path: "conversations",
-    actions: ["read", "write"],
-    description: "Read and write normalized conversation records created from transcript sync.",
-  },
-];
+export const FIREFLIES_SECRET_NAME = "FIREFLIES_API_KEY";
+export const FIREFLIES_SECRET_VAULT_KEY = `secrets/${FIREFLIES_SECRET_NAME}`;
+
+function firefliesSecretGrantPath(backendDid: string): string {
+  return `grants/${backendDid}/${FIREFLIES_SECRET_VAULT_KEY}`;
+}
+
+function backendDelegationPermissions(backendDid: string): ServerInfoPermission[] {
+  return [
+    {
+      service: "tinycloud.kv",
+      path: "/",
+      actions: ["get", "put", "del", "list", "metadata"],
+      description:
+        "Store per-user sync configuration, transcript blobs, webhook state, and external service tokens.",
+    },
+    {
+      service: "tinycloud.sql",
+      path: "conversations",
+      actions: ["read", "write"],
+      description: "Read and write normalized conversation records created from transcript sync.",
+    },
+    {
+      service: "tinycloud.kv",
+      space: "secrets",
+      path: `vault/${FIREFLIES_SECRET_VAULT_KEY}`,
+      actions: ["get"],
+      skipPrefix: true,
+      description: "Read the encrypted Fireflies API key payload for backend sync.",
+    },
+    {
+      service: "tinycloud.kv",
+      space: "secrets",
+      path: firefliesSecretGrantPath(backendDid),
+      actions: ["get"],
+      skipPrefix: true,
+      description: "Read the Fireflies API key vault grant shared with this backend.",
+    },
+  ];
+}
+
+function runtimeGrantPermissions(backendDid: string): DescribedPermissionEntry[] {
+  return [
+    {
+      service: "tinycloud.kv",
+      space: "secrets",
+      path: firefliesSecretGrantPath(backendDid),
+      actions: ["get", "put"],
+      skipPrefix: true,
+      description: "Share the Fireflies API key with the Listen backend for sync.",
+    },
+  ];
+}
 
 function validateConversationManifest(manifest: Manifest): ConversationManifest {
   const withUnknownFields = manifest as Manifest & {
@@ -98,14 +136,16 @@ function resolveManifestPermissions(
   manifest: ConversationManifest,
   permissions: readonly ServerInfoPermission[],
 ): ServerInfoPermission[] {
+  const { secrets: _secrets, ...manifestWithoutGeneratedResources } = manifest;
   const resolved = resolveManifest({
-    ...manifest,
+    ...manifestWithoutGeneratedResources,
     defaults: false,
     permissions: permissions.map((permission) => ({
       service: permission.service,
       ...(permission.space !== undefined ? { space: permission.space } : {}),
       path: permission.path,
       actions: [...permission.actions],
+      ...(permission.skipPrefix !== undefined ? { skipPrefix: permission.skipPrefix } : {}),
     })),
   }).resources;
 
@@ -114,13 +154,14 @@ function resolveManifestPermissions(
     space: permission.space,
     path: permission.path,
     actions: [...permission.actions],
+    skipPrefix: permissions[index]?.skipPrefix,
     description: permissions[index]?.description,
   }));
 }
 
-function validateBackendDelegationPolicy(manifest: ConversationManifest): void {
+function validateBackendDelegationPolicy(manifest: ConversationManifest, backendDid: string): void {
   const granted = resolveManifest(manifest).resources;
-  const requested = resolveManifestPermissions(manifest, BACKEND_DELEGATION_PERMISSIONS);
+  const requested = resolveManifestPermissions(manifest, backendDelegationPermissions(backendDid));
   const { subset, missing } = isCapabilitySubset(requested, granted);
 
   if (!subset) {
@@ -132,31 +173,32 @@ function validateBackendDelegationPolicy(manifest: ConversationManifest): void {
   }
 }
 
-export function backendManifestConfig(): BackendDelegationConfig {
-  const manifest = loadConversationManifest();
-  validateBackendDelegationPolicy(manifest);
+export function backendManifestConfig(backendDid: string): BackendDelegationConfig {
+  const manifest = runtimeManifest(backendDid);
+  validateBackendDelegationPolicy(manifest, backendDid);
 
   return {
     name: BACKEND_DELEGATION_NAME,
     expiry: BACKEND_DELEGATION_EXPIRY,
-    permissions: BACKEND_DELEGATION_PERMISSIONS.map((permission) => ({
+    permissions: backendDelegationPermissions(backendDid).map((permission) => ({
       service: permission.service,
       space: permission.space,
       path: permission.path,
       actions: [...permission.actions],
+      skipPrefix: permission.skipPrefix,
       description: permission.description,
     })),
   };
 }
 
-export function backendDelegationResolvedPermissions(): ServerInfoPermission[] {
-  const manifest = loadConversationManifest();
-  validateBackendDelegationPolicy(manifest);
-  return resolveManifestPermissions(manifest, BACKEND_DELEGATION_PERMISSIONS);
+export function backendDelegationResolvedPermissions(backendDid: string): ServerInfoPermission[] {
+  const manifest = runtimeManifest(backendDid);
+  validateBackendDelegationPolicy(manifest, backendDid);
+  return resolveManifestPermissions(manifest, backendDelegationPermissions(backendDid));
 }
 
-export function backendDelegationPolicyHash(): string {
-  const permissions = backendDelegationResolvedPermissions().map((permission) => ({
+export function backendDelegationPolicyHash(backendDid: string): string {
+  const permissions = backendDelegationResolvedPermissions(backendDid).map((permission) => ({
     service: permission.service,
     space: permission.space,
     path: permission.path,
@@ -168,8 +210,9 @@ export function backendDelegationPolicyHash(): string {
 
 export function delegationCoversBackendPolicy(
   permissions: readonly ServerInfoPermission[],
+  backendDid: string,
 ): boolean {
-  const requested = backendDelegationResolvedPermissions();
+  const requested = backendDelegationResolvedPermissions(backendDid);
   const granted = permissions.map((permission) => ({
     service: permission.service,
     ...(permission.space !== undefined ? { space: permission.space } : {}),
@@ -180,14 +223,21 @@ export function delegationCoversBackendPolicy(
   return isCapabilitySubset(requested, granted).subset;
 }
 
-export function runtimeManifest(): Manifest {
-  return loadConversationManifest();
+export function runtimeManifest(backendDid?: string): Manifest {
+  const manifest = loadConversationManifest();
+  if (!backendDid) return manifest;
+
+  return {
+    ...manifest,
+    permissions: [...(manifest.permissions ?? []), ...runtimeGrantPermissions(backendDid)],
+  };
 }
 
 export function resolveAppPath(path: string, service = "tinycloud.kv"): string {
   const manifest = loadConversationManifest();
+  const { secrets: _secrets, ...manifestWithoutGeneratedResources } = manifest;
   const resolved = resolveManifest({
-    ...manifest,
+    ...manifestWithoutGeneratedResources,
     defaults: false,
     permissions: [
       {

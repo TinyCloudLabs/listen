@@ -4,6 +4,9 @@
   "name": "Conversation Sync",
   "description": "Sync Fireflies and Google Meet transcripts into a TinyCloud space.",
   "defaults": true,
+  "secrets": {
+    "FIREFLIES_API_KEY": ["read", "write"]
+  },
   "permissions": [
     {
       "service": "tinycloud.hooks",

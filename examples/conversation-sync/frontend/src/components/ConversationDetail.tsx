@@ -96,18 +96,18 @@ function renderSummary(text: string): string {
 }
 
 const SPEAKER_COLORS = [
-  "#6366f1",
-  "#06b6d4",
-  "#f59e0b",
-  "#10b981",
-  "#ef4444",
-  "#8b5cf6",
-  "#ec4899",
-  "#14b8a6",
+  "var(--lst-blue)",
+  "var(--lst-blue)",
+  "var(--lst-blue)",
+  "var(--lst-blue)",
+  "var(--lst-blue)",
+  "var(--lst-blue)",
+  "var(--lst-blue)",
+  "var(--lst-blue)",
 ];
 
 function getSpeakerColor(name: string, map: Map<string, number>): string {
-  if (!name) return "#d1d5db";
+  if (!name) return "var(--lst-blue)";
   if (!map.has(name)) map.set(name, map.size);
   return SPEAKER_COLORS[map.get(name)! % SPEAKER_COLORS.length];
 }
@@ -213,44 +213,46 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
         )}
       </div>
 
-      {/* Summary */}
-      {conversation.summary && (
-        <div style={s.summaryCard}>
-          <h3 style={s.sectionLabel}>Summary</h3>
-          <div
-            style={s.summaryText}
-            dangerouslySetInnerHTML={{ __html: renderSummary(conversation.summary) }}
-          />
-        </div>
-      )}
-
-      {/* Transcript */}
-      <div style={s.transcriptSection}>
-        <h3 style={s.sectionLabel}>Transcript</h3>
-        {blocks.length === 0 ? (
-          <p style={s.noTranscript}>No transcript available.</p>
-        ) : (
-          <div style={s.blockList}>
-            {blocks.map((block, i) => {
-              const color = getSpeakerColor(block.speakerName, speakerMap);
-              return (
-                <div
-                  key={i}
-                  data-testid="transcript-block"
-                  style={{ ...s.block, borderLeftColor: color }}
-                >
-                  <div style={s.blockHeader}>
-                    {block.speakerName && (
-                      <span style={{ ...s.speakerName, color }}>{block.speakerName}</span>
-                    )}
-                    <span style={s.timestamp}>{formatTimestamp(block.startTime)}</span>
-                  </div>
-                  <p style={s.blockText}>{block.text}</p>
-                </div>
-              );
-            })}
-          </div>
+      <div style={conversation.summary ? s.detailGrid : s.detailGridSingle}>
+        {/* Summary */}
+        {conversation.summary && (
+          <aside style={s.summaryCard}>
+            <h3 style={s.sectionLabel}>Summary</h3>
+            <div
+              style={s.summaryText}
+              dangerouslySetInnerHTML={{ __html: renderSummary(conversation.summary) }}
+            />
+          </aside>
         )}
+
+        {/* Transcript */}
+        <div style={s.transcriptSection}>
+          <h3 style={s.sectionLabel}>Transcript</h3>
+          {blocks.length === 0 ? (
+            <p style={s.noTranscript}>No transcript available.</p>
+          ) : (
+            <div style={s.blockList}>
+              {blocks.map((block, i) => {
+                const color = getSpeakerColor(block.speakerName, speakerMap);
+                return (
+                  <div
+                    key={i}
+                    data-testid="transcript-block"
+                    style={{ ...s.block, borderLeftColor: color }}
+                  >
+                    <div style={s.blockHeader}>
+                      {block.speakerName && (
+                        <span style={{ ...s.speakerName, color }}>{block.speakerName}</span>
+                      )}
+                      <span style={s.timestamp}>{formatTimestamp(block.startTime)}</span>
+                    </div>
+                    <p style={s.blockText}>{block.text}</p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </section>
   );
@@ -258,8 +260,8 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
 
 // ── Styles ──────────────────────────────────────────────────────────
 
-const FONT = "'Outfit', -apple-system, sans-serif";
-const MONO = "'IBM Plex Mono', 'SF Mono', monospace";
+const FONT = "var(--lst-font)";
+const MONO = "var(--lst-mono)";
 
 const s: Record<string, React.CSSProperties> = {
   container: {
@@ -273,9 +275,9 @@ const s: Record<string, React.CSSProperties> = {
     alignItems: "center",
     gap: 14,
     padding: "40px 20px",
-    background: "#fff",
-    border: "1px solid #e2e4e9",
-    borderRadius: 12,
+    background: "var(--lst-bg)",
+    border: "var(--lst-border)",
+    borderRadius: 0,
     animation: "fadeSlideIn 0.3s ease-out",
   },
   loadingDots: {
@@ -286,14 +288,14 @@ const s: Record<string, React.CSSProperties> = {
     width: 8,
     height: 8,
     borderRadius: "50%",
-    background: "#6366f1",
+    background: "var(--lst-blue)",
     animation: "syncPulse 1s ease-in-out infinite",
   },
   loadingText: {
     fontFamily: FONT,
     fontSize: 13,
     fontWeight: 500,
-    color: "#6b7280",
+    color: "var(--lst-ink-70)",
     margin: 0,
   },
   backBtn: {
@@ -304,40 +306,43 @@ const s: Record<string, React.CSSProperties> = {
     padding: "6px 14px",
     fontSize: 13,
     fontWeight: 500,
-    color: "#6b7280",
+    color: "var(--lst-blue)",
     background: "transparent",
-    border: "1px solid #e2e4e9",
-    borderRadius: 8,
+    border: "var(--lst-border)",
+    borderRadius: 999,
     cursor: "pointer",
     marginBottom: 16,
   },
   header: {
     marginBottom: 20,
     paddingBottom: 16,
-    borderBottom: "1px solid #e2e4e9",
+    borderBottom: "var(--lst-border)",
   },
   title: {
-    fontSize: 20,
-    fontWeight: 700,
+    fontSize: 38,
+    fontWeight: 400,
     margin: "0 0 8px",
-    color: "#18181b",
-    letterSpacing: "-0.02em",
+    color: "var(--lst-blue)",
+    letterSpacing: 0,
+    lineHeight: 1.06,
   },
   metaRow: {
     display: "flex",
     alignItems: "center",
     gap: 6,
     fontSize: 13,
-    color: "#6b7280",
+    color: "var(--lst-ink-70)",
     marginBottom: 10,
   },
   metaMono: {
     fontFamily: MONO,
-    fontSize: 12,
-    color: "#6b7280",
+    fontSize: 11,
+    color: "var(--lst-ink-55)",
+    letterSpacing: "0.08em",
+    textTransform: "uppercase" as const,
   },
   metaText: {},
-  metaDot: { color: "#d1d5db" },
+  metaDot: { color: "var(--lst-ink-35)" },
   chipRow: {
     display: "flex",
     flexWrap: "wrap" as const,
@@ -350,10 +355,11 @@ const s: Record<string, React.CSSProperties> = {
     alignItems: "center",
     gap: 5,
     fontSize: 12,
-    color: "#374151",
-    background: "#f3f4f6",
-    padding: "3px 10px",
-    borderRadius: 12,
+    color: "var(--lst-blue)",
+    background: "transparent",
+    border: "var(--lst-border)",
+    padding: "4px 10px",
+    borderRadius: 999,
   },
   chipDot: {
     width: 8,
@@ -362,45 +368,58 @@ const s: Record<string, React.CSSProperties> = {
     display: "inline-block",
   },
   chipEmail: {
-    color: "#9ca3af",
+    color: "var(--lst-ink-55)",
     fontSize: 11,
   },
   externalLink: {
     fontFamily: FONT,
     fontSize: 13,
     fontWeight: 500,
-    color: "#6366f1",
-    textDecoration: "none",
+    color: "var(--lst-blue)",
+    textDecoration: "underline",
+    textUnderlineOffset: 3,
+  },
+  detailGrid: {
+    display: "grid",
+    gridTemplateColumns: "minmax(260px, 340px) minmax(0, 1fr)",
+    gap: 0,
+    border: "var(--lst-border)",
+    background: "var(--lst-bg)",
+  },
+  detailGridSingle: {
+    display: "grid",
+    gridTemplateColumns: "1fr",
+    border: "var(--lst-border)",
+    background: "var(--lst-bg)",
   },
   summaryCard: {
-    marginBottom: 20,
-    padding: "14px 16px",
-    background: "#fff",
-    border: "1px solid #e2e4e9",
-    borderLeft: "3px solid #6366f1",
-    borderRadius: 10,
+    padding: "20px 22px",
+    background: "var(--lst-ink-08)",
+    borderRight: "var(--lst-border)",
+    minWidth: 0,
   },
   sectionLabel: {
-    fontFamily: FONT,
+    fontFamily: MONO,
     fontSize: 11,
-    fontWeight: 700,
-    color: "#9ca3af",
-    margin: "0 0 8px",
+    fontWeight: 500,
+    color: "var(--lst-ink-55)",
+    margin: "0 0 12px",
     textTransform: "uppercase" as const,
     letterSpacing: "0.08em",
   },
   summaryText: {
     fontSize: 14,
-    color: "#374151",
+    color: "var(--lst-blue)",
     lineHeight: 1.6,
     margin: 0,
   },
   transcriptSection: {
-    marginBottom: 20,
+    padding: "20px 22px",
+    minWidth: 0,
   },
   noTranscript: {
     fontSize: 13,
-    color: "#9ca3af",
+    color: "var(--lst-ink-55)",
     fontStyle: "italic",
   },
   blockList: {
@@ -409,41 +428,49 @@ const s: Record<string, React.CSSProperties> = {
     gap: 2,
   },
   block: {
-    padding: "10px 16px",
-    borderLeft: "3px solid #d1d5db",
-    background: "#fff",
-    borderRadius: "0 6px 6px 0",
+    display: "grid",
+    gridTemplateColumns: "74px 1fr",
+    gap: 18,
+    padding: "12px 0",
+    borderLeft: "none",
+    borderBottom: "var(--lst-hair)",
+    background: "transparent",
+    borderRadius: 0,
   },
   blockHeader: {
-    display: "flex",
-    alignItems: "baseline",
-    gap: 8,
-    marginBottom: 3,
+    display: "contents",
   },
   speakerName: {
-    fontFamily: FONT,
-    fontSize: 13,
-    fontWeight: 700,
+    gridColumn: 2,
+    fontFamily: MONO,
+    fontSize: 10,
+    fontWeight: 500,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase" as const,
   },
   timestamp: {
+    gridColumn: 1,
+    gridRow: "1 / span 2",
     fontFamily: MONO,
     fontSize: 11,
-    color: "#9ca3af",
+    color: "var(--lst-ink-55)",
+    paddingTop: 3,
   },
   blockText: {
     fontFamily: FONT,
-    fontSize: 14,
-    color: "#1f2937",
-    lineHeight: 1.6,
+    gridColumn: 2,
+    fontSize: 15,
+    color: "var(--lst-blue)",
+    lineHeight: 1.55,
     margin: 0,
   },
   errorCard: {
     fontFamily: FONT,
     fontSize: 13,
-    color: "#991b1b",
-    background: "#fef2f2",
+    color: "var(--lst-blue)",
+    background: "var(--lst-ink-08)",
     padding: "10px 14px",
-    border: "1px solid #fecaca",
-    borderRadius: 8,
+    border: "var(--lst-border)",
+    borderRadius: 0,
   },
 };

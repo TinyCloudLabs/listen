@@ -19,7 +19,7 @@ import {
 } from "@tinyboilerplate/client";
 
 import { AuthPanel } from "./components/AuthPanel";
-import { SetupWizard } from "./components/SetupWizard";
+import { SourcesSetup } from "./components/SourcesSetup";
 import { SyncControl } from "./components/SyncControl";
 import { ConversationList } from "./components/ConversationList";
 import { ConversationDetail } from "./components/ConversationDetail";
@@ -33,6 +33,8 @@ const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
 const AGENT_ENDPOINT = import.meta.env.VITE_AGENT_ENDPOINT || "http://localhost:4097";
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const ENABLE_TINYCLOUD_HOOKS = import.meta.env.VITE_ENABLE_TINYCLOUD_HOOKS === "true";
+const FIREFLIES_SECRET_NAME = "FIREFLIES_API_KEY";
+const FIREFLIES_SECRET_VAULT_KEY = `secrets/${FIREFLIES_SECRET_NAME}`;
 
 async function fetchAgentInfo(endpoint: string): Promise<ServerInfo | null> {
   try {
@@ -42,6 +44,452 @@ async function fetchAgentInfo(endpoint: string): Promise<ServerInfo | null> {
   } catch {
     return null;
   }
+}
+
+function LandingIcon({ name, size = 14 }: { name: "plus" | "minus"; size?: number }) {
+  if (name === "minus") {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M5 12h14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function LandingLogo({ size = 26 }: { size?: number }) {
+  return (
+    <span className="landing-logo">
+      <span className="landing-mark" style={{ width: size, height: size }} />
+      <span>listen</span>
+    </span>
+  );
+}
+
+function LandingHeroGraphic() {
+  return (
+    <div className="landing-hero-graphic" aria-hidden="true">
+      <div className="landing-energy">
+        <div className="landing-energy-dots">
+          <span className="landing-dot-md" />
+          <span className="landing-dot-md" />
+        </div>
+      </div>
+      <span className="landing-g-elem landing-dot-lg" style={{ top: "8%", left: "10%" }} />
+      <span className="landing-g-elem landing-dot-md" style={{ top: "22%", left: "26%" }} />
+      <span className="landing-g-elem landing-symbol" style={{ top: "12%", left: "4%" }}>
+        +
+      </span>
+      <span className="landing-g-elem landing-symbol" style={{ top: "32%", left: "16%" }}>
+        +
+      </span>
+      <span className="landing-g-elem landing-dot-lg" style={{ bottom: "10%", right: "12%" }} />
+      <span className="landing-g-elem landing-dot-md" style={{ bottom: "32%", right: "6%" }} />
+      <span className="landing-g-elem landing-symbol" style={{ bottom: "22%", right: "22%" }}>
+        -
+      </span>
+      <span className="landing-g-elem landing-dot-md" style={{ bottom: "14%", left: "22%" }} />
+      <span className="landing-g-elem landing-symbol" style={{ bottom: "6%", left: "40%" }}>
+        +
+      </span>
+      <span className="landing-g-elem landing-dot-md" style={{ top: "12%", right: "32%" }} />
+      <span className="landing-g-elem landing-symbol" style={{ top: "4%", right: "16%" }}>
+        -
+      </span>
+    </div>
+  );
+}
+
+const previewRows = [
+  {
+    date: "MAY 04",
+    time: "15:42",
+    title: "Q3 Roadmap Review",
+    preview: "Aligned on retention as the Q3 bet...",
+    duration: "47:12",
+  },
+  {
+    date: "MAY 04",
+    time: "11:20",
+    title: "Acme - Discovery 2",
+    preview: "Brian commits to pilot in May, security own...",
+    duration: "52:08",
+  },
+  {
+    date: "MAY 03",
+    time: "16:00",
+    title: "Design crit - Listen v2",
+    preview: "Volume vs density - keep the visual DNA quiet...",
+    duration: "38:55",
+  },
+  {
+    date: "MAY 03",
+    time: "09:15",
+    title: "Personal log - ideas",
+    preview: "Need to write down the bit about monochrome...",
+    duration: "04:22",
+  },
+  {
+    date: "MAY 02",
+    time: "14:30",
+    title: "Hiring loop - Maya",
+    preview: "Strong signal on systems thinking...",
+    duration: "45:00",
+  },
+];
+
+function LandingAppPreview() {
+  return (
+    <div className="landing-app-preview">
+      <aside className="landing-preview-sidebar">
+        <div className="landing-preview-head">
+          <span className="landing-mono">14 records</span>
+          <span className="landing-plus">+</span>
+        </div>
+        <input
+          className="landing-search"
+          placeholder="Search transcripts..."
+          aria-label="Search transcripts"
+        />
+        <div className="landing-preview-list">
+          {previewRows.map((row, index) => (
+            <div key={row.title} className={`landing-preview-row${index === 0 ? " active" : ""}`}>
+              <div className="landing-row-meta landing-mono">
+                <span>{row.date}</span>
+                <span>{row.time}</span>
+              </div>
+              <div className="landing-row-title">
+                {index === 0 && <span className="landing-dot" />}
+                {row.title}
+              </div>
+              <div className="landing-row-preview">{row.preview}</div>
+            </div>
+          ))}
+        </div>
+      </aside>
+
+      <section className="landing-preview-detail">
+        <div className="landing-detail-head">
+          <h2>Q3 Roadmap Review</h2>
+          <div className="landing-detail-meta">
+            <span className="landing-mono">ID: a7f9-2b</span>
+            <span>-</span>
+            <span className="landing-mono">DUR: 47:12</span>
+            <span>-</span>
+            <span className="landing-mono">GRANOLA - MAY 04</span>
+          </div>
+          <div className="landing-player">
+            <button className="landing-btn landing-btn-solid landing-btn-icon" aria-label="Play">
+              <span className="landing-play-symbol">▶</span>
+            </button>
+            <span className="landing-mono">15:42</span>
+            <div className="landing-timeline">
+              <div className="landing-timeline-progress" />
+              <div className="landing-timeline-handle" />
+            </div>
+            <span className="landing-mono">47:12</span>
+            <button className="landing-btn landing-btn-icon" aria-label="Add marker">
+              <LandingIcon name="plus" size={13} />
+            </button>
+          </div>
+        </div>
+        <div className="landing-transcript">
+          {[
+            [
+              "15:30",
+              "Marcus",
+              "So, regarding the adaptation process. The reference images exist on a spectrum - expressive versus functional.",
+            ],
+            [
+              "15:42",
+              "Jamie",
+              "Exactly. The visual DNA - colors, type family, geometry - stays the same. The volume and density adapt based on the gap.",
+              true,
+            ],
+            [
+              "16:05",
+              "Marcus",
+              "Right, it needs to recede while the user is trying to read their own transcripts. The layout emerges from the data itself.",
+            ],
+            ["16:22", "Sarah", "Opacity on the blue gives hierarchy without breaking the rule."],
+          ].map(([time, speaker, text, highlighted]) => (
+            <div key={`${time}-${speaker}`} className="landing-block">
+              <div className="landing-ts">{time}</div>
+              <div>
+                <div className="landing-speaker">{speaker}</div>
+                <div className={`landing-utterance${highlighted ? " highlighted" : ""}`}>
+                  {text}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function LandingPage({
+  loading,
+  error,
+  onSignIn,
+}: {
+  loading: boolean;
+  error: string | null;
+  onSignIn: () => void;
+}) {
+  const signInLabel = loading ? "Connecting..." : "Open app";
+
+  return (
+    <div className="landing-page landing-noise">
+      <header className="landing-header">
+        <div className="landing-container landing-header-inner">
+          <LandingLogo />
+          <nav className="landing-nav" aria-label="Main navigation">
+            <a href="#features">Features</a>
+            <a href="#sources">Sources</a>
+            <a href="#preview">Preview</a>
+            <span className="landing-divider" />
+            <button className="landing-btn landing-btn-solid" onClick={onSignIn} disabled={loading}>
+              {signInLabel}
+            </button>
+          </nav>
+        </div>
+      </header>
+
+      <main className="landing-main">
+        <div className="landing-container">
+          <section className="landing-hero">
+            <div>
+              <span className="landing-mono landing-version">v0.4 - May 2026</span>
+              <h1>
+                Capture thoughts.
+                <br />
+                Operate on data.
+              </h1>
+              <p className="landing-hero-lede">
+                One inbox for every transcript - Fireflies, Google Meet, and your own audio. Search
+                across all of it. Ask anything.
+              </p>
+              <div className="landing-hero-meta">
+                <span>
+                  <span className="landing-dot" />2 sources connected
+                </span>
+                <span>-</span>
+                <span>transcripts indexed in TinyCloud</span>
+              </div>
+              <div className="landing-hero-actions">
+                <a className="landing-btn" href="#preview">
+                  Watch demo
+                </a>
+              </div>
+              {error && (
+                <div className="landing-error" role="alert">
+                  <strong>Connection failed.</strong>
+                  <span>{error}</span>
+                </div>
+              )}
+            </div>
+            <LandingHeroGraphic />
+          </section>
+
+          <section id="sources" className="landing-sources-section">
+            <div className="landing-section-head">
+              <div>
+                <span className="landing-eyebrow">01 - sources</span>
+                <h2>Bring everything in.</h2>
+              </div>
+              <span className="landing-mono landing-muted">2 connected - always syncing</span>
+            </div>
+            <div className="landing-sources-row">
+              {[
+                ["Fireflies", "meet bot - webhook"],
+                ["Google Meet", "captions sync"],
+                ["Audio import", "manual archive"],
+                ["TinyCloud", "sovereign storage"],
+                ["Agents", "delegated access"],
+              ].map(([name, meta]) => (
+                <div key={name} className="landing-source-cell">
+                  <span className="landing-dot" />
+                  <span className="landing-source-name">{name}</span>
+                  <span className="landing-source-meta">{meta}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section id="features" className="landing-feature-section">
+            <div className="landing-grid-3">
+              {[
+                [
+                  "01",
+                  "One inbox",
+                  "Every meeting and import lands in a single chronological feed. Filter by source, person, or date.",
+                ],
+                [
+                  "02",
+                  "Real summaries",
+                  "Per-transcript summaries you can read like documents. Re-generate, copy, edit, and sync.",
+                ],
+                [
+                  "03",
+                  "Ask anything",
+                  "Chat with one transcript or your whole library. Every answer traces back to the source.",
+                ],
+              ].map(([num, title, description]) => (
+                <div key={num} className="landing-feature">
+                  <div className="landing-feature-num landing-mono">- {num}</div>
+                  <h3>{title}</h3>
+                  <p>{description}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section id="preview" className="landing-preview-section">
+            <div className="landing-section-head">
+              <div>
+                <span className="landing-eyebrow">02 - your transcripts</span>
+                <h2>The room, after the room.</h2>
+              </div>
+              <div className="landing-preview-actions">
+                <span className="landing-mono landing-muted">Sort: Date</span>
+                <button className="landing-btn landing-btn-icon" aria-label="Collapse preview">
+                  <LandingIcon name="minus" size={14} />
+                </button>
+              </div>
+            </div>
+            <LandingAppPreview />
+          </section>
+
+          <section className="landing-quote-section">
+            <p>
+              "I stopped taking meeting notes. Listen reads them all back to me on Monday morning,
+              and tells me what I owe people."
+            </p>
+            <span className="landing-mono landing-muted">- Priya R - Head of Product</span>
+          </section>
+
+          <footer className="landing-footer">
+            <div className="landing-footer-grid">
+              <div>
+                <LandingLogo />
+                <p>
+                  A transcript workspace that aggregates spoken words and turns them into
+                  searchable, structured information.
+                </p>
+              </div>
+              <div>
+                <h3>Product</h3>
+                <a href="#features">Features</a>
+                <a href="#sources">Sources</a>
+                <a href="#preview">Preview</a>
+              </div>
+              <div>
+                <h3>Company</h3>
+                <a href="mailto:hello@listen.app">Contact</a>
+                <a href="#preview">Changelog</a>
+              </div>
+              <div>
+                <h3>Legal</h3>
+                <a href="#privacy">Privacy</a>
+                <a href="#terms">Terms</a>
+              </div>
+            </div>
+            <div className="landing-footer-bottom">
+              <span className="landing-mono landing-muted">© 2026 listen, inc.</span>
+              <span className="landing-mono landing-muted">made in monochrome</span>
+            </div>
+          </footer>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+async function checkFirefliesSecretExists(tcw: TinyCloudWeb): Promise<boolean> {
+  const unlockResult = await tcw.secrets.unlock();
+  if (!unlockResult.ok) {
+    throw new Error(unlockResult.error.message);
+  }
+
+  const result = await tcw.secrets.get(FIREFLIES_SECRET_NAME);
+  if (result.ok) return Boolean(result.data);
+
+  const code = result.error?.code?.toLowerCase();
+  if (code === "key_not_found" || code === "not_found") return false;
+
+  throw new Error(result.error?.message ?? "Failed to check Fireflies API key");
+}
+
+async function checkFirefliesSecretExistsFromBackend(api: ApiClient): Promise<boolean> {
+  const result = await api.get<{ exists: boolean }>("/api/config/fireflies-key/exists");
+  return result.exists;
+}
+
+type WorkspaceStatusMode = "checking" | "fireflies-access" | "wallet";
+
+function WorkspaceStatusPanel({
+  mode,
+  loading = false,
+  error,
+  onAction,
+}: {
+  mode: WorkspaceStatusMode;
+  loading?: boolean;
+  error?: string | null;
+  onAction?: () => void;
+}) {
+  const content = {
+    checking: {
+      eyebrow: "workspace",
+      title: "Checking workspace state.",
+      copy: "Listen is checking backend access, source credentials, and whether transcripts already exist.",
+      action: null,
+    },
+    "fireflies-access": {
+      eyebrow: "fireflies",
+      title: "Finish Fireflies access.",
+      copy: "The Fireflies key is stored in TinyCloud Secrets. Delegate access to the Listen backend so sync can run.",
+      action: "Finish access",
+    },
+    wallet: {
+      eyebrow: "sources",
+      title: "Reconnect wallet to connect sources.",
+      copy: "This session was restored without a TinyCloud wallet instance. Reconnect to read or write Secrets and add providers.",
+      action: "Reconnect wallet",
+    },
+  }[mode];
+
+  return (
+    <section style={s.statusPanel}>
+      <span style={s.eyebrow}>- {content.eyebrow}</span>
+      <h3 style={s.statusTitle}>{content.title}</h3>
+      <p style={s.statusText}>{content.copy}</p>
+      <div style={s.statusList}>
+        <span>backend delegation</span>
+        <span>secrets access</span>
+        <span>existing transcripts</span>
+      </div>
+      {error && <div style={s.statusError}>{error}</div>}
+      {content.action && onAction && (
+        <div style={s.statusActionRow}>
+          <button
+            style={loading ? { ...s.statusButton, ...s.statusButtonDisabled } : s.statusButton}
+            disabled={loading}
+            onClick={onAction}
+          >
+            {loading ? "Working..." : content.action}
+          </button>
+        </div>
+      )}
+    </section>
+  );
 }
 
 // ── App ─────────────────────────────────────────────────────────────
@@ -54,7 +502,13 @@ export function App() {
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [hasKey, setHasKey] = useState<boolean | null>(null);
+  const [hasBackendDelegation, setHasBackendDelegation] = useState<boolean | null>(null);
+  const [hasFirefliesBackendAccess, setHasFirefliesBackendAccess] = useState<boolean | null>(null);
   const [hasGoogleMeet, setHasGoogleMeet] = useState<boolean | null>(null);
+  const [hasExistingConversations, setHasExistingConversations] = useState<boolean | null>(null);
+  const [workspaceActionLoading, setWorkspaceActionLoading] = useState(false);
+  const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null);
+  const [activePage, setActivePage] = useState<"inbox" | "sources">("inbox");
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [pendingBanner, setPendingBanner] = useState<string | null>(null);
@@ -62,59 +516,76 @@ export function App() {
   const [liveWritePathPrefix, setLiveWritePathPrefix] = useState<string | null>(null);
   const [liveWriteHost, setLiveWriteHost] = useState<string | null>(null);
   const [agentInfo, setAgentInfo] = useState<ServerInfo | null>(null);
+  const [backendDid, setBackendDid] = useState<string | null>(null);
   const [capabilityRequest, setCapabilityRequest] = useState<ComposedManifestRequest | null>(null);
 
   const sessionStoreRef = useRef(new SessionStore());
-  const restoreAttemptedRef = useRef(false);
-
-  // ── Session Restore ─────────────────────────────────────────────
-
-  useEffect(() => {
-    if (restoreAttemptedRef.current) return;
-    restoreAttemptedRef.current = true;
-
-    const sessionStore = sessionStoreRef.current;
-    if (!sessionStore.hasSession() || sessionStore.isExpired()) return;
-
-    const storedAddress = sessionStore.getAddress();
-    if (!storedAddress) return;
-
-    (async () => {
-      setAuthLoading(true);
-      try {
-        console.log("[restore] Attempting session restore for", storedAddress);
-        const apiClient = createApiClient(BACKEND_URL, { sessionStore });
-        const token = sessionStore.getToken();
-        if (!token) throw new Error("No session token after restore");
-        const status = await checkDelegationStatus(BACKEND_URL, token);
-        if (status.status !== "active") throw new Error("Delegation expired or missing");
-        console.log("[restore] Session fully restored!");
-        const did = `did:pkh:eip155:1:${storedAddress}`;
-        setAddress(storedAddress);
-        setDid(did);
-        setApi(apiClient);
-      } catch (err) {
-        console.warn("[restore] Session restore failed:", err);
-        sessionStore.clear();
-      } finally {
-        setAuthLoading(false);
-      }
-    })();
-  }, []);
 
   useEffect(() => {
     if (!api) {
-      setHasKey(null);
+      setHasBackendDelegation(null);
       return;
     }
-    api
-      .get<{ exists: boolean }>("/api/config/fireflies-key/exists")
-      .then((res) => setHasKey(res.exists))
-      .catch(() => setHasKey(false));
+
+    const token = sessionStoreRef.current.getToken();
+    if (!token) {
+      setHasBackendDelegation(false);
+      return;
+    }
+
+    setHasBackendDelegation(null);
+    checkDelegationStatus(BACKEND_URL, token)
+      .then((status) => setHasBackendDelegation(status.status === "active"))
+      .catch(() => setHasBackendDelegation(false));
   }, [api]);
 
   useEffect(() => {
-    if (!api) {
+    if (hasBackendDelegation === null) {
+      setHasKey(null);
+      return;
+    }
+
+    if (tcw) {
+      checkFirefliesSecretExists(tcw)
+        .then((exists) => setHasKey(exists))
+        .catch(() => setHasKey(false));
+      return;
+    }
+
+    if (api && hasBackendDelegation === true) {
+      checkFirefliesSecretExistsFromBackend(api)
+        .then((exists) => setHasKey(exists))
+        .catch(() => setHasKey(false));
+      return;
+    }
+
+    setHasKey(false);
+  }, [api, tcw, hasBackendDelegation]);
+
+  useEffect(() => {
+    if (!api || hasKey !== true) {
+      setHasFirefliesBackendAccess(null);
+      return;
+    }
+
+    if (hasBackendDelegation === false) {
+      setHasFirefliesBackendAccess(false);
+      return;
+    }
+
+    if (hasBackendDelegation !== true) {
+      setHasFirefliesBackendAccess(null);
+      return;
+    }
+
+    setHasFirefliesBackendAccess(null);
+    checkFirefliesSecretExistsFromBackend(api)
+      .then((exists) => setHasFirefliesBackendAccess(exists))
+      .catch(() => setHasFirefliesBackendAccess(false));
+  }, [api, hasBackendDelegation, hasKey]);
+
+  useEffect(() => {
+    if (!api || hasBackendDelegation !== true) {
       setHasGoogleMeet(null);
       return;
     }
@@ -122,10 +593,22 @@ export function App() {
       .get<{ connected: boolean }>("/api/config/google-meet/connected")
       .then((res) => setHasGoogleMeet(res.connected))
       .catch(() => setHasGoogleMeet(false));
-  }, [api]);
+  }, [api, hasBackendDelegation]);
 
   useEffect(() => {
-    if (!api || hasKey !== true) return;
+    if (!api || hasBackendDelegation !== true) {
+      setHasExistingConversations(null);
+      return;
+    }
+
+    api
+      .get<{ total: number }>("/api/conversations?limit=1&offset=0")
+      .then((res) => setHasExistingConversations(res.total > 0))
+      .catch(() => setHasExistingConversations(false));
+  }, [api, hasBackendDelegation, refreshKey]);
+
+  useEffect(() => {
+    if (!api || hasFirefliesBackendAccess !== true) return;
     api
       .get<{ processed: unknown[]; skipped: unknown[]; errors: unknown[] }>(
         "/api/webhooks/fireflies/pending",
@@ -140,17 +623,17 @@ export function App() {
         }
       })
       .catch((err) => console.error("[pending]", err));
-  }, [api, hasKey]);
+  }, [api, hasFirefliesBackendAccess]);
 
   useEffect(() => {
-    if (!api || hasKey !== true) return;
+    if (!api || hasFirefliesBackendAccess !== true) return;
     api
       .post<{ updated: number; still_missing: number }>("/api/sync/backfill-summaries")
       .then((result) => {
         if (result.updated > 0) setRefreshKey((k) => k + 1);
       })
       .catch((err) => console.error("[backfill]", err));
-  }, [api, hasKey]);
+  }, [api, hasFirefliesBackendAccess]);
 
   useEffect(() => {
     if (!api || hasGoogleMeet !== true) return;
@@ -185,6 +668,7 @@ export function App() {
   const handleSignIn = useCallback(async () => {
     setAuthLoading(true);
     setAuthError(null);
+    setWorkspaceActionError(null);
     try {
       const { address: addr, web3Provider } = await connectWallet({ host: OPENKEY_HOST });
       const [nonce, info, agent] = await Promise.all([
@@ -206,6 +690,7 @@ export function App() {
       const { tcw: tcwInstance, session } = await createAndSignIn(web3Provider, {
         nonce,
         autoCreateSpace: true,
+        manifest: appManifest,
         capabilityRequest: composedRequest,
       });
       const { token, expiresIn } = await verifySession(
@@ -218,14 +703,18 @@ export function App() {
         sessionStore: sessionStoreRef.current,
       });
 
-      const { serialized } = await createManifestDelegation(tcwInstance, info.did, composedRequest);
-      await sendDelegation(BACKEND_URL, serialized, token);
+      const delegationStatus = await checkDelegationStatus(BACKEND_URL, token).catch(() => ({
+        status: "none",
+        expiresAt: null,
+      }));
       setAddress(addr);
       setDid(tcwInstance.did ?? null);
       setTcw(tcwInstance);
       setApi(apiClient);
       setAgentInfo(agent);
+      setBackendDid(info.did);
       setCapabilityRequest(composedRequest);
+      setHasBackendDelegation(delegationStatus.status === "active");
       setLiveWritePathPrefix(conversationEventPathPrefix);
       setLiveWriteHost(tcwInstance.hosts[0] ?? null);
     } catch (err) {
@@ -245,30 +734,217 @@ export function App() {
     setTcw(null);
     setApi(null);
     setAgentInfo(null);
+    setBackendDid(null);
     setCapabilityRequest(null);
     setLiveWritePathPrefix(null);
     setLiveWriteHost(null);
     setAuthError(null);
     setHasKey(null);
+    setHasBackendDelegation(null);
+    setHasFirefliesBackendAccess(null);
     setHasGoogleMeet(null);
+    setHasExistingConversations(null);
+    setWorkspaceActionError(null);
+    setWorkspaceActionLoading(false);
+    setActivePage("inbox");
     setGmLapsedBanner(false);
   }, [tcw]);
+
+  const ensureBackendAccess = useCallback(async () => {
+    if (!tcw || !backendDid || !capabilityRequest) {
+      throw new Error("Reconnect your wallet to finish source setup.");
+    }
+
+    const token = sessionStoreRef.current.getToken();
+    if (!token) {
+      throw new Error("Session expired. Sign in again to finish source setup.");
+    }
+
+    const { serialized } = await createManifestDelegation(tcw, backendDid, capabilityRequest);
+    await sendDelegation(BACKEND_URL, serialized, token);
+    setHasBackendDelegation(true);
+  }, [backendDid, capabilityRequest, tcw]);
+
+  const ensureFirefliesBackendAccess = useCallback(async () => {
+    if (!tcw || !backendDid || !api) {
+      throw new Error("Reconnect your wallet to finish Fireflies setup.");
+    }
+
+    setHasFirefliesBackendAccess(null);
+    await ensureBackendAccess();
+
+    const unlockResult = await tcw.secrets.unlock();
+    if (!unlockResult.ok) {
+      throw new Error(unlockResult.error.message);
+    }
+
+    const shareResult = await tcw.secrets.vault.reencrypt(FIREFLIES_SECRET_VAULT_KEY, backendDid);
+    if (!shareResult.ok) {
+      throw new Error(shareResult.error.message);
+    }
+
+    const backendCanRead = await checkFirefliesSecretExistsFromBackend(api);
+    if (!backendCanRead) {
+      setHasFirefliesBackendAccess(false);
+      throw new Error("Backend still cannot read FIREFLIES_API_KEY. Re-save the key or try again.");
+    }
+
+    setHasBackendDelegation(true);
+    setHasFirefliesBackendAccess(true);
+  }, [api, backendDid, ensureBackendAccess, tcw]);
+
+  const handleFinishFirefliesAccess = useCallback(async () => {
+    setWorkspaceActionLoading(true);
+    setWorkspaceActionError(null);
+    try {
+      await ensureFirefliesBackendAccess();
+      setHasBackendDelegation(true);
+      setHasFirefliesBackendAccess(true);
+      setRefreshKey((k) => k + 1);
+    } catch (err) {
+      setWorkspaceActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWorkspaceActionLoading(false);
+    }
+  }, [ensureFirefliesBackendAccess]);
 
   // ── Render ────────────────────────────────────────────────────────
 
   const isSignedIn = address !== null && api !== null;
+  const firefliesConnected =
+    hasKey === true && hasBackendDelegation === true && hasFirefliesBackendAccess === true;
+  const connectedSourceCount = [firefliesConnected, hasGoogleMeet === true].filter(Boolean).length;
+  const hasUsableInbox = connectedSourceCount > 0 || hasExistingConversations === true;
+  const backendStatusReady = hasBackendDelegation !== null;
+  const firefliesKeyReady = hasKey !== null;
+  const firefliesBackendAccessReady =
+    hasKey === true && hasBackendDelegation === true ? hasFirefliesBackendAccess !== null : true;
+  const backendBackedChecksReady =
+    hasBackendDelegation === true
+      ? hasGoogleMeet !== null && hasExistingConversations !== null && firefliesBackendAccessReady
+      : true;
+  const workspaceChecksReady =
+    isSignedIn && backendStatusReady && firefliesKeyReady && backendBackedChecksReady;
+  const setupAvailable = tcw !== null && backendDid !== null;
+  const needsFirefliesAccess =
+    workspaceChecksReady &&
+    hasKey === true &&
+    (hasBackendDelegation === false || hasFirefliesBackendAccess === false);
+  const showWorkspaceLoading = isSignedIn && !workspaceChecksReady;
+  const showOnboarding =
+    isSignedIn &&
+    workspaceChecksReady &&
+    !hasUsableInbox &&
+    !needsFirefliesAccess &&
+    setupAvailable;
+  const showWalletSetupState =
+    isSignedIn &&
+    workspaceChecksReady &&
+    !hasUsableInbox &&
+    !needsFirefliesAccess &&
+    !setupAvailable;
+  const showSourcesSetup =
+    isSignedIn && hasUsableInbox && activePage === "sources" && setupAvailable;
+  const showSourcesWalletState =
+    isSignedIn && hasUsableInbox && activePage === "sources" && !setupAvailable;
+
+  if (!isSignedIn) {
+    return <LandingPage loading={authLoading} error={authError} onSignIn={handleSignIn} />;
+  }
+
+  const pageEyebrow = !isSignedIn
+    ? "welcome"
+    : selectedConversationId
+      ? "library / transcript"
+      : showWorkspaceLoading
+        ? "workspace / checking"
+        : needsFirefliesAccess
+          ? "sources / access"
+          : showWalletSetupState || showSourcesWalletState
+            ? "sources / reconnect"
+            : activePage === "sources"
+              ? "sources / manage"
+              : hasUsableInbox
+                ? `inbox · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`
+                : "onboarding / sources";
+  const pageTitle = !isSignedIn
+    ? "Capture thoughts. Operate on data."
+    : selectedConversationId
+      ? "Transcript detail"
+      : showWorkspaceLoading
+        ? "Checking workspace."
+        : needsFirefliesAccess
+          ? "Finish Fireflies access."
+          : showWalletSetupState || showSourcesWalletState
+            ? "Reconnect wallet."
+            : activePage === "sources"
+              ? "Add sources."
+              : hasUsableInbox
+                ? "Everything you've said."
+                : "Connect what you already have.";
 
   return (
-    <div style={s.shell}>
-      <header style={s.header}>
-        <h1 style={s.logo}>Conversation Sync</h1>
-        {hasKey && <span style={s.badge}>Fireflies</span>}
-        {hasGoogleMeet && (
-          <span style={{ ...s.badge, color: "#059669", background: "#ecfdf5" }}>Google Meet</span>
-        )}
-      </header>
+    <div className="listen-shell">
+      <aside className="listen-sidebar">
+        <div style={s.sidebarHeader}>
+          <div style={s.brandRow}>
+            <span className="listen-brand-mark" />
+            <div>
+              <h1 style={s.logo}>listen</h1>
+              <p style={s.productSub}>Conversation Sync</p>
+            </div>
+          </div>
+          <span style={s.version}>v0.4</span>
+        </div>
 
-      <main style={s.main}>
+        <div style={s.sidebarBlock}>
+          <span style={s.sectionLabel}>sources</span>
+          <div style={s.sourceRow}>
+            <span style={s.sourceDot} />
+            <span style={s.sourceName}>Fireflies</span>
+            <span style={firefliesConnected ? s.sourceOn : s.sourceOff}>
+              {firefliesConnected
+                ? "Live"
+                : hasKey === null
+                  ? "Checking"
+                  : hasKey === true
+                    ? hasBackendDelegation === true && hasFirefliesBackendAccess === null
+                      ? "Checking"
+                      : "Needs access"
+                    : "Not set"}
+            </span>
+          </div>
+          <div style={s.sourceRow}>
+            <span style={s.sourceDot} />
+            <span style={s.sourceName}>Google Meet</span>
+            <span style={hasGoogleMeet ? s.sourceOn : s.sourceOff}>
+              {hasGoogleMeet ? "Live" : "Optional"}
+            </span>
+          </div>
+          {hasUsableInbox && (
+            <div style={s.navRow}>
+              <button
+                style={activePage === "inbox" ? s.navButtonActive : s.navButton}
+                onClick={() => {
+                  setSelectedConversationId(null);
+                  setActivePage("inbox");
+                }}
+              >
+                Inbox
+              </button>
+              <button
+                style={activePage === "sources" ? s.navButtonActive : s.navButton}
+                onClick={() => {
+                  setSelectedConversationId(null);
+                  setActivePage("sources");
+                }}
+              >
+                Add sources
+              </button>
+            </div>
+          )}
+        </div>
+
         <AuthPanel
           isSignedIn={isSignedIn}
           address={address}
@@ -290,181 +966,521 @@ export function App() {
           />
         )}
 
-        {isSignedIn &&
-          (hasKey === false || (hasGoogleMeet === false && !!GOOGLE_CLIENT_ID)) &&
-          !(hasKey === true && hasGoogleMeet === true) && (
-            <SetupWizard
-              api={api}
-              onComplete={() => setHasKey(true)}
-              onGoogleMeetComplete={() => setHasGoogleMeet(true)}
-              backendUrl={BACKEND_URL}
-              showGoogleMeet={!!GOOGLE_CLIENT_ID}
-              initialSource={
-                hasKey === true ? "google-meet" : hasGoogleMeet === true ? "fireflies" : undefined
-              }
-            />
-          )}
-
-        {isSignedIn && (hasKey === true || hasGoogleMeet === true) && selectedConversationId && (
-          <ConversationDetail
-            api={api}
-            conversationId={selectedConversationId}
-            onBack={() => setSelectedConversationId(null)}
-          />
-        )}
-
-        {pendingBanner && (
-          <div style={s.pendingBanner}>
-            <span>{pendingBanner}</span>
-            <button style={s.bannerDismiss} onClick={() => setPendingBanner(null)}>
-              &times;
+        <div style={s.sidebarFooter}>
+          {isSignedIn && hasKey && tcw && (
+            <button
+              style={s.disconnectLink}
+              onClick={async () => {
+                if (!tcw) return;
+                const unlockResult = await tcw.secrets.unlock();
+                if (!unlockResult.ok) throw new Error(unlockResult.error.message);
+                const result = await tcw.secrets.delete(FIREFLIES_SECRET_NAME);
+                if (!result.ok) throw new Error(result.error.message);
+                setHasKey(false);
+                setHasFirefliesBackendAccess(null);
+              }}
+            >
+              Disconnect Fireflies
             </button>
-          </div>
-        )}
+          )}
+          {isSignedIn && hasGoogleMeet && (
+            <button
+              style={s.disconnectLink}
+              onClick={async () => {
+                if (!api) return;
+                await api.del("/api/config/google-meet");
+                setHasGoogleMeet(false);
+              }}
+            >
+              Disconnect Google Meet
+            </button>
+          )}
+          <span style={s.footerMeta}>TinyCloud + OpenKey</span>
+        </div>
+      </aside>
 
-        {gmLapsedBanner && (
-          <div style={s.lapsedBanner}>
-            <span>Real-time sync was inactive. Some meetings may not have been captured.</span>
-            <div style={s.lapsedActions}>
-              <button
-                style={s.lapsedSyncBtn}
-                onClick={() => {
-                  api
-                    ?.post("/api/sync/google-meet")
-                    .then(() => {
-                      setRefreshKey((k) => k + 1);
-                      setGmLapsedBanner(false);
-                    })
-                    .catch(() => {});
-                }}
-              >
-                Sync Now
-              </button>
-              <button style={s.bannerDismiss} onClick={() => setGmLapsedBanner(false)}>
-                &times;
-              </button>
-            </div>
+      <main className="listen-main">
+        <header style={s.topbar}>
+          <div>
+            <span style={s.eyebrow}>— {pageEyebrow}</span>
+            <h2 style={s.pageTitle}>{pageTitle}</h2>
           </div>
-        )}
+          <div style={s.topbarActions}>
+            {firefliesConnected && <span style={s.badge}>Fireflies</span>}
+            {hasKey === true &&
+              (hasBackendDelegation === false || hasFirefliesBackendAccess === false) && (
+                <span style={s.badge}>Fireflies key saved</span>
+              )}
+            {hasGoogleMeet && <span style={s.badge}>Google Meet</span>}
+            {isSignedIn && <span style={s.badgeSolid}>{did ? "Connected" : "Restored"}</span>}
+          </div>
+        </header>
 
-        {isSignedIn && (hasKey === true || hasGoogleMeet === true) && !selectedConversationId && (
-          <>
-            <SyncControl
-              api={api}
-              backendUrl={BACKEND_URL}
-              getAccessToken={() => sessionStoreRef.current.getToken()}
-              onSyncComplete={() => setRefreshKey((k) => k + 1)}
-              hasFireflies={hasKey === true}
-              hasGoogleMeet={hasGoogleMeet === true}
-            />
-            {ENABLE_TINYCLOUD_HOOKS && liveWriteHost && (
-              <LiveWriteEvents
-                tcw={tcw}
-                hooksHost={liveWriteHost}
-                pathPrefix={liveWritePathPrefix}
-                onWrite={() => setRefreshKey((k) => k + 1)}
+        <div className="listen-content">
+          <div className="listen-stack">
+            {!isSignedIn && (
+              <section style={s.heroPanel}>
+                <span style={s.eyebrow}>— one transcript inbox</span>
+                <p style={s.heroText}>
+                  Bring Fireflies and Google Meet transcripts into your TinyCloud space, then
+                  search, sync, and read the archive from one calm workspace.
+                </p>
+                <div style={s.heroStats}>
+                  <span>sovereign storage</span>
+                  <span>live sync</span>
+                  <span>agent-ready</span>
+                </div>
+              </section>
+            )}
+
+            {showWorkspaceLoading && <WorkspaceStatusPanel mode="checking" />}
+
+            {needsFirefliesAccess && (
+              <WorkspaceStatusPanel
+                mode="fireflies-access"
+                loading={workspaceActionLoading}
+                error={workspaceActionError}
+                onAction={handleFinishFirefliesAccess}
               />
             )}
-            <ConversationList
-              api={api}
-              onSelectConversation={setSelectedConversationId}
-              refreshKey={refreshKey}
-            />
-            {hasKey && (
-              <button
-                style={s.disconnectLink}
-                onClick={async () => {
-                  await api.del("/api/config/fireflies-key");
-                  setHasKey(false);
-                }}
-              >
-                Disconnect Fireflies
-              </button>
-            )}
-            {hasGoogleMeet && (
-              <button
-                style={s.disconnectLink}
-                onClick={async () => {
-                  await api.del("/api/config/google-meet");
-                  setHasGoogleMeet(false);
-                }}
-              >
-                Disconnect Google Meet
-              </button>
-            )}
-          </>
-        )}
-      </main>
 
-      <footer style={s.footer}>
-        Powered by{" "}
-        <a href="https://tinycloud.xyz" target="_blank" rel="noreferrer" style={s.footerLink}>
-          TinyCloud
-        </a>
-        {" & "}
-        <a href="https://openkey.so" target="_blank" rel="noreferrer" style={s.footerLink}>
-          OpenKey
-        </a>
-      </footer>
+            {(showWalletSetupState || showSourcesWalletState) && (
+              <WorkspaceStatusPanel
+                mode="wallet"
+                loading={authLoading}
+                error={authError}
+                onAction={handleSignIn}
+              />
+            )}
+
+            {showOnboarding && tcw && (
+              <SourcesSetup
+                api={api}
+                tcw={tcw}
+                mode="onboarding"
+                hasFirefliesKey={hasKey}
+                hasBackendDelegation={hasBackendDelegation}
+                hasFirefliesBackendAccess={hasFirefliesBackendAccess}
+                hasGoogleMeet={hasGoogleMeet}
+                onEnsureBackendAccess={ensureBackendAccess}
+                onEnsureFirefliesBackendAccess={ensureFirefliesBackendAccess}
+                onFirefliesComplete={() => {
+                  setHasKey(true);
+                  setHasBackendDelegation(true);
+                  setHasFirefliesBackendAccess(true);
+                  setRefreshKey((k) => k + 1);
+                  setActivePage("inbox");
+                }}
+                onDone={() => setActivePage("inbox")}
+                onGoogleMeetComplete={() => {
+                  setHasGoogleMeet(true);
+                  setHasBackendDelegation(true);
+                  setRefreshKey((k) => k + 1);
+                  setActivePage("inbox");
+                }}
+                backendUrl={BACKEND_URL}
+                showGoogleMeet={!!GOOGLE_CLIENT_ID}
+              />
+            )}
+
+            {showSourcesSetup && tcw && (
+              <SourcesSetup
+                api={api}
+                tcw={tcw}
+                mode="sources"
+                hasFirefliesKey={hasKey}
+                hasBackendDelegation={hasBackendDelegation}
+                hasFirefliesBackendAccess={hasFirefliesBackendAccess}
+                hasGoogleMeet={hasGoogleMeet}
+                onEnsureBackendAccess={ensureBackendAccess}
+                onEnsureFirefliesBackendAccess={ensureFirefliesBackendAccess}
+                onFirefliesComplete={() => {
+                  setHasKey(true);
+                  setHasBackendDelegation(true);
+                  setHasFirefliesBackendAccess(true);
+                  setRefreshKey((k) => k + 1);
+                  setActivePage("inbox");
+                }}
+                onDone={() => setActivePage("inbox")}
+                onGoogleMeetComplete={() => {
+                  setHasGoogleMeet(true);
+                  setHasBackendDelegation(true);
+                  setRefreshKey((k) => k + 1);
+                  setActivePage("inbox");
+                }}
+                backendUrl={BACKEND_URL}
+                showGoogleMeet={!!GOOGLE_CLIENT_ID}
+              />
+            )}
+
+            {pendingBanner && (
+              <div style={s.pendingBanner}>
+                <span>{pendingBanner}</span>
+                <button style={s.bannerDismiss} onClick={() => setPendingBanner(null)}>
+                  &times;
+                </button>
+              </div>
+            )}
+
+            {gmLapsedBanner && (
+              <div style={s.lapsedBanner}>
+                <span>Real-time sync was inactive. Some meetings may not have been captured.</span>
+                <div style={s.lapsedActions}>
+                  <button
+                    style={s.lapsedSyncBtn}
+                    onClick={() => {
+                      api
+                        ?.post("/api/sync/google-meet")
+                        .then(() => {
+                          setRefreshKey((k) => k + 1);
+                          setGmLapsedBanner(false);
+                        })
+                        .catch(() => {});
+                    }}
+                  >
+                    Sync Now
+                  </button>
+                  <button style={s.bannerDismiss} onClick={() => setGmLapsedBanner(false)}>
+                    &times;
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {isSignedIn && hasUsableInbox && activePage === "inbox" && selectedConversationId && (
+              <ConversationDetail
+                api={api}
+                conversationId={selectedConversationId}
+                onBack={() => setSelectedConversationId(null)}
+              />
+            )}
+
+            {isSignedIn && hasUsableInbox && activePage === "inbox" && !selectedConversationId && (
+              <>
+                <SyncControl
+                  api={api}
+                  backendUrl={BACKEND_URL}
+                  getAccessToken={() => sessionStoreRef.current.getToken()}
+                  onSyncComplete={() => setRefreshKey((k) => k + 1)}
+                  hasFireflies={firefliesConnected}
+                  hasGoogleMeet={hasGoogleMeet === true}
+                />
+                {ENABLE_TINYCLOUD_HOOKS && liveWriteHost && (
+                  <LiveWriteEvents
+                    tcw={tcw}
+                    hooksHost={liveWriteHost}
+                    pathPrefix={liveWritePathPrefix}
+                    onWrite={() => setRefreshKey((k) => k + 1)}
+                  />
+                )}
+                <ConversationList
+                  api={api}
+                  onSelectConversation={setSelectedConversationId}
+                  refreshKey={refreshKey}
+                />
+              </>
+            )}
+          </div>
+        </div>
+      </main>
     </div>
   );
 }
 
 // ── Styles ────────────────────────────────────────────────────────────
 
-const FONT = "'Outfit', -apple-system, sans-serif";
-const MONO = "'IBM Plex Mono', 'SF Mono', monospace";
+const FONT = "var(--lst-font)";
+const MONO = "var(--lst-mono)";
 
 const s: Record<string, React.CSSProperties> = {
-  shell: {
-    maxWidth: 680,
-    margin: "0 auto",
-    padding: "32px 20px 48px",
-    fontFamily: FONT,
-    color: "#18181b",
-    lineHeight: 1.5,
-  },
-  header: {
+  sidebarHeader: {
+    padding: "18px 20px 14px",
+    borderBottom: "var(--lst-border)",
     display: "flex",
     alignItems: "center",
-    gap: 10,
-    marginBottom: 28,
+    justifyContent: "space-between",
+  },
+  brandRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
   },
   logo: {
     fontFamily: FONT,
-    fontSize: 20,
-    fontWeight: 700,
+    fontSize: 22,
+    fontWeight: 400,
     margin: 0,
-    letterSpacing: "-0.02em",
-    color: "#18181b",
+    letterSpacing: 0,
+    color: "var(--lst-blue)",
+    lineHeight: 1,
+  },
+  productSub: {
+    fontFamily: MONO,
+    fontSize: 10,
+    color: "var(--lst-ink-55)",
+    letterSpacing: "0.08em",
+    textTransform: "uppercase" as const,
+    margin: "4px 0 0",
+  },
+  version: {
+    fontFamily: MONO,
+    fontSize: 10,
+    color: "var(--lst-ink-55)",
+    letterSpacing: "0.08em",
+    textTransform: "uppercase" as const,
+  },
+  sidebarBlock: {
+    padding: "16px 20px",
+    borderBottom: "var(--lst-border)",
+  },
+  sectionLabel: {
+    display: "block",
+    fontFamily: MONO,
+    fontSize: 10,
+    color: "var(--lst-ink-55)",
+    letterSpacing: "0.08em",
+    textTransform: "uppercase" as const,
+    marginBottom: 10,
+  },
+  sourceRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    padding: "7px 0",
+    fontSize: 13,
+  },
+  sourceDot: {
+    width: 7,
+    height: 7,
+    borderRadius: "50%",
+    background: "var(--lst-blue)",
+    display: "inline-block",
+    flexShrink: 0,
+  },
+  sourceName: {
+    flex: 1,
+  },
+  sourceOn: {
+    fontFamily: MONO,
+    fontSize: 10,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase" as const,
+  },
+  sourceOff: {
+    fontFamily: MONO,
+    fontSize: 10,
+    color: "var(--lst-ink-55)",
+    letterSpacing: "0.08em",
+    textTransform: "uppercase" as const,
+  },
+  navRow: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: 6,
+    marginTop: 12,
+  },
+  navButton: {
+    fontFamily: FONT,
+    fontSize: 12,
+    color: "var(--lst-blue)",
+    background: "transparent",
+    border: "var(--lst-border)",
+    borderRadius: 999,
+    padding: "7px 10px",
+    cursor: "pointer",
+  },
+  navButtonActive: {
+    fontFamily: FONT,
+    fontSize: 12,
+    color: "var(--lst-bg)",
+    background: "var(--lst-blue)",
+    border: "var(--lst-border)",
+    borderRadius: 999,
+    padding: "7px 10px",
+    cursor: "pointer",
+  },
+  sidebarFooter: {
+    marginTop: "auto",
+    padding: "14px 20px",
+    borderTop: "var(--lst-border)",
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 8,
+  },
+  footerMeta: {
+    fontFamily: MONO,
+    fontSize: 10,
+    color: "var(--lst-ink-55)",
+    letterSpacing: "0.08em",
+    textTransform: "uppercase" as const,
+  },
+  topbar: {
+    padding: "20px 32px 16px",
+    borderBottom: "var(--lst-border)",
+    display: "flex",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    gap: 20,
+    background: "var(--lst-bg)",
+  },
+  eyebrow: {
+    display: "block",
+    fontFamily: MONO,
+    fontSize: 11,
+    color: "var(--lst-ink-55)",
+    letterSpacing: "0.08em",
+    textTransform: "uppercase" as const,
+    marginBottom: 7,
+  },
+  pageTitle: {
+    fontFamily: FONT,
+    fontSize: 38,
+    fontWeight: 400,
+    letterSpacing: 0,
+    lineHeight: 1.06,
+    margin: 0,
+    color: "var(--lst-blue)",
+  },
+  topbarActions: {
+    display: "flex",
+    flexWrap: "wrap" as const,
+    justifyContent: "flex-end",
+    gap: 8,
   },
   badge: {
     fontFamily: MONO,
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: 500,
-    color: "#6366f1",
-    background: "#eef2ff",
-    padding: "2px 8px",
-    borderRadius: 4,
-    letterSpacing: "0.03em",
+    color: "var(--lst-blue)",
+    background: "transparent",
+    border: "var(--lst-border)",
+    padding: "4px 10px",
+    borderRadius: 999,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase" as const,
+    whiteSpace: "nowrap" as const,
   },
-  main: {
+  badgeSolid: {
+    fontFamily: MONO,
+    fontSize: 10,
+    fontWeight: 500,
+    color: "var(--lst-bg)",
+    background: "var(--lst-blue)",
+    border: "var(--lst-border)",
+    padding: "4px 10px",
+    borderRadius: 999,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase" as const,
+    whiteSpace: "nowrap" as const,
+  },
+  heroPanel: {
+    padding: "42px 48px",
+    border: "var(--lst-border)",
+    background: "var(--lst-ink-08)",
+    animation: "fadeSlideIn 0.3s ease-out",
+  },
+  heroText: {
+    maxWidth: 760,
+    fontSize: 20,
+    lineHeight: 1.48,
+    margin: "0 0 28px",
+    color: "var(--lst-blue)",
+    letterSpacing: 0,
+  },
+  heroStats: {
     display: "flex",
-    flexDirection: "column",
-    gap: 16,
+    flexWrap: "wrap" as const,
+    gap: 8,
+    fontFamily: MONO,
+    fontSize: 10,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase" as const,
+    color: "var(--lst-blue)",
+  },
+  statusPanel: {
+    padding: "42px 48px",
+    border: "var(--lst-border)",
+    background: "var(--lst-bg)",
+    animation: "fadeSlideIn 0.3s ease-out",
+  },
+  statusTitle: {
+    fontFamily: FONT,
+    fontSize: 36,
+    fontWeight: 400,
+    lineHeight: 1.05,
+    letterSpacing: 0,
+    color: "var(--lst-blue)",
+    margin: "0 0 16px",
+  },
+  statusText: {
+    maxWidth: 620,
+    fontSize: 15,
+    lineHeight: 1.55,
+    color: "var(--lst-blue)",
+    margin: "0 0 24px",
+  },
+  statusList: {
+    display: "flex",
+    flexWrap: "wrap" as const,
+    gap: 8,
+    fontFamily: MONO,
+    fontSize: 10,
+    color: "var(--lst-ink-55)",
+    letterSpacing: "0.08em",
+    textTransform: "uppercase" as const,
+  },
+  statusActionRow: {
+    display: "flex",
+    gap: 10,
+    marginTop: 28,
+  },
+  statusButton: {
+    fontFamily: FONT,
+    fontSize: 13,
+    fontWeight: 600,
+    color: "var(--lst-bg)",
+    background: "var(--lst-blue)",
+    border: "var(--lst-border)",
+    borderRadius: 999,
+    padding: "9px 18px",
+    cursor: "pointer",
+  },
+  statusButtonDisabled: {
+    opacity: 0.5,
+    cursor: "not-allowed",
+  },
+  statusError: {
+    marginTop: 18,
+    padding: "10px 14px",
+    border: "var(--lst-border)",
+    background: "var(--lst-ink-08)",
+    color: "var(--lst-blue)",
+    fontSize: 13,
+    lineHeight: 1.4,
+  },
+  disconnectLink: {
+    fontFamily: FONT,
+    display: "inline-flex",
+    justifyContent: "flex-start",
+    color: "var(--lst-blue)",
+    background: "transparent",
+    border: "none",
+    padding: 0,
+    fontSize: 12,
+    cursor: "pointer",
+    opacity: 0.72,
   },
   pendingBanner: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
     padding: "12px 16px",
-    background: "#fff",
-    border: "1px solid #e2e4e9",
-    borderLeft: "3px solid #10b981",
-    borderRadius: 12,
+    background: "var(--lst-ink-08)",
+    border: "var(--lst-border)",
+    borderRadius: 0,
     fontSize: 13,
     fontWeight: 500,
-    color: "#065f46",
+    color: "var(--lst-blue)",
     animation: "fadeSlideIn 0.3s ease-out",
   },
   bannerDismiss: {
@@ -472,7 +1488,7 @@ const s: Record<string, React.CSSProperties> = {
     background: "none",
     border: "none",
     fontSize: 18,
-    color: "#9ca3af",
+    color: "var(--lst-blue)",
     cursor: "pointer",
     padding: "0 4px",
     lineHeight: 1,
@@ -482,13 +1498,12 @@ const s: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "space-between",
     padding: "12px 16px",
-    background: "#fffbeb",
-    border: "1px solid #fde68a",
-    borderLeft: "3px solid #f59e0b",
-    borderRadius: 12,
+    background: "var(--lst-bg-2)",
+    border: "var(--lst-border)",
+    borderRadius: 0,
     fontSize: 13,
     fontWeight: 500,
-    color: "#92400e",
+    color: "var(--lst-blue)",
     animation: "fadeSlideIn 0.3s ease-out",
   },
   lapsedActions: {
@@ -500,35 +1515,11 @@ const s: Record<string, React.CSSProperties> = {
     fontFamily: FONT,
     fontSize: 12,
     fontWeight: 600,
-    color: "#fff",
-    background: "#f59e0b",
-    border: "none",
-    borderRadius: 6,
+    color: "var(--lst-bg)",
+    background: "var(--lst-blue)",
+    border: "var(--lst-border)",
+    borderRadius: 999,
     padding: "6px 12px",
     cursor: "pointer",
-  },
-  disconnectLink: {
-    fontFamily: FONT,
-    background: "none",
-    border: "none",
-    fontSize: 12,
-    color: "#9ca3af",
-    cursor: "pointer",
-    padding: 0,
-    textAlign: "center" as const,
-  },
-  footer: {
-    fontFamily: FONT,
-    textAlign: "center",
-    marginTop: 48,
-    fontSize: 11,
-    fontWeight: 500,
-    color: "#9ca3af",
-    letterSpacing: "0.03em",
-    textTransform: "uppercase" as const,
-  },
-  footerLink: {
-    color: "#6b7280",
-    textDecoration: "none",
   },
 };

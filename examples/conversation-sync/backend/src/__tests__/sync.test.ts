@@ -240,7 +240,17 @@ function createApp(
   clientFactory: ReturnType<typeof createMockClientFactory>,
 ) {
   const mockDelegationMiddleware = (req: Request, _res: Response, next: NextFunction) => {
-    req.delegatedAccess = { kv: mockKV, sql: mockSQL } as any;
+    req.delegatedAccess = {
+      kv: mockKV,
+      sql: mockSQL,
+      secrets: {
+        get: async () => {
+          const val = mockKV._data.get(KV_KEY);
+          if (val === undefined) return { ok: false, error: { code: "KEY_NOT_FOUND" } };
+          return { ok: true, data: val };
+        },
+      },
+    } as any;
     next();
   };
 

@@ -1,11 +1,11 @@
 import { Router } from "express";
 import { runtimeManifest } from "../manifest.js";
 
-export function createManifestRouter(_did: string) {
+export function createManifestRouter(did: string) {
   const router = Router();
 
   router.get("/", (_req, res) => {
-    res.json(runtimeManifest());
+    res.json(runtimeManifest(did));
   });
 
   return router;

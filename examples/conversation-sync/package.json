@@ -4,6 +4,9 @@
   "scripts": {
     "dev": "bun run dev:backend & bun run dev:frontend",
     "dev:frontend": "cd frontend && bun run dev",
-    "dev:backend": "cd backend && bun run dev"
+    "dev:backend": "cd backend && bun run dev",
+    "dev:portless": "bun run dev:portless:backend & bun run dev:portless:frontend",
+    "dev:portless:frontend": "cd frontend && VITE_BACKEND_URL=https://api.listen.localhost bun run dev:portless",
+    "dev:portless:backend": "cd backend && FRONTEND_URL=https://listen.localhost bun --env-file=../../../.env run dev:portless"
   }
 }

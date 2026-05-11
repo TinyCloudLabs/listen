@@ -56,6 +56,8 @@ bun run dev
 ```
 
 The frontend runs on `http://localhost:5173`, the backend on `http://localhost:3001`.
+For the Listen conversation-sync example, you can also run stable HTTPS local
+URLs with `bun run dev:conversation-sync:portless`.
 
 ## Project Structure
 

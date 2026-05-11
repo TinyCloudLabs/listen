@@ -1,10 +1,12 @@
 import type { Request, Response, NextFunction } from "express";
 import type { TinyCloudNode } from "@tinycloud/node-sdk";
-import { deserializeDelegation } from "@tinycloud/node-sdk";
 import type { DelegationStore, DelegationCache } from "@tinyboilerplate/server";
 import { withTimeout } from "./timeout.js";
 import { backendDelegationPolicyHash } from "../manifest.js";
-import { activatePortableDelegation } from "../delegation-activation.js";
+import {
+  activatePortableDelegation,
+  deserializePortableDelegationSet,
+} from "../delegation-activation.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -12,7 +14,23 @@ interface DelegationMiddlewareConfig {
   node: TinyCloudNode;
   store: DelegationStore;
   cache: DelegationCache;
+  backendDid: string;
 }
+
+interface DelegationValidationError {
+  status: number;
+  body: {
+    error: string;
+    message: string;
+  };
+}
+
+type DelegationValidationResult =
+  | { ok: true }
+  | {
+      ok: false;
+      error: DelegationValidationError;
+    };
 
 // ── Delegation Middleware Factory ────────────────────────────────────
 
@@ -25,7 +43,7 @@ interface DelegationMiddlewareConfig {
  * 5. Returns 403 if no delegation found, 401 if expired
  */
 export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
-  const { node, store, cache } = config;
+  const { node, store, cache, backendDid } = config;
 
   return async (req: Request, res: Response, next: NextFunction) => {
     const user = req.user;
@@ -40,17 +58,23 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
 
     const { address } = user;
 
-    // Check cache first
-    let access = cache.get(address);
-
-    if (access) {
-      req.delegatedAccess = access;
-      next();
-      return;
-    }
-
-    // Cache miss — load from persistent store
     try {
+      // Check cache first
+      let access = cache.get(address);
+
+      if (access) {
+        const validation = await validateStoredDelegation(address, store, cache, backendDid);
+        if (!validation.ok) {
+          res.status(validation.error.status).json(validation.error.body);
+          return;
+        }
+
+        req.delegatedAccess = access;
+        next();
+        return;
+      }
+
+      // Cache miss — load from persistent store
       const stored = await store.load(address);
 
       if (!stored) {
@@ -71,7 +95,7 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
         return;
       }
 
-      if (stored.policyHash !== backendDelegationPolicyHash()) {
+      if (stored.policyHash !== backendDelegationPolicyHash(backendDid)) {
         await store.remove(address);
         cache.evict(address);
         res.status(403).json({
@@ -125,7 +149,7 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
             return;
           }
 
-          if (stored.policyHash !== backendDelegationPolicyHash()) {
+          if (stored.policyHash !== backendDelegationPolicyHash(backendDid)) {
             await store.remove(address);
             cache.evict(address);
             res.status(403).json({
@@ -135,8 +159,10 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
             return;
           }
 
-          access = await withTimeout(activateDelegation(node, cache, address, stored.serialized));
-          req.delegatedAccess = access;
+          const retryAccess = await withTimeout(
+            activateDelegation(node, cache, address, stored.serialized),
+          );
+          req.delegatedAccess = retryAccess;
           next();
         } catch (retryErr) {
           const retryMessage = retryErr instanceof Error ? retryErr.message : String(retryErr);
@@ -162,13 +188,68 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
+async function validateStoredDelegation(
+  address: string,
+  store: DelegationStore,
+  cache: DelegationCache,
+  backendDid: string,
+): Promise<DelegationValidationResult> {
+  const stored = await store.load(address);
+
+  if (!stored) {
+    cache.evict(address);
+    return {
+      ok: false,
+      error: {
+        status: 403,
+        body: {
+          error: "no_delegation",
+          message: "No delegation found. Please delegate access from the frontend.",
+        },
+      },
+    };
+  }
+
+  if (new Date(stored.expiresAt).getTime() <= Date.now()) {
+    await store.remove(address);
+    cache.evict(address);
+    return {
+      ok: false,
+      error: {
+        status: 401,
+        body: {
+          error: "delegation_expired",
+          message: "Delegation has expired. Please delegate access again.",
+        },
+      },
+    };
+  }
+
+  if (stored.policyHash !== backendDelegationPolicyHash(backendDid)) {
+    await store.remove(address);
+    cache.evict(address);
+    return {
+      ok: false,
+      error: {
+        status: 403,
+        body: {
+          error: "delegation_stale",
+          message: "Delegation permissions are stale. Please sign in again.",
+        },
+      },
+    };
+  }
+
+  return { ok: true };
+}
+
 async function activateDelegation(
   node: TinyCloudNode,
   cache: DelegationCache,
   address: string,
   serialized: string,
 ) {
-  const delegation = deserializeDelegation(serialized);
+  const delegation = deserializePortableDelegationSet(serialized);
   const access = await activatePortableDelegation(node, delegation);
   console.log(
     `[delegation] activated: address=${address} spaceId=${access.spaceId} path=${JSON.stringify(access.path)}`,
