@@ -1,9 +1,9 @@
 import { useMemo, useState, type FC } from "react";
-import { AudioPlayer } from "./AudioPlayer";
 
 // ── Transcript pane ──────────────────────────────────────────────────
-// Per l-app-screens.jsx line 51: audio player on top, find-in-transcript
-// + speaker filter tools, then the transcript blocks.
+// Per l-app-screens.jsx line 51: find-in-transcript + speaker filter
+// tools, then the transcript blocks. Audio controls stay hidden until
+// the backend exposes playable audio URLs.
 
 export interface TranscriptSentence {
   index: number;
@@ -22,7 +22,6 @@ interface TranscriptBlock {
 
 interface TranscriptPaneProps {
   transcript: TranscriptSentence[] | null;
-  durationSecs: number;
 }
 
 function formatTimestamp(seconds: number): string {
@@ -82,7 +81,7 @@ const markStyle: React.CSSProperties = {
   borderRadius: 2,
 };
 
-export const TranscriptPane: FC<TranscriptPaneProps> = ({ transcript, durationSecs }) => {
+export const TranscriptPane: FC<TranscriptPaneProps> = ({ transcript }) => {
   const [query, setQuery] = useState("");
   const [speakerFilter, setSpeakerFilter] = useState<string>("__all__");
   const [showSpeakerMenu, setShowSpeakerMenu] = useState(false);
@@ -109,11 +108,6 @@ export const TranscriptPane: FC<TranscriptPaneProps> = ({ transcript, durationSe
 
   return (
     <section style={s.pane}>
-      {/* Player */}
-      <div style={s.playerBar}>
-        <AudioPlayer durationSecs={durationSecs} />
-      </div>
-
       {/* Find / filter */}
       <div style={s.toolsBar}>
         <span style={s.eyebrow}>— transcript</span>
@@ -196,10 +190,6 @@ const s: Record<string, React.CSSProperties> = {
     overflow: "hidden",
     minWidth: 0,
     background: "var(--lst-bg)",
-  },
-  playerBar: {
-    padding: "16px 32px",
-    borderBottom: "var(--lst-border)",
   },
   toolsBar: {
     padding: "10px 32px",

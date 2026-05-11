@@ -1,9 +1,8 @@
-import { useState, type FC } from "react";
-import { AskComposer } from "./AskComposer";
+import { useEffect, useState, type FC } from "react";
 
 // ── Notes pane ───────────────────────────────────────────────────────
-// Stub UI per l-app-screens.jsx line 139. Notes are local-only and not
-// persisted — wiring to backend storage is out of scope for this rebuild.
+// Local note capture for transcript detail. Notes persist per conversation
+// in browser storage until backend note storage exists.
 
 interface Note {
   id: string;
@@ -13,12 +12,39 @@ interface Note {
   emphasized?: boolean;
 }
 
-const SEED_NOTES: Note[] = [];
+interface NotesPaneProps {
+  conversationId: string;
+}
 
-export const NotesPane: FC = () => {
-  const [notes, setNotes] = useState<Note[]>(SEED_NOTES);
+function storageKey(conversationId: string): string {
+  return `listen:conversation-notes:${conversationId}`;
+}
+
+function loadNotes(conversationId: string): Note[] {
+  try {
+    const raw = window.localStorage.getItem(storageKey(conversationId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export const NotesPane: FC<NotesPaneProps> = ({ conversationId }) => {
+  const [notes, setNotes] = useState<Note[]>(() => loadNotes(conversationId));
   const [drafting, setDrafting] = useState(false);
   const [draft, setDraft] = useState("");
+
+  useEffect(() => {
+    setNotes(loadNotes(conversationId));
+    setDrafting(false);
+    setDraft("");
+  }, [conversationId]);
+
+  useEffect(() => {
+    window.localStorage.setItem(storageKey(conversationId), JSON.stringify(notes));
+  }, [conversationId, notes]);
 
   const commitDraft = () => {
     const text = draft.trim();
@@ -75,10 +101,6 @@ export const NotesPane: FC = () => {
             + add a note
           </button>
         )}
-      </div>
-
-      <div style={s.composerWrap}>
-        <AskComposer placeholder="Ask this transcript…" />
       </div>
     </aside>
   );
@@ -178,9 +200,5 @@ const s: Record<string, React.CSSProperties> = {
     minHeight: 84,
     resize: "vertical" as const,
     outline: "none",
-  },
-  composerWrap: {
-    padding: 14,
-    borderTop: "var(--lst-border)",
   },
 };

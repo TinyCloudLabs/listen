@@ -43,6 +43,14 @@ function formatDurationClock(secs: number): string {
   return `${mins}:${String(remainder).padStart(2, "0")}`;
 }
 
+function formatDurationLabel(secs: number): string {
+  const mins = Math.max(1, Math.round(secs / 60));
+  if (mins < 60) return `${mins} min`;
+  const hrs = Math.floor(mins / 60);
+  const rem = mins % 60;
+  return rem === 0 ? `${hrs} hr` : `${hrs} hr ${rem} min`;
+}
+
 function formatBreadcrumbDate(isoString: string): string {
   return new Date(isoString)
     .toLocaleDateString("en-US", { month: "short", day: "numeric" })
@@ -71,6 +79,17 @@ function initialsFor(name: string): string {
   return (parts[0]![0]! + parts[parts.length - 1]![0]!).toUpperCase();
 }
 
+function sourceLinkLabel(source: string): string {
+  switch (source) {
+    case "fireflies":
+      return "View on Fireflies";
+    case "google-meet":
+      return "View transcript";
+    default:
+      return "Open source";
+  }
+}
+
 /** Render markdown-ish summary text (newlines, bullets, bold) as HTML. */
 function renderSummary(text: string): string {
   return text
@@ -79,6 +98,60 @@ function renderSummary(text: string): string {
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/^[-*]\s+/gm, "\u2022 ")
     .replace(/\n/g, "<br />");
+}
+
+async function copyText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+}
+
+function transcriptText(transcript: TranscriptSentence[] | null): string {
+  if (!transcript?.length) return "No transcript available.";
+  return transcript
+    .map((line) => {
+      const speaker = line.speaker_name || "Speaker";
+      return `[${formatDurationClock(line.start_time)}] ${speaker}: ${line.text}`;
+    })
+    .join("\n");
+}
+
+function exportText(
+  conversation: ConversationData,
+  transcript: TranscriptSentence[] | null,
+): string {
+  return [
+    conversation.title,
+    `${sourceLabel(conversation.source)} · ${formatBreadcrumbDate(conversation.started_at)} · ${formatDurationLabel(conversation.duration_secs)}`,
+    "",
+    "Summary",
+    conversation.summary || "No summary yet.",
+    "",
+    "Transcript",
+    transcriptText(transcript),
+  ].join("\n");
+}
+
+function downloadText(filename: string, text: string): void {
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 // ── Component ────────────────────────────────────────────────────────
@@ -91,7 +164,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
   const [data, setData] = useState<DetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [starred, setStarred] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -102,6 +175,12 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
   }, [api, conversationId]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 1800);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
 
   if (loading) {
     return (
@@ -131,48 +210,48 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
 
   const { conversation, participants, transcript } = data;
 
+  const copySummary = async () => {
+    if (!conversation.summary) return;
+    await copyText(`${conversation.title}\n${conversation.summary}`);
+    setNotice("Summary copied");
+  };
+
+  const exportConversation = () => {
+    downloadText(
+      `${conversation.title.replace(/[^\w.-]+/g, "-").toLowerCase() || "conversation"}.txt`,
+      exportText(conversation, transcript),
+    );
+    setNotice("Transcript exported");
+  };
+
   return (
     <section style={s.container}>
       {/* Top action bar */}
       <div style={s.actionBar}>
-        <button style={s.backLink} onClick={onBack} type="button">
+        <button style={s.backLink} onClick={onBack} type="button" aria-label="Back to inbox">
           <span style={s.chevL}>‹</span> Inbox
         </button>
         <span style={s.breadDot}>/</span>
         <span style={s.breadMeta}>
-          {sourceLabel(conversation.source)} · {formatBreadcrumbDate(conversation.started_at)} ·{" "}
-          {formatDurationClock(conversation.duration_secs)}
+          <span>{sourceLabel(conversation.source)}</span>
+          <span>·</span>
+          <span>{formatBreadcrumbDate(conversation.started_at)}</span>
+          <span>·</span>
+          <span>{formatDurationLabel(conversation.duration_secs)}</span>
         </span>
         <span style={s.spacer} />
-        <button
-          style={{
-            ...s.actionBtn,
-            ...(starred ? s.actionBtnActive : {}),
-          }}
-          onClick={() => setStarred((v) => !v)}
-          type="button"
-        >
-          ★ {starred ? "Starred" : "Star"}
-        </button>
-        {conversation.source_url ? (
+        {conversation.source_url && (
           <a
             style={{ ...s.actionBtn, textDecoration: "none" }}
             href={conversation.source_url}
             target="_blank"
             rel="noreferrer"
           >
-            ⤴ Share
+            {sourceLinkLabel(conversation.source)}
           </a>
-        ) : (
-          <button style={s.actionBtn} type="button">
-            ⤴ Share
-          </button>
         )}
-        <button style={s.actionBtn} type="button">
-          → Export
-        </button>
-        <button style={s.iconActionBtn} type="button" aria-label="More">
-          ⋯
+        <button style={s.actionBtn} type="button" onClick={exportConversation}>
+          Export
         </button>
       </div>
 
@@ -198,17 +277,19 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
             </div>
           )}
           {participants.length > 0 && (
+            <span style={s.participantCount}>
+              {participants.length} participant{participants.length === 1 ? "" : "s"}
+            </span>
+          )}
+          {participants.length > 0 && (
             <span style={s.participantNames}>{participants.map((p) => p.name).join(", ")}</span>
           )}
           <span style={s.vRule} />
           <span style={s.chip}>#{conversation.source.replace(/-/g, "")}</span>
-          <span style={{ ...s.chip, borderStyle: "dashed" }}>+ tag</span>
-          <span style={s.spacer} />
-          <button style={s.actionBtn} type="button">
-            ✦ Ask this transcript
-          </button>
         </div>
       </div>
+
+      {notice && <div style={s.notice}>{notice}</div>}
 
       {/* 3-pane body */}
       <div style={s.body}>
@@ -217,11 +298,13 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
           <div style={s.summaryHead}>
             <span style={s.eyebrow}>— summary</span>
             <span style={s.summaryActions}>
-              <button style={s.tinyBtn} type="button">
+              <button
+                style={{ ...s.tinyBtn, ...(!conversation.summary ? s.tinyBtnDisabled : {}) }}
+                type="button"
+                disabled={!conversation.summary}
+                onClick={copySummary}
+              >
                 Copy
-              </button>
-              <button style={s.tinyBtn} type="button">
-                ✦ Re-gen
               </button>
             </span>
           </div>
@@ -237,10 +320,10 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
         </aside>
 
         {/* Transcript pane */}
-        <TranscriptPane transcript={transcript} durationSecs={conversation.duration_secs} />
+        <TranscriptPane transcript={transcript} />
 
         {/* Notes pane */}
-        <NotesPane />
+        <NotesPane conversationId={conversation.id} />
       </div>
     </section>
   );
@@ -290,6 +373,9 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: 11,
     color: "var(--lst-ink-55)",
     letterSpacing: "0.06em",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
   },
   spacer: { flex: 1 },
   actionBtn: {
@@ -306,23 +392,6 @@ const s: Record<string, React.CSSProperties> = {
     alignItems: "center",
     gap: 6,
     whiteSpace: "nowrap" as const,
-  },
-  actionBtnActive: {
-    background: "var(--lst-blue)",
-    color: "var(--lst-bg)",
-  },
-  iconActionBtn: {
-    fontFamily: FONT,
-    border: "var(--lst-border)",
-    borderRadius: 999,
-    background: "transparent",
-    color: "var(--lst-blue)",
-    width: 26,
-    height: 26,
-    padding: 0,
-    cursor: "pointer",
-    fontSize: 14,
-    lineHeight: 1,
   },
 
   // title block
@@ -367,6 +436,13 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: 13,
     color: "var(--lst-ink-70)",
   },
+  participantCount: {
+    fontFamily: MONO,
+    fontSize: 11,
+    color: "var(--lst-ink-55)",
+    letterSpacing: "0.06em",
+    textTransform: "uppercase",
+  },
   vRule: {
     width: 1,
     height: 14,
@@ -383,6 +459,16 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: 12,
     fontWeight: 500,
     color: "var(--lst-blue)",
+  },
+  notice: {
+    padding: "8px 32px",
+    borderBottom: "var(--lst-border)",
+    background: "var(--lst-ink-08)",
+    color: "var(--lst-blue)",
+    fontFamily: MONO,
+    fontSize: 11,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
   },
 
   // body
@@ -429,6 +515,10 @@ const s: Record<string, React.CSSProperties> = {
     borderRadius: 999,
     padding: "3px 10px",
     cursor: "pointer",
+  },
+  tinyBtnDisabled: {
+    opacity: 0.45,
+    cursor: "not-allowed",
   },
   summaryBody: {
     fontFamily: FONT,
