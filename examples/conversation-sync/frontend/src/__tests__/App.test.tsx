@@ -350,7 +350,7 @@ describe("App manual sign-in processing", () => {
 
     // App should still render (not crash)
     await waitFor(() => {
-      expect(screen.getByText(/conversation sync/i)).toBeInTheDocument();
+      expect(screen.getByText(/^listen$/i)).toBeInTheDocument();
     });
   });
 
