@@ -28,6 +28,8 @@ import { ConnectionsScreen } from "./components/ConnectionsScreen";
 import { LiveWriteEvents } from "./components/LiveWriteEvents";
 import { ConnectAgentButton } from "./components/ConnectAgentButton";
 import { AppShell, type ShellRoute, type ShellSourceConfig } from "./components/AppShell";
+import { MobileExperience } from "./components/mobile";
+import { useIsMobile } from "./hooks/useIsMobile";
 
 // ── Environment ─────────────────────────────────────────────────────
 
@@ -513,6 +515,7 @@ export function App() {
   const [capabilityRequest, setCapabilityRequest] = useState<ComposedManifestRequest | null>(null);
 
   const sessionStoreRef = useRef(new SessionStore());
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     if (!api) {
@@ -911,6 +914,34 @@ export function App() {
       <span style={s.badgeSolid}>{did ? "Connected" : "Restored"}</span>
     </>
   );
+
+  if (
+    isMobile &&
+    hasUsableInbox &&
+    !showWorkspaceLoading &&
+    !needsFirefliesAccess &&
+    !showOnboarding &&
+    !showWalletSetupState &&
+    !showSourcesSetup &&
+    !showSourcesWalletState
+  ) {
+    return (
+      <MobileExperience
+        api={api}
+        activeRoute={activePage}
+        selectedConversationId={selectedConversationId}
+        refreshKey={refreshKey}
+        hasFireflies={firefliesConnected}
+        hasGoogleMeet={hasGoogleMeet === true}
+        hasFirefliesBackendAccess={hasFirefliesBackendAccess === true}
+        showGoogleMeet={!!GOOGLE_CLIENT_ID}
+        onRouteChange={setActivePage}
+        onSelectConversation={setSelectedConversationId}
+        onAddSource={() => setActivePage("sources")}
+        onRefresh={() => setRefreshKey((k) => k + 1)}
+      />
+    );
+  }
 
   return (
     <AppShell

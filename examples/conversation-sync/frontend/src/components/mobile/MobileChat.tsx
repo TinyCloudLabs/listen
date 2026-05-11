@@ -4,33 +4,38 @@ export interface MobileChatMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
-  citationTimestamp?: number; // seconds
-  citationQuote?: string;
+  citations?: MobileChatCitation[];
+}
+
+export interface MobileChatCitation {
+  id: string;
+  title: string;
+  source: string;
+  date: string;
+  snippet: string;
 }
 
 interface MobileChatProps {
-  scopeLabel: string; // e.g. "Scoped · 1 transcript · 47m" or "All transcripts"
+  scopeLabel: string;
   messages: MobileChatMessage[];
   suggestions?: string[];
+  busy?: boolean;
   onBack?: () => void;
   onSend: (text: string) => void;
   onSelectSuggestion?: (text: string) => void;
-  conversationTitle?: string; // shown in header subtitle when scoped
-}
-
-function formatTimestamp(secs: number): string {
-  const m = Math.floor(secs / 60);
-  const s = Math.floor(secs % 60);
-  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  onOpenConversation?: (id: string) => void;
+  conversationTitle?: string;
 }
 
 export const MobileChat: FC<MobileChatProps> = ({
   scopeLabel,
   messages,
   suggestions = [],
+  busy = false,
   onBack,
   onSend,
   onSelectSuggestion,
+  onOpenConversation,
   conversationTitle,
 }) => {
   const [draft, setDraft] = useState("");
@@ -38,7 +43,7 @@ export const MobileChat: FC<MobileChatProps> = ({
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     const text = draft.trim();
-    if (!text) return;
+    if (!text || busy) return;
     onSend(text);
     setDraft("");
   };
@@ -54,16 +59,12 @@ export const MobileChat: FC<MobileChatProps> = ({
           <span style={{ width: 60 }} />
         )}
         <div style={s.headerCenter}>
-          <div style={s.headerTitle}>
-            {conversationTitle ? "Ask this transcript" : "Chat"}
-          </div>
+          <div style={s.headerTitle}>{conversationTitle ? "Ask this transcript" : "Chat"}</div>
           {conversationTitle && (
             <div style={s.headerSubtitle}>{conversationTitle.toUpperCase()}</div>
           )}
         </div>
-        <button type="button" style={s.iconBtn} aria-label="More">
-          {"\u22EF"}
-        </button>
+        <span style={{ width: 60 }} />
       </header>
 
       <div style={s.scopeRow}>
@@ -71,9 +72,7 @@ export const MobileChat: FC<MobileChatProps> = ({
       </div>
 
       <div style={s.scroll}>
-        {messages.length === 0 && (
-          <div style={s.empty}>Ask anything across your transcripts.</div>
-        )}
+        {messages.length === 0 && <div style={s.empty}>Ask anything across your transcripts.</div>}
         {messages.map((m) =>
           m.role === "user" ? (
             <div key={m.id} style={{ ...s.bubbleWrap, alignSelf: "flex-end" }}>
@@ -83,12 +82,22 @@ export const MobileChat: FC<MobileChatProps> = ({
             <div key={m.id} style={{ ...s.bubbleWrap, alignSelf: "flex-start" }}>
               <div style={{ ...s.bubble, ...s.bubbleAssistant }}>
                 {m.text}
-                {m.citationQuote && (
-                  <div style={s.citation}>
-                    {`\u201C${m.citationQuote}\u201D `}
-                    {typeof m.citationTimestamp === "number" && (
-                      <span style={s.citationTs}>{formatTimestamp(m.citationTimestamp)}</span>
-                    )}
+                {m.citations && (
+                  <div style={s.citationList}>
+                    {m.citations.map((citation) => (
+                      <button
+                        key={citation.id}
+                        type="button"
+                        style={s.citation}
+                        onClick={() => onOpenConversation?.(citation.id)}
+                      >
+                        <span style={s.citationMeta}>
+                          {citation.source} · {citation.date}
+                        </span>
+                        <span style={s.citationTitle}>{citation.title}</span>
+                        <span style={s.citationSnippet}>{citation.snippet}</span>
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>
@@ -106,6 +115,7 @@ export const MobileChat: FC<MobileChatProps> = ({
                   type="button"
                   style={s.suggestItem}
                   onClick={() => onSelectSuggestion?.(text)}
+                  disabled={busy}
                 >
                   <span style={s.suggestGlyph}>{"\u2727"}</span>
                   <span>{text}</span>
@@ -122,14 +132,17 @@ export const MobileChat: FC<MobileChatProps> = ({
             type="text"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder={conversationTitle ? "Ask about this conversation\u2026" : "Ask anything\u2026"}
+            placeholder={
+              conversationTitle ? "Ask about this conversation\u2026" : "Ask anything\u2026"
+            }
             style={s.input}
+            disabled={busy}
           />
           <button
             type="submit"
             style={{ ...s.iconBtn, ...s.iconBtnSolid }}
             aria-label="Send"
-            disabled={!draft.trim()}
+            disabled={!draft.trim() || busy}
           >
             {"\u2192"}
           </button>
@@ -257,20 +270,37 @@ const s: Record<string, CSSProperties> = {
     color: "var(--lst-blue)",
     border: "var(--lst-border)",
   },
-  citation: {
+  citationList: {
     marginTop: 8,
-    paddingTop: 8,
-    borderTop: "var(--lst-hair)",
-    fontSize: 12.5,
-    fontStyle: "italic",
-    color: "var(--lst-ink-70)",
+    display: "grid",
+    gap: 6,
   },
-  citationTs: {
+  citation: {
+    fontFamily: FONT,
+    textAlign: "left",
+    border: "var(--lst-border)",
+    background: "var(--lst-bg)",
+    color: "var(--lst-blue)",
+    padding: 10,
+    borderRadius: 6,
+    cursor: "pointer",
+    display: "grid",
+    gap: 3,
+  },
+  citationMeta: {
     fontFamily: MONO,
-    fontStyle: "normal",
-    fontSize: 11,
+    fontSize: 10,
     color: "var(--lst-ink-55)",
-    marginLeft: 4,
+    letterSpacing: "0.06em",
+  },
+  citationTitle: {
+    fontSize: 13,
+    fontWeight: 500,
+  },
+  citationSnippet: {
+    fontSize: 12,
+    color: "var(--lst-ink-70)",
+    lineHeight: 1.4,
   },
   suggestBlock: {
     marginTop: 4,

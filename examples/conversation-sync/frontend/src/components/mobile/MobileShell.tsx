@@ -1,6 +1,6 @@
 import type { CSSProperties, FC, ReactNode } from "react";
 
-export type MobileTab = "inbox" | "library" | "chat" | "settings";
+export type MobileTab = "inbox" | "chat" | "connections";
 
 interface TabDef {
   key: MobileTab;
@@ -10,9 +10,8 @@ interface TabDef {
 
 const TABS: TabDef[] = [
   { key: "inbox", label: "Inbox", glyph: "\u2709" },
-  { key: "library", label: "Library", glyph: "\u25A4" },
   { key: "chat", label: "Chat", glyph: "\u2727" },
-  { key: "settings", label: "Settings", glyph: "\u2699" },
+  { key: "connections", label: "Sources", glyph: "\u2699" },
 ];
 
 interface MobileShellProps {

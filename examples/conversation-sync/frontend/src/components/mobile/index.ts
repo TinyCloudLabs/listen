@@ -5,4 +5,5 @@ export type { MobileInboxItem } from "./MobileInbox";
 export { MobileDetail } from "./MobileDetail";
 export type { MobileDetailData, MobileDetailSentence } from "./MobileDetail";
 export { MobileChat } from "./MobileChat";
-export type { MobileChatMessage } from "./MobileChat";
+export type { MobileChatCitation, MobileChatMessage } from "./MobileChat";
+export { MobileExperience } from "./MobileExperience";

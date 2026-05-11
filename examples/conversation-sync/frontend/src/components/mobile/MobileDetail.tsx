@@ -19,8 +19,6 @@ interface MobileDetailProps {
   conversation: MobileDetailData;
   transcript: MobileDetailSentence[];
   onBack: () => void;
-  onAsk?: () => void;
-  onPlay?: () => void;
 }
 
 type DetailTab = "summary" | "transcript";
@@ -55,13 +53,7 @@ function renderSummary(text: string): string {
     .replace(/\n/g, "<br />");
 }
 
-export const MobileDetail: FC<MobileDetailProps> = ({
-  conversation,
-  transcript,
-  onBack,
-  onAsk,
-  onPlay,
-}) => {
+export const MobileDetail: FC<MobileDetailProps> = ({ conversation, transcript, onBack }) => {
   const [tab, setTab] = useState<DetailTab>("summary");
 
   return (
@@ -71,12 +63,6 @@ export const MobileDetail: FC<MobileDetailProps> = ({
           {"\u2039 Inbox"}
         </button>
         <span style={s.spacer} />
-        <button type="button" style={s.iconBtn} aria-label="Star">
-          {"\u2606"}
-        </button>
-        <button type="button" style={s.iconBtn} aria-label="More">
-          {"\u22EF"}
-        </button>
       </header>
 
       <div style={s.scroll}>
@@ -85,14 +71,6 @@ export const MobileDetail: FC<MobileDetailProps> = ({
             {`${srcLabel(conversation.source)} \u2014 ${formatDateMono(conversation.startedAt)} \u2014 ${formatTimestamp(conversation.durationSecs)}`}
           </span>
           <h1 style={s.title}>{conversation.title}</h1>
-          <div style={s.actionRow}>
-            <button type="button" style={{ ...s.btn, ...s.btnSolid, flex: 1 }} onClick={onAsk}>
-              {"\u2727  Ask this transcript"}
-            </button>
-            <button type="button" style={s.btn} onClick={onPlay}>
-              {"\u25B6  Play"}
-            </button>
-          </div>
         </div>
 
         <div style={s.tabs}>
@@ -216,33 +194,10 @@ const s: Record<string, CSSProperties> = {
   title: {
     fontSize: 28,
     fontWeight: 400,
-    letterSpacing: "-0.02em",
+    letterSpacing: 0,
     lineHeight: 1.1,
-    margin: "6px 0 14px",
+    margin: "6px 0 0",
     color: "var(--lst-blue)",
-  },
-  actionRow: {
-    display: "flex",
-    gap: 8,
-  },
-  btn: {
-    fontFamily: FONT,
-    fontSize: 13,
-    fontWeight: 500,
-    color: "var(--lst-blue)",
-    background: "transparent",
-    border: "var(--lst-border)",
-    borderRadius: 999,
-    padding: "8px 14px",
-    cursor: "pointer",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-  },
-  btnSolid: {
-    background: "var(--lst-blue)",
-    color: "var(--lst-bg)",
   },
   tabs: {
     display: "flex",

@@ -228,7 +228,7 @@ const s: Record<string, CSSProperties> = {
   title: {
     fontSize: 36,
     fontWeight: 400,
-    letterSpacing: "-0.025em",
+    letterSpacing: 0,
     margin: "0 0 10px",
     color: "var(--lst-blue)",
   },
