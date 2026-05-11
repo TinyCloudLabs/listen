@@ -25,12 +25,7 @@ import { ConversationList } from "./components/ConversationList";
 import { ConversationDetail } from "./components/ConversationDetail";
 import { LiveWriteEvents } from "./components/LiveWriteEvents";
 import { ConnectAgentButton } from "./components/ConnectAgentButton";
-import {
-  AppShell,
-  ComingSoon,
-  type ShellRoute,
-  type ShellSourceConfig,
-} from "./components/AppShell";
+import { AppShell, type ShellRoute, type ShellSourceConfig } from "./components/AppShell";
 
 // ── Environment ─────────────────────────────────────────────────────
 
@@ -925,21 +920,6 @@ export function App() {
     </>
   );
 
-  const isStubRoute =
-    activePage === "library" ||
-    activePage === "chat" ||
-    activePage === "starred" ||
-    activePage === "connections";
-
-  const stubLabel: Record<typeof activePage, string> = {
-    inbox: "Inbox",
-    library: "Library",
-    chat: "Chat",
-    starred: "Starred",
-    connections: "Connections",
-    sources: "Sources",
-  };
-
   return (
     <AppShell
       activeRoute={activePage}
@@ -951,11 +931,9 @@ export function App() {
       sources={sourceItems}
       folders={folderItems}
     >
-      {isStubRoute && <ComingSoon label={stubLabel[activePage]} />}
+      {showWorkspaceLoading && <WorkspaceStatusPanel mode="checking" />}
 
-      {!isStubRoute && showWorkspaceLoading && <WorkspaceStatusPanel mode="checking" />}
-
-      {!isStubRoute && needsFirefliesAccess && (
+      {needsFirefliesAccess && (
         <WorkspaceStatusPanel
           mode="fireflies-access"
           loading={workspaceActionLoading}
@@ -964,7 +942,7 @@ export function App() {
         />
       )}
 
-      {!isStubRoute && (showWalletSetupState || showSourcesWalletState) && (
+      {(showWalletSetupState || showSourcesWalletState) && (
         <WorkspaceStatusPanel
           mode="wallet"
           loading={authLoading}
@@ -973,7 +951,7 @@ export function App() {
         />
       )}
 
-      {!isStubRoute && showOnboarding && tcw && (
+      {showOnboarding && tcw && (
         <SourcesSetup
           api={api}
           tcw={tcw}
@@ -1003,7 +981,7 @@ export function App() {
         />
       )}
 
-      {!isStubRoute && showSourcesSetup && tcw && (
+      {showSourcesSetup && tcw && (
         <SourcesSetup
           api={api}
           tcw={tcw}
@@ -1033,7 +1011,7 @@ export function App() {
         />
       )}
 
-      {!isStubRoute && pendingBanner && (
+      {pendingBanner && (
         <div style={s.pendingBanner}>
           <span>{pendingBanner}</span>
           <button style={s.bannerDismiss} onClick={() => setPendingBanner(null)}>
@@ -1042,7 +1020,7 @@ export function App() {
         </div>
       )}
 
-      {!isStubRoute && gmLapsedBanner && (
+      {gmLapsedBanner && (
         <div style={s.lapsedBanner}>
           <span>Real-time sync was inactive. Some meetings may not have been captured.</span>
           <div style={s.lapsedActions}>

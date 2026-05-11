@@ -2,7 +2,7 @@ import type { CSSProperties, FC, ReactNode } from "react";
 
 // ── Types ───────────────────────────────────────────────────────────
 
-export type ShellRoute = "inbox" | "library" | "chat" | "starred" | "connections" | "sources";
+export type ShellRoute = "inbox" | "sources";
 
 export type ShellSourceKey = "granola" | "fireflies" | "otter" | "gmeet" | "audio";
 
@@ -32,7 +32,7 @@ interface AppShellProps {
   user: ShellUser;
   sources: ShellSourceConfig[];
   folders: ShellFolderConfig[];
-  navCounts?: Partial<Record<Exclude<ShellRoute, "connections" | "sources">, number | null>>;
+  navCounts?: Partial<Record<Exclude<ShellRoute, "sources">, number | null>>;
   children: ReactNode;
 }
 
@@ -110,31 +110,12 @@ function ShellIcon({ name, size = 14 }: { name: IconName; size?: number }) {
 // ── Nav config ──────────────────────────────────────────────────────
 
 interface NavItem {
-  key: Exclude<ShellRoute, "connections" | "sources">;
+  key: Exclude<ShellRoute, "sources">;
   label: string;
   icon: IconName;
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { key: "inbox", label: "Inbox", icon: "inbox" },
-  { key: "library", label: "Library", icon: "folder" },
-  { key: "chat", label: "Chat", icon: "sparkle" },
-  { key: "starred", label: "Starred", icon: "star" },
-];
-
-// ── ComingSoon stub ─────────────────────────────────────────────────
-
-export function ComingSoon({ label }: { label: string }) {
-  return (
-    <section style={shell.comingSoon}>
-      <span style={shell.eyebrow}>— {label.toLowerCase()}</span>
-      <h3 style={shell.comingTitle}>Coming soon.</h3>
-      <p style={shell.comingBody}>
-        {label} is part of the Listen redesign and will land in an upcoming release.
-      </p>
-    </section>
-  );
-}
+const NAV_ITEMS: NavItem[] = [{ key: "inbox", label: "Inbox", icon: "inbox" }];
 
 // ── AppShell ────────────────────────────────────────────────────────
 
@@ -212,7 +193,7 @@ export const AppShell: FC<AppShellProps> = ({
             <button
               key={folder.name}
               type="button"
-              onClick={() => onRouteChange("library")}
+              onClick={() => onRouteChange("inbox")}
               style={shell.sideRow}
             >
               <ShellIcon name="folder" size={13} />
@@ -231,7 +212,7 @@ export const AppShell: FC<AppShellProps> = ({
             <button
               key={source.key}
               type="button"
-              onClick={() => onRouteChange("connections")}
+              onClick={() => onRouteChange("sources")}
               style={shell.sideRow}
             >
               <span style={shell.sourceDot} />
@@ -513,28 +494,5 @@ const shell: Record<string, CSSProperties> = {
     flexWrap: "wrap",
     justifyContent: "flex-end",
     gap: 8,
-  },
-  comingSoon: {
-    padding: "42px 48px",
-    border: "var(--lst-border)",
-    background: "var(--lst-ink-08)",
-    animation: "fadeSlideIn 0.3s ease-out",
-  },
-  comingTitle: {
-    fontFamily: FONT,
-    fontSize: 36,
-    fontWeight: 400,
-    lineHeight: 1.05,
-    letterSpacing: 0,
-    color: "var(--lst-blue)",
-    margin: "0 0 12px",
-  },
-  comingBody: {
-    fontFamily: FONT,
-    maxWidth: 540,
-    fontSize: 15,
-    lineHeight: 1.55,
-    color: "var(--lst-blue)",
-    margin: 0,
   },
 };
