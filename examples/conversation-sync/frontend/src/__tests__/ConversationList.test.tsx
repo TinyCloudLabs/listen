@@ -130,20 +130,18 @@ describe("ConversationList", () => {
     });
   });
 
-  it("shows participant count for each conversation", async () => {
+  it("renders people avatars sized to participant count", async () => {
     api = mockApi({
       get: vi.fn().mockResolvedValue({
-        conversations: CONVERSATIONS,
-        total: 3,
+        conversations: [CONVERSATIONS[0]], // participant_count: 4 (3 avatars + "+1")
+        total: 1,
       }),
     });
 
     render(<ConversationList api={api} onSelectConversation={onSelectConversation} />);
 
     await waitFor(() => {
-      expect(screen.getByText("4 participants")).toBeInTheDocument();
-      expect(screen.getByText("2 participants")).toBeInTheDocument();
-      expect(screen.getByText("6 participants")).toBeInTheDocument();
+      expect(screen.getByText("+1")).toBeInTheDocument();
     });
   });
 
@@ -346,9 +344,9 @@ describe("ConversationList", () => {
     render(<ConversationList api={api} onSelectConversation={onSelectConversation} />);
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /^all$/i })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /fireflies/i })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /google meet/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /all sources/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^fireflies$/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^meet$/i })).toBeInTheDocument();
     });
   });
 
@@ -365,7 +363,7 @@ describe("ConversationList", () => {
       expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /fireflies/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^fireflies$/i }));
 
     await waitFor(() => {
       expect(getMock).toHaveBeenCalledWith("/api/conversations?limit=20&offset=0&source=fireflies");
@@ -384,8 +382,44 @@ describe("ConversationList", () => {
     render(<ConversationList api={api} onSelectConversation={onSelectConversation} />);
 
     await waitFor(() => {
-      expect(screen.getByText("FF")).toBeInTheDocument();
-      expect(screen.getByText("GM")).toBeInTheDocument();
+      expect(screen.getByText("FIREFLIES")).toBeInTheDocument();
+      expect(screen.getByText("MEET")).toBeInTheDocument();
     });
+  });
+
+  it("shows bulk action bar when a row is selected", async () => {
+    api = mockApi({
+      get: vi.fn().mockResolvedValue({ conversations: CONVERSATIONS, total: 3 }),
+    });
+    render(<ConversationList api={api} onSelectConversation={onSelectConversation} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText(/selected/i)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText(/select sprint planning/i));
+
+    await waitFor(() => {
+      expect(screen.getByText(/1 selected/i)).toBeInTheDocument();
+    });
+    expect(onSelectConversation).not.toHaveBeenCalled();
+  });
+
+  it("opens a right-click context menu on row", async () => {
+    api = mockApi({
+      get: vi.fn().mockResolvedValue({ conversations: CONVERSATIONS, total: 3 }),
+    });
+    render(<ConversationList api={api} onSelectConversation={onSelectConversation} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
+    });
+
+    fireEvent.contextMenu(screen.getByText("Sprint Planning"));
+
+    expect(screen.getByText(/copy transcript text/i)).toBeInTheDocument();
+    expect(screen.getByText(/move to folder/i)).toBeInTheDocument();
   });
 });
