@@ -63,6 +63,8 @@ function sourceLabel(source: string): string {
       return "GOOGLE MEET";
     case "fireflies":
       return "FIREFLIES";
+    case "manual":
+      return "MANUAL";
     case "granola":
       return "GRANOLA";
     case "otter":
@@ -85,6 +87,8 @@ function sourceLinkLabel(source: string): string {
       return "View on Fireflies";
     case "google-meet":
       return "View transcript";
+    case "manual":
+      return "Open source";
     default:
       return "Open source";
   }

@@ -504,6 +504,9 @@ export function App() {
   const [workspaceActionLoading, setWorkspaceActionLoading] = useState(false);
   const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null);
   const [activePage, setActivePage] = useState<ShellRoute>("inbox");
+  const [sourcesInitialStep, setSourcesInitialStep] = useState<"cards" | "transcript-import">(
+    "cards",
+  );
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [pendingBanner, setPendingBanner] = useState<string | null>(null);
@@ -516,6 +519,21 @@ export function App() {
 
   const sessionStoreRef = useRef(new SessionStore());
   const isMobile = useIsMobile();
+
+  const renewBackendDelegation = useCallback(async () => {
+    if (!tcw || !backendDid || !capabilityRequest) {
+      throw new Error("Reconnect your wallet to finish source setup.");
+    }
+
+    const token = sessionStoreRef.current.getToken();
+    if (!token) {
+      throw new Error("Session expired. Sign in again to finish source setup.");
+    }
+
+    const { serialized } = await createManifestDelegation(tcw, backendDid, capabilityRequest);
+    await sendDelegation(BACKEND_URL, serialized, token);
+    setHasBackendDelegation(true);
+  }, [backendDid, capabilityRequest, tcw]);
 
   useEffect(() => {
     if (!api) {
@@ -530,10 +548,23 @@ export function App() {
     }
 
     setHasBackendDelegation(null);
+    let cancelled = false;
     checkDelegationStatus(BACKEND_URL, token)
-      .then((status) => setHasBackendDelegation(status.status === "active"))
-      .catch(() => setHasBackendDelegation(false));
-  }, [api]);
+      .then(async (status) => {
+        if (cancelled) return;
+        if (status.status === "active") {
+          setHasBackendDelegation(true);
+          return;
+        }
+        await renewBackendDelegation();
+      })
+      .catch(() => {
+        if (!cancelled) setHasBackendDelegation(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, renewBackendDelegation]);
 
   useEffect(() => {
     if (hasBackendDelegation === null) {
@@ -757,19 +788,8 @@ export function App() {
   }, [tcw]);
 
   const ensureBackendAccess = useCallback(async () => {
-    if (!tcw || !backendDid || !capabilityRequest) {
-      throw new Error("Reconnect your wallet to finish source setup.");
-    }
-
-    const token = sessionStoreRef.current.getToken();
-    if (!token) {
-      throw new Error("Session expired. Sign in again to finish source setup.");
-    }
-
-    const { serialized } = await createManifestDelegation(tcw, backendDid, capabilityRequest);
-    await sendDelegation(BACKEND_URL, serialized, token);
-    setHasBackendDelegation(true);
-  }, [backendDid, capabilityRequest, tcw]);
+    await renewBackendDelegation();
+  }, [renewBackendDelegation]);
 
   const ensureFirefliesBackendAccess = useCallback(async () => {
     if (!tcw || !backendDid || !api) {
@@ -908,8 +928,22 @@ export function App() {
     ? `CONNECTED · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`
     : `RESTORED · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`;
 
+  const handleTranscriptImportComplete = (conversationId: string) => {
+    setHasExistingConversations(true);
+    setRefreshKey((k) => k + 1);
+    setSelectedConversationId(conversationId);
+    setActivePage("inbox");
+  };
+
+  const openSourcesSetup = (initialStep: "cards" | "transcript-import" = "cards") => {
+    setSourcesInitialStep(initialStep);
+    setSelectedConversationId(null);
+    setActivePage("sources");
+  };
+
   const handleRouteChange = (route: ShellRoute) => {
     setSelectedConversationId(null);
+    if (route === "sources") setSourcesInitialStep("cards");
     setActivePage(route);
   };
 
@@ -1005,7 +1039,7 @@ export function App() {
         showGoogleMeet={!!GOOGLE_CLIENT_ID}
         onRouteChange={setActivePage}
         onSelectConversation={setSelectedConversationId}
-        onAddSource={() => setActivePage("sources")}
+        onAddSource={() => openSourcesSetup()}
         onRefresh={() => setRefreshKey((k) => k + 1)}
       />
     );
@@ -1052,6 +1086,7 @@ export function App() {
           hasBackendDelegation={hasBackendDelegation}
           hasFirefliesBackendAccess={hasFirefliesBackendAccess}
           hasGoogleMeet={hasGoogleMeet}
+          initialStep="cards"
           onEnsureBackendAccess={ensureBackendAccess}
           onEnsureFirefliesBackendAccess={ensureFirefliesBackendAccess}
           onFirefliesComplete={() => {
@@ -1061,6 +1096,7 @@ export function App() {
             setRefreshKey((k) => k + 1);
             setActivePage("inbox");
           }}
+          onTranscriptImportComplete={handleTranscriptImportComplete}
           onDone={() => setActivePage("inbox")}
           onGoogleMeetComplete={() => {
             setHasGoogleMeet(true);
@@ -1082,6 +1118,7 @@ export function App() {
           hasBackendDelegation={hasBackendDelegation}
           hasFirefliesBackendAccess={hasFirefliesBackendAccess}
           hasGoogleMeet={hasGoogleMeet}
+          initialStep={sourcesInitialStep}
           onEnsureBackendAccess={ensureBackendAccess}
           onEnsureFirefliesBackendAccess={ensureFirefliesBackendAccess}
           onFirefliesComplete={() => {
@@ -1091,6 +1128,7 @@ export function App() {
             setRefreshKey((k) => k + 1);
             setActivePage("inbox");
           }}
+          onTranscriptImportComplete={handleTranscriptImportComplete}
           onDone={() => setActivePage("inbox")}
           onGoogleMeetComplete={() => {
             setHasGoogleMeet(true);
@@ -1189,7 +1227,8 @@ export function App() {
           hasGoogleMeet={hasGoogleMeet === true}
           hasFirefliesBackendAccess={hasFirefliesBackendAccess === true}
           showGoogleMeet={!!GOOGLE_CLIENT_ID}
-          onAddSource={() => setActivePage("sources")}
+          onAddSource={() => openSourcesSetup()}
+          onAddTranscript={() => openSourcesSetup("transcript-import")}
           onRefresh={() => setRefreshKey((k) => k + 1)}
         />
       )}

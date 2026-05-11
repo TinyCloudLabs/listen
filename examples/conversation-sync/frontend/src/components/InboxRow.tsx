@@ -25,6 +25,7 @@ const SOURCE_LABEL: Record<string, string> = {
   granola: "GRANOLA",
   otter: "OTTER",
   audio: "AUDIO",
+  manual: "MANUAL",
 };
 
 function formatTime(iso: string): string {

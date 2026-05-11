@@ -5,6 +5,8 @@ import type { TinyCloudWeb } from "@tinycloud/web-sdk";
 type SetupMode = "onboarding" | "sources";
 type SetupStep =
   | "cards"
+  | "transcript-import"
+  | "transcript-success"
   | "fireflies-key"
   | "fireflies-test"
   | "fireflies-webhook"
@@ -22,9 +24,11 @@ interface SourcesSetupProps {
   hasBackendDelegation?: boolean | null;
   hasFirefliesBackendAccess?: boolean | null;
   hasGoogleMeet?: boolean | null;
+  initialStep?: Extract<SetupStep, "cards" | "transcript-import">;
   onEnsureBackendAccess: () => Promise<void>;
   onEnsureFirefliesBackendAccess: () => Promise<void>;
   onFirefliesComplete: () => void;
+  onTranscriptImportComplete?: (conversationId: string) => void;
   onGoogleMeetComplete?: () => void;
   onDone?: () => void;
   backendUrl?: string;
@@ -36,6 +40,16 @@ interface UserInfo {
   email: string;
 }
 
+interface ImportTranscriptResponse {
+  conversationId: string;
+  title: string;
+}
+
+function toDatetimeLocal(date: Date): string {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
 export const SourcesSetup: FC<SourcesSetupProps> = ({
   api,
   tcw,
@@ -44,15 +58,17 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   hasBackendDelegation = null,
   hasFirefliesBackendAccess = null,
   hasGoogleMeet = null,
+  initialStep = "cards",
   onEnsureBackendAccess,
   onEnsureFirefliesBackendAccess,
   onFirefliesComplete,
+  onTranscriptImportComplete,
   onGoogleMeetComplete,
   onDone,
   backendUrl = "",
   showGoogleMeet,
 }) => {
-  const [step, setStep] = useState<SetupStep>("cards");
+  const [step, setStep] = useState<SetupStep>(initialStep);
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [testError, setTestError] = useState<string | null>(null);
@@ -64,6 +80,15 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   const [urlCopied, setUrlCopied] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [googleError, setGoogleError] = useState<string | null>(null);
+  const [importTitle, setImportTitle] = useState("");
+  const [importStartedAt, setImportStartedAt] = useState(() => toDatetimeLocal(new Date()));
+  const [importParticipants, setImportParticipants] = useState("");
+  const [importSourceUrl, setImportSourceUrl] = useState("");
+  const [importSummary, setImportSummary] = useState("");
+  const [importTranscript, setImportTranscript] = useState("");
+  const [importSaving, setImportSaving] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importedConversationId, setImportedConversationId] = useState<string | null>(null);
 
   const webhookUrl = `${backendUrl}/api/webhooks/fireflies`;
   const firefliesConnected =
@@ -72,7 +97,10 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
     hasFirefliesKey === true &&
     (hasBackendDelegation !== true || hasFirefliesBackendAccess !== true);
   const connectedCount = [firefliesConnected, hasGoogleMeet === true].filter(Boolean).length;
-  const totalSources = showGoogleMeet ? 5 : 4;
+
+  useEffect(() => {
+    setStep(initialStep);
+  }, [initialStep]);
 
   useEffect(() => {
     if (step !== "google-connect") return;
@@ -145,7 +173,175 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
     }
   };
 
+  const handleTranscriptFile = async (file: File | null) => {
+    if (!file) return;
+    const text = await file.text();
+    setImportTranscript(text);
+    setImportError(null);
+    if (importTitle.trim() === "") {
+      setImportTitle(file.name.replace(/\.[^.]+$/, ""));
+    }
+  };
+
+  const submitTranscriptImport = async () => {
+    setImportSaving(true);
+    setImportError(null);
+    try {
+      if (hasBackendDelegation !== true) {
+        await onEnsureBackendAccess();
+      }
+
+      const result = await api.post<ImportTranscriptResponse>("/api/conversations/import", {
+        title: importTitle.trim(),
+        transcriptText: importTranscript.trim(),
+        startedAt: importStartedAt ? new Date(importStartedAt).toISOString() : undefined,
+        participants: importParticipants,
+        sourceUrl: importSourceUrl.trim(),
+        summary: importSummary.trim(),
+      });
+      setImportedConversationId(result.conversationId);
+      setStep("transcript-success");
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setImportSaving(false);
+    }
+  };
+
   const detail = (() => {
+    if (step === "transcript-import") {
+      return (
+        <div style={s.detailPanel}>
+          <span style={s.fieldLabel}>Transcript import</span>
+          <p style={s.detailText}>
+            Paste a transcript or upload a text file, then set the fields Listen should use in the
+            inbox.
+          </p>
+          <div style={s.fieldGrid}>
+            <label style={s.fieldStack}>
+              <span style={s.fieldLabel}>Title</span>
+              <input
+                type="text"
+                placeholder="Customer call, standup, interview..."
+                value={importTitle}
+                onChange={(event) => setImportTitle(event.target.value)}
+                style={s.input}
+              />
+            </label>
+            <label style={s.fieldStack}>
+              <span style={s.fieldLabel}>Recorded at</span>
+              <input
+                type="datetime-local"
+                value={importStartedAt}
+                onChange={(event) => setImportStartedAt(event.target.value)}
+                style={s.input}
+              />
+            </label>
+          </div>
+          <div style={s.fieldGrid}>
+            <label style={s.fieldStack}>
+              <span style={s.fieldLabel}>Speakers</span>
+              <input
+                type="text"
+                placeholder="Sam, Alex, Priya"
+                value={importParticipants}
+                onChange={(event) => setImportParticipants(event.target.value)}
+                style={s.input}
+              />
+            </label>
+            <label style={s.fieldStack}>
+              <span style={s.fieldLabel}>Source URL</span>
+              <input
+                type="url"
+                placeholder="Optional"
+                value={importSourceUrl}
+                onChange={(event) => setImportSourceUrl(event.target.value)}
+                style={s.input}
+              />
+            </label>
+          </div>
+          <label style={s.fieldStack}>
+            <span style={s.fieldLabel}>Summary</span>
+            <textarea
+              placeholder="Optional notes or summary"
+              value={importSummary}
+              onChange={(event) => setImportSummary(event.target.value)}
+              style={{ ...s.textarea, minHeight: 72 }}
+            />
+          </label>
+          <label style={s.fieldStack}>
+            <span style={s.fieldLabel}>Transcript file</span>
+            <input
+              type="file"
+              accept=".txt,.md,.srt,.vtt,text/plain,text/markdown"
+              onChange={(event) => {
+                void handleTranscriptFile(event.currentTarget.files?.[0] ?? null);
+                event.currentTarget.value = "";
+              }}
+              style={s.fileInput}
+            />
+          </label>
+          <label style={s.fieldStack}>
+            <span style={s.fieldLabel}>Transcript</span>
+            <textarea
+              placeholder={
+                "Speaker: Paste transcript text here\n[00:32] Speaker: Timestamped lines work too"
+              }
+              value={importTranscript}
+              onChange={(event) => setImportTranscript(event.target.value)}
+              style={s.textarea}
+            />
+          </label>
+          {importError && <div style={s.errorCard}>{importError}</div>}
+          <div style={s.btnRow}>
+            <button style={s.btnGhost} onClick={() => setStep("cards")}>
+              Back
+            </button>
+            <button
+              style={{
+                ...s.btnPrimary,
+                ...(!importTitle.trim() || !importTranscript.trim() || importSaving
+                  ? s.btnDisabled
+                  : {}),
+              }}
+              disabled={!importTitle.trim() || !importTranscript.trim() || importSaving}
+              onClick={submitTranscriptImport}
+            >
+              {importSaving ? "Importing..." : "Import transcript"}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    if (step === "transcript-success") {
+      return (
+        <div style={s.detailPanel}>
+          <div style={s.successCard}>
+            <span style={s.checkmark}>✓</span>
+            <div>
+              <p style={s.successTitle}>Transcript imported</p>
+              <p style={s.successSub}>It is now available in the Listen inbox.</p>
+            </div>
+          </div>
+          <div style={s.btnRow}>
+            <button style={s.btnGhost} onClick={() => setStep("cards")}>
+              Add another
+            </button>
+            <button
+              style={s.btnPrimary}
+              onClick={() => {
+                if (importedConversationId) onTranscriptImportComplete?.(importedConversationId);
+                else onDone?.();
+              }}
+            >
+              Continue to inbox
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     if (step === "fireflies-key") {
       return (
         <div style={s.detailPanel}>
@@ -339,20 +535,22 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
         <div style={s.leftContent}>
           <span style={s.eyebrow}>- {mode === "onboarding" ? "welcome to listen" : "sources"}</span>
           <h3 style={s.title}>
-            {mode === "onboarding" ? "Connect what you already have." : "Add another source."}
+            {mode === "onboarding"
+              ? "Connect what you already have."
+              : "Add a source or transcript."}
           </h3>
           <p style={s.copy}>
-            Listen pulls transcripts in from the tools you already use. We store source credentials
-            in TinyCloud Secrets and only delegate the backend after a provider is ready.
+            Listen can sync from providers or import a transcript directly. Provider credentials
+            stay in TinyCloud Secrets; transcript imports write straight into your inbox.
           </p>
 
           <div style={s.divider} />
 
           <span style={s.fieldLabel}>What happens next</span>
           <ol style={s.steps}>
-            <li>Check backend access and source credentials separately</li>
-            <li>Store provider tokens in TinyCloud Secrets</li>
-            <li>Delegate sync access only after the source is connected</li>
+            <li>Choose a provider, paste text, or upload a transcript file</li>
+            <li>Set title, speakers, date, source link, and summary</li>
+            <li>Write the transcript into the same TinyCloud inbox</li>
           </ol>
 
           <div style={s.footerSteps}>
@@ -371,13 +569,22 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
 
       <div style={s.rightPane}>
         <div style={s.sourcesHeader}>
-          <span style={s.fieldLabel}>- pick at least one</span>
+          <span style={s.fieldLabel}>- add source or transcript</span>
           <span style={s.fieldLabel}>
-            {connectedCount} of {totalSources} connected
+            {connectedCount} provider{connectedCount === 1 ? "" : "s"} connected
           </span>
         </div>
 
         <div style={s.sourceList}>
+          <SourceCard
+            title="Transcript import"
+            meta="file - paste"
+            description="Paste text or upload .txt, .md, .srt, or .vtt."
+            detail="manual import"
+            actionLabel="Import ->"
+            onAction={() => setStep("transcript-import")}
+          />
+
           <SourceCard
             title="Fireflies"
             meta="meeting bot - webhook"
@@ -422,31 +629,6 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
               onAction={() => setStep("google-connect")}
             />
           )}
-
-          <SourceCard
-            title="Granola"
-            meta="desktop - realtime"
-            description="Push every meeting Granola records."
-            detail="coming soon"
-            actionLabel="Soon"
-            disabled
-          />
-          <SourceCard
-            title="Otter.ai"
-            meta="api - backfill"
-            description="Every Otter recording, summarized."
-            detail="coming soon"
-            actionLabel="Soon"
-            disabled
-          />
-          <SourceCard
-            title="Audio import"
-            meta="whisper - diarized"
-            description="Drag .m4a/.mp3/.wav into the inbox."
-            detail="no setup"
-            actionLabel="Drop a file ->"
-            disabled
-          />
         </div>
 
         {detail}
@@ -456,9 +638,6 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
             Back
           </button>
           <span style={s.footerRule} />
-          <button style={s.btnGhost} disabled>
-            Explore with sample data
-          </button>
           <button
             style={{
               ...s.btnPrimary,
@@ -732,6 +911,40 @@ const s: Record<string, React.CSSProperties> = {
     color: "var(--lst-blue)",
     fontSize: 14,
     padding: "10px 12px",
+  },
+  fieldGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: 10,
+  },
+  fieldStack: {
+    display: "grid",
+    gap: 6,
+  },
+  textarea: {
+    fontFamily: FONT,
+    width: "100%",
+    minWidth: 0,
+    minHeight: 150,
+    boxSizing: "border-box" as const,
+    border: "var(--lst-border)",
+    background: "var(--lst-bg)",
+    color: "var(--lst-blue)",
+    fontSize: 13,
+    lineHeight: 1.45,
+    padding: "10px 12px",
+    resize: "vertical" as const,
+  },
+  fileInput: {
+    fontFamily: FONT,
+    width: "100%",
+    minWidth: 0,
+    boxSizing: "border-box" as const,
+    border: "var(--lst-border)",
+    background: "var(--lst-bg)",
+    color: "var(--lst-blue)",
+    fontSize: 12,
+    padding: "9px 10px",
   },
   urlRow: {
     display: "flex",

@@ -405,6 +405,79 @@ describe("Conversations Routes — GET /api/conversations/:id", () => {
   });
 });
 
+// ── Tests — POST /api/conversations/import ─────────────────────────
+
+describe("Conversations Routes — POST /api/conversations/import", () => {
+  let mockKV: ReturnType<typeof createMockKV>;
+  let mockSQL: ReturnType<typeof createMockSQL>;
+  let server: Server;
+  let port: number;
+
+  afterEach(async () => {
+    await closeServer(server);
+  });
+
+  it("imports a pasted transcript into SQL and KV", async () => {
+    mockKV = createMockKV();
+    mockSQL = createMockSQL();
+    const app = createApp(mockKV, mockSQL);
+    ({ server, port } = await startServer(app));
+
+    const res = await fetch(`http://localhost:${port}/api/conversations/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Manual customer call",
+        transcriptText: "[00:00] Sam: Hello\n[00:05] Alex: Hi there",
+        startedAt: "2026-05-11T15:00:00.000Z",
+        participants: "Sam, Alex",
+        summary: "Quick customer call.",
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(typeof body.conversationId).toBe("string");
+
+    const conversationInsert = mockSQL._calls.find(
+      (call) => call.method === "execute" && call.sql.includes("INSERT INTO conversation"),
+    );
+    expect(conversationInsert).toBeDefined();
+    expect(conversationInsert!.params).toContain("Manual customer call");
+    expect(conversationInsert!.params).toContain("manual");
+    expect(conversationInsert!.params).toContain("Quick customer call.");
+
+    const participantInserts = mockSQL._calls.filter(
+      (call) => call.method === "execute" && call.sql.includes("INSERT INTO participant"),
+    );
+    expect(participantInserts).toHaveLength(2);
+
+    const transcriptKey = `transcript/${body.conversationId}`;
+    expect(mockKV._data.has(transcriptKey)).toBe(true);
+    const transcript = JSON.parse(mockKV._data.get(transcriptKey)!);
+    expect(transcript).toHaveLength(2);
+    expect(transcript[0].speaker_name).toBe("Sam");
+    expect(transcript[1].text).toBe("Hi there");
+  });
+
+  it("returns 400 when title or transcript text is missing", async () => {
+    mockKV = createMockKV();
+    mockSQL = createMockSQL();
+    const app = createApp(mockKV, mockSQL);
+    ({ server, port } = await startServer(app));
+
+    const res = await fetch(`http://localhost:${port}/api/conversations/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "No transcript" }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("import_failed");
+  });
+});
+
 // ── Auth enforcement ────────────────────────────────────────────────
 
 describe("Conversations Routes — Auth enforcement", () => {
