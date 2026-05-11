@@ -25,6 +25,12 @@ import { ConversationList } from "./components/ConversationList";
 import { ConversationDetail } from "./components/ConversationDetail";
 import { LiveWriteEvents } from "./components/LiveWriteEvents";
 import { ConnectAgentButton } from "./components/ConnectAgentButton";
+import {
+  AppShell,
+  ComingSoon,
+  type ShellRoute,
+  type ShellSourceConfig,
+} from "./components/AppShell";
 
 // ── Environment ─────────────────────────────────────────────────────
 
@@ -508,7 +514,7 @@ export function App() {
   const [hasExistingConversations, setHasExistingConversations] = useState<boolean | null>(null);
   const [workspaceActionLoading, setWorkspaceActionLoading] = useState(false);
   const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null);
-  const [activePage, setActivePage] = useState<"inbox" | "sources">("inbox");
+  const [activePage, setActivePage] = useState<ShellRoute>("inbox");
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [pendingBanner, setPendingBanner] = useState<string | null>(null);
@@ -883,91 +889,241 @@ export function App() {
                 ? "Everything you've said."
                 : "Connect what you already have.";
 
+  const sourceItems: ShellSourceConfig[] = [
+    { key: "granola", name: "Granola", count: null },
+    { key: "fireflies", name: "Fireflies", count: null },
+    { key: "otter", name: "Otter", count: null },
+    { key: "gmeet", name: "Google Meet", count: null },
+    { key: "audio", name: "Audio imports", count: null },
+  ];
+
+  const folderItems = [
+    { name: "Sales calls", count: 0 },
+    { name: "1:1s", count: 0 },
+    { name: "Personal", count: 0 },
+    { name: "Hiring", count: 0 },
+  ];
+
+  const userInitials = address ? `${address.slice(2, 3)}${address.slice(-1)}`.toUpperCase() : "??";
+  const userName = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "Signed in";
+  const userPlan = did ? "CONNECTED · 5 sources" : "RESTORED · 5 sources";
+
+  const handleRouteChange = (route: ShellRoute) => {
+    setSelectedConversationId(null);
+    setActivePage(route);
+  };
+
+  const topbarActions = (
+    <>
+      {firefliesConnected && <span style={s.badge}>Fireflies</span>}
+      {hasKey === true &&
+        (hasBackendDelegation === false || hasFirefliesBackendAccess === false) && (
+          <span style={s.badge}>Fireflies key saved</span>
+        )}
+      {hasGoogleMeet && <span style={s.badge}>Google Meet</span>}
+      <span style={s.badgeSolid}>{did ? "Connected" : "Restored"}</span>
+    </>
+  );
+
+  const isStubRoute =
+    activePage === "library" ||
+    activePage === "chat" ||
+    activePage === "starred" ||
+    activePage === "connections";
+
+  const stubLabel: Record<typeof activePage, string> = {
+    inbox: "Inbox",
+    library: "Library",
+    chat: "Chat",
+    starred: "Starred",
+    connections: "Connections",
+    sources: "Sources",
+  };
+
   return (
-    <div className="listen-shell">
-      <aside className="listen-sidebar">
-        <div style={s.sidebarHeader}>
-          <div style={s.brandRow}>
-            <span className="listen-brand-mark" />
-            <div>
-              <h1 style={s.logo}>listen</h1>
-              <p style={s.productSub}>Conversation Sync</p>
-            </div>
-          </div>
-          <span style={s.version}>v0.4</span>
-        </div>
+    <AppShell
+      activeRoute={activePage}
+      onRouteChange={handleRouteChange}
+      pageEyebrow={pageEyebrow}
+      pageTitle={pageTitle}
+      topbarActions={topbarActions}
+      user={{ initials: userInitials, name: userName, plan: userPlan }}
+      sources={sourceItems}
+      folders={folderItems}
+    >
+      {isStubRoute && <ComingSoon label={stubLabel[activePage]} />}
 
-        <div style={s.sidebarBlock}>
-          <span style={s.sectionLabel}>sources</span>
-          <div style={s.sourceRow}>
-            <span style={s.sourceDot} />
-            <span style={s.sourceName}>Fireflies</span>
-            <span style={firefliesConnected ? s.sourceOn : s.sourceOff}>
-              {firefliesConnected
-                ? "Live"
-                : hasKey === null
-                  ? "Checking"
-                  : hasKey === true
-                    ? hasBackendDelegation === true && hasFirefliesBackendAccess === null
-                      ? "Checking"
-                      : "Needs access"
-                    : "Not set"}
-            </span>
-          </div>
-          <div style={s.sourceRow}>
-            <span style={s.sourceDot} />
-            <span style={s.sourceName}>Google Meet</span>
-            <span style={hasGoogleMeet ? s.sourceOn : s.sourceOff}>
-              {hasGoogleMeet ? "Live" : "Optional"}
-            </span>
-          </div>
-          {hasUsableInbox && (
-            <div style={s.navRow}>
-              <button
-                style={activePage === "inbox" ? s.navButtonActive : s.navButton}
-                onClick={() => {
-                  setSelectedConversationId(null);
-                  setActivePage("inbox");
-                }}
-              >
-                Inbox
-              </button>
-              <button
-                style={activePage === "sources" ? s.navButtonActive : s.navButton}
-                onClick={() => {
-                  setSelectedConversationId(null);
-                  setActivePage("sources");
-                }}
-              >
-                Add sources
-              </button>
-            </div>
-          )}
-        </div>
+      {!isStubRoute && showWorkspaceLoading && <WorkspaceStatusPanel mode="checking" />}
 
-        <AuthPanel
-          isSignedIn={isSignedIn}
-          address={address}
-          did={did}
+      {!isStubRoute && needsFirefliesAccess && (
+        <WorkspaceStatusPanel
+          mode="fireflies-access"
+          loading={workspaceActionLoading}
+          error={workspaceActionError}
+          onAction={handleFinishFirefliesAccess}
+        />
+      )}
+
+      {!isStubRoute && (showWalletSetupState || showSourcesWalletState) && (
+        <WorkspaceStatusPanel
+          mode="wallet"
           loading={authLoading}
           error={authError}
-          onSignIn={handleSignIn}
-          onSignOut={handleSignOut}
+          onAction={handleSignIn}
         />
+      )}
 
-        {isSignedIn && tcw && capabilityRequest && (
-          <ConnectAgentButton
-            tcw={tcw}
-            capabilityRequest={capabilityRequest}
-            agentInfo={agentInfo}
-            agentEndpoint={AGENT_ENDPOINT}
-            onRefresh={() => setRefreshKey((k) => k + 1)}
-            refreshLabel="Refresh conversations"
+      {!isStubRoute && showOnboarding && tcw && (
+        <SourcesSetup
+          api={api}
+          tcw={tcw}
+          mode="onboarding"
+          hasFirefliesKey={hasKey}
+          hasBackendDelegation={hasBackendDelegation}
+          hasFirefliesBackendAccess={hasFirefliesBackendAccess}
+          hasGoogleMeet={hasGoogleMeet}
+          onEnsureBackendAccess={ensureBackendAccess}
+          onEnsureFirefliesBackendAccess={ensureFirefliesBackendAccess}
+          onFirefliesComplete={() => {
+            setHasKey(true);
+            setHasBackendDelegation(true);
+            setHasFirefliesBackendAccess(true);
+            setRefreshKey((k) => k + 1);
+            setActivePage("inbox");
+          }}
+          onDone={() => setActivePage("inbox")}
+          onGoogleMeetComplete={() => {
+            setHasGoogleMeet(true);
+            setHasBackendDelegation(true);
+            setRefreshKey((k) => k + 1);
+            setActivePage("inbox");
+          }}
+          backendUrl={BACKEND_URL}
+          showGoogleMeet={!!GOOGLE_CLIENT_ID}
+        />
+      )}
+
+      {!isStubRoute && showSourcesSetup && tcw && (
+        <SourcesSetup
+          api={api}
+          tcw={tcw}
+          mode="sources"
+          hasFirefliesKey={hasKey}
+          hasBackendDelegation={hasBackendDelegation}
+          hasFirefliesBackendAccess={hasFirefliesBackendAccess}
+          hasGoogleMeet={hasGoogleMeet}
+          onEnsureBackendAccess={ensureBackendAccess}
+          onEnsureFirefliesBackendAccess={ensureFirefliesBackendAccess}
+          onFirefliesComplete={() => {
+            setHasKey(true);
+            setHasBackendDelegation(true);
+            setHasFirefliesBackendAccess(true);
+            setRefreshKey((k) => k + 1);
+            setActivePage("inbox");
+          }}
+          onDone={() => setActivePage("inbox")}
+          onGoogleMeetComplete={() => {
+            setHasGoogleMeet(true);
+            setHasBackendDelegation(true);
+            setRefreshKey((k) => k + 1);
+            setActivePage("inbox");
+          }}
+          backendUrl={BACKEND_URL}
+          showGoogleMeet={!!GOOGLE_CLIENT_ID}
+        />
+      )}
+
+      {!isStubRoute && pendingBanner && (
+        <div style={s.pendingBanner}>
+          <span>{pendingBanner}</span>
+          <button style={s.bannerDismiss} onClick={() => setPendingBanner(null)}>
+            &times;
+          </button>
+        </div>
+      )}
+
+      {!isStubRoute && gmLapsedBanner && (
+        <div style={s.lapsedBanner}>
+          <span>Real-time sync was inactive. Some meetings may not have been captured.</span>
+          <div style={s.lapsedActions}>
+            <button
+              style={s.lapsedSyncBtn}
+              onClick={() => {
+                api
+                  ?.post("/api/sync/google-meet")
+                  .then(() => {
+                    setRefreshKey((k) => k + 1);
+                    setGmLapsedBanner(false);
+                  })
+                  .catch(() => {});
+              }}
+            >
+              Sync Now
+            </button>
+            <button style={s.bannerDismiss} onClick={() => setGmLapsedBanner(false)}>
+              &times;
+            </button>
+          </div>
+        </div>
+      )}
+
+      {hasUsableInbox && activePage === "inbox" && selectedConversationId && (
+        <ConversationDetail
+          api={api}
+          conversationId={selectedConversationId}
+          onBack={() => setSelectedConversationId(null)}
+        />
+      )}
+
+      {hasUsableInbox && activePage === "inbox" && !selectedConversationId && (
+        <>
+          <SyncControl
+            api={api}
+            backendUrl={BACKEND_URL}
+            getAccessToken={() => sessionStoreRef.current.getToken()}
+            onSyncComplete={() => setRefreshKey((k) => k + 1)}
+            hasFireflies={firefliesConnected}
+            hasGoogleMeet={hasGoogleMeet === true}
           />
-        )}
+          {ENABLE_TINYCLOUD_HOOKS && liveWriteHost && (
+            <LiveWriteEvents
+              tcw={tcw}
+              hooksHost={liveWriteHost}
+              pathPrefix={liveWritePathPrefix}
+              onWrite={() => setRefreshKey((k) => k + 1)}
+            />
+          )}
+          <ConversationList
+            api={api}
+            onSelectConversation={setSelectedConversationId}
+            refreshKey={refreshKey}
+          />
+        </>
+      )}
 
-        <div style={s.sidebarFooter}>
-          {isSignedIn && hasKey && tcw && (
+      {/* Account controls — kept accessible until other agents fold them into a user menu */}
+      {activePage === "inbox" && (
+        <div style={s.accountControls}>
+          <AuthPanel
+            isSignedIn={isSignedIn}
+            address={address}
+            did={did}
+            loading={authLoading}
+            error={authError}
+            onSignIn={handleSignIn}
+            onSignOut={handleSignOut}
+          />
+          {tcw && capabilityRequest && (
+            <ConnectAgentButton
+              tcw={tcw}
+              capabilityRequest={capabilityRequest}
+              agentInfo={agentInfo}
+              agentEndpoint={AGENT_ENDPOINT}
+              onRefresh={() => setRefreshKey((k) => k + 1)}
+              refreshLabel="Refresh conversations"
+            />
+          )}
+          {hasKey && tcw && (
             <button
               style={s.disconnectLink}
               onClick={async () => {
@@ -983,7 +1139,7 @@ export function App() {
               Disconnect Fireflies
             </button>
           )}
-          {isSignedIn && hasGoogleMeet && (
+          {hasGoogleMeet && (
             <button
               style={s.disconnectLink}
               onClick={async () => {
@@ -995,195 +1151,9 @@ export function App() {
               Disconnect Google Meet
             </button>
           )}
-          <span style={s.footerMeta}>TinyCloud + OpenKey</span>
         </div>
-      </aside>
-
-      <main className="listen-main">
-        <header style={s.topbar}>
-          <div>
-            <span style={s.eyebrow}>— {pageEyebrow}</span>
-            <h2 style={s.pageTitle}>{pageTitle}</h2>
-          </div>
-          <div style={s.topbarActions}>
-            {firefliesConnected && <span style={s.badge}>Fireflies</span>}
-            {hasKey === true &&
-              (hasBackendDelegation === false || hasFirefliesBackendAccess === false) && (
-                <span style={s.badge}>Fireflies key saved</span>
-              )}
-            {hasGoogleMeet && <span style={s.badge}>Google Meet</span>}
-            {isSignedIn && <span style={s.badgeSolid}>{did ? "Connected" : "Restored"}</span>}
-          </div>
-        </header>
-
-        <div className="listen-content">
-          <div className="listen-stack">
-            {!isSignedIn && (
-              <section style={s.heroPanel}>
-                <span style={s.eyebrow}>— one transcript inbox</span>
-                <p style={s.heroText}>
-                  Bring Fireflies and Google Meet transcripts into your TinyCloud space, then
-                  search, sync, and read the archive from one calm workspace.
-                </p>
-                <div style={s.heroStats}>
-                  <span>sovereign storage</span>
-                  <span>live sync</span>
-                  <span>agent-ready</span>
-                </div>
-              </section>
-            )}
-
-            {showWorkspaceLoading && <WorkspaceStatusPanel mode="checking" />}
-
-            {needsFirefliesAccess && (
-              <WorkspaceStatusPanel
-                mode="fireflies-access"
-                loading={workspaceActionLoading}
-                error={workspaceActionError}
-                onAction={handleFinishFirefliesAccess}
-              />
-            )}
-
-            {(showWalletSetupState || showSourcesWalletState) && (
-              <WorkspaceStatusPanel
-                mode="wallet"
-                loading={authLoading}
-                error={authError}
-                onAction={handleSignIn}
-              />
-            )}
-
-            {showOnboarding && tcw && (
-              <SourcesSetup
-                api={api}
-                tcw={tcw}
-                mode="onboarding"
-                hasFirefliesKey={hasKey}
-                hasBackendDelegation={hasBackendDelegation}
-                hasFirefliesBackendAccess={hasFirefliesBackendAccess}
-                hasGoogleMeet={hasGoogleMeet}
-                onEnsureBackendAccess={ensureBackendAccess}
-                onEnsureFirefliesBackendAccess={ensureFirefliesBackendAccess}
-                onFirefliesComplete={() => {
-                  setHasKey(true);
-                  setHasBackendDelegation(true);
-                  setHasFirefliesBackendAccess(true);
-                  setRefreshKey((k) => k + 1);
-                  setActivePage("inbox");
-                }}
-                onDone={() => setActivePage("inbox")}
-                onGoogleMeetComplete={() => {
-                  setHasGoogleMeet(true);
-                  setHasBackendDelegation(true);
-                  setRefreshKey((k) => k + 1);
-                  setActivePage("inbox");
-                }}
-                backendUrl={BACKEND_URL}
-                showGoogleMeet={!!GOOGLE_CLIENT_ID}
-              />
-            )}
-
-            {showSourcesSetup && tcw && (
-              <SourcesSetup
-                api={api}
-                tcw={tcw}
-                mode="sources"
-                hasFirefliesKey={hasKey}
-                hasBackendDelegation={hasBackendDelegation}
-                hasFirefliesBackendAccess={hasFirefliesBackendAccess}
-                hasGoogleMeet={hasGoogleMeet}
-                onEnsureBackendAccess={ensureBackendAccess}
-                onEnsureFirefliesBackendAccess={ensureFirefliesBackendAccess}
-                onFirefliesComplete={() => {
-                  setHasKey(true);
-                  setHasBackendDelegation(true);
-                  setHasFirefliesBackendAccess(true);
-                  setRefreshKey((k) => k + 1);
-                  setActivePage("inbox");
-                }}
-                onDone={() => setActivePage("inbox")}
-                onGoogleMeetComplete={() => {
-                  setHasGoogleMeet(true);
-                  setHasBackendDelegation(true);
-                  setRefreshKey((k) => k + 1);
-                  setActivePage("inbox");
-                }}
-                backendUrl={BACKEND_URL}
-                showGoogleMeet={!!GOOGLE_CLIENT_ID}
-              />
-            )}
-
-            {pendingBanner && (
-              <div style={s.pendingBanner}>
-                <span>{pendingBanner}</span>
-                <button style={s.bannerDismiss} onClick={() => setPendingBanner(null)}>
-                  &times;
-                </button>
-              </div>
-            )}
-
-            {gmLapsedBanner && (
-              <div style={s.lapsedBanner}>
-                <span>Real-time sync was inactive. Some meetings may not have been captured.</span>
-                <div style={s.lapsedActions}>
-                  <button
-                    style={s.lapsedSyncBtn}
-                    onClick={() => {
-                      api
-                        ?.post("/api/sync/google-meet")
-                        .then(() => {
-                          setRefreshKey((k) => k + 1);
-                          setGmLapsedBanner(false);
-                        })
-                        .catch(() => {});
-                    }}
-                  >
-                    Sync Now
-                  </button>
-                  <button style={s.bannerDismiss} onClick={() => setGmLapsedBanner(false)}>
-                    &times;
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {isSignedIn && hasUsableInbox && activePage === "inbox" && selectedConversationId && (
-              <ConversationDetail
-                api={api}
-                conversationId={selectedConversationId}
-                onBack={() => setSelectedConversationId(null)}
-              />
-            )}
-
-            {isSignedIn && hasUsableInbox && activePage === "inbox" && !selectedConversationId && (
-              <>
-                <SyncControl
-                  api={api}
-                  backendUrl={BACKEND_URL}
-                  getAccessToken={() => sessionStoreRef.current.getToken()}
-                  onSyncComplete={() => setRefreshKey((k) => k + 1)}
-                  hasFireflies={firefliesConnected}
-                  hasGoogleMeet={hasGoogleMeet === true}
-                />
-                {ENABLE_TINYCLOUD_HOOKS && liveWriteHost && (
-                  <LiveWriteEvents
-                    tcw={tcw}
-                    hooksHost={liveWriteHost}
-                    pathPrefix={liveWritePathPrefix}
-                    onWrite={() => setRefreshKey((k) => k + 1)}
-                  />
-                )}
-                <ConversationList
-                  api={api}
-                  onSelectConversation={setSelectedConversationId}
-                  refreshKey={refreshKey}
-                />
-              </>
-            )}
-          </div>
-        </div>
-      </main>
-    </div>
+      )}
+    </AppShell>
   );
 }
 
@@ -1193,136 +1163,6 @@ const FONT = "var(--lst-font)";
 const MONO = "var(--lst-mono)";
 
 const s: Record<string, React.CSSProperties> = {
-  sidebarHeader: {
-    padding: "18px 20px 14px",
-    borderBottom: "var(--lst-border)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  brandRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-  },
-  logo: {
-    fontFamily: FONT,
-    fontSize: 22,
-    fontWeight: 400,
-    margin: 0,
-    letterSpacing: 0,
-    color: "var(--lst-blue)",
-    lineHeight: 1,
-  },
-  productSub: {
-    fontFamily: MONO,
-    fontSize: 10,
-    color: "var(--lst-ink-55)",
-    letterSpacing: "0.08em",
-    textTransform: "uppercase" as const,
-    margin: "4px 0 0",
-  },
-  version: {
-    fontFamily: MONO,
-    fontSize: 10,
-    color: "var(--lst-ink-55)",
-    letterSpacing: "0.08em",
-    textTransform: "uppercase" as const,
-  },
-  sidebarBlock: {
-    padding: "16px 20px",
-    borderBottom: "var(--lst-border)",
-  },
-  sectionLabel: {
-    display: "block",
-    fontFamily: MONO,
-    fontSize: 10,
-    color: "var(--lst-ink-55)",
-    letterSpacing: "0.08em",
-    textTransform: "uppercase" as const,
-    marginBottom: 10,
-  },
-  sourceRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    padding: "7px 0",
-    fontSize: 13,
-  },
-  sourceDot: {
-    width: 7,
-    height: 7,
-    borderRadius: "50%",
-    background: "var(--lst-blue)",
-    display: "inline-block",
-    flexShrink: 0,
-  },
-  sourceName: {
-    flex: 1,
-  },
-  sourceOn: {
-    fontFamily: MONO,
-    fontSize: 10,
-    letterSpacing: "0.08em",
-    textTransform: "uppercase" as const,
-  },
-  sourceOff: {
-    fontFamily: MONO,
-    fontSize: 10,
-    color: "var(--lst-ink-55)",
-    letterSpacing: "0.08em",
-    textTransform: "uppercase" as const,
-  },
-  navRow: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: 6,
-    marginTop: 12,
-  },
-  navButton: {
-    fontFamily: FONT,
-    fontSize: 12,
-    color: "var(--lst-blue)",
-    background: "transparent",
-    border: "var(--lst-border)",
-    borderRadius: 999,
-    padding: "7px 10px",
-    cursor: "pointer",
-  },
-  navButtonActive: {
-    fontFamily: FONT,
-    fontSize: 12,
-    color: "var(--lst-bg)",
-    background: "var(--lst-blue)",
-    border: "var(--lst-border)",
-    borderRadius: 999,
-    padding: "7px 10px",
-    cursor: "pointer",
-  },
-  sidebarFooter: {
-    marginTop: "auto",
-    padding: "14px 20px",
-    borderTop: "var(--lst-border)",
-    display: "flex",
-    flexDirection: "column" as const,
-    gap: 8,
-  },
-  footerMeta: {
-    fontFamily: MONO,
-    fontSize: 10,
-    color: "var(--lst-ink-55)",
-    letterSpacing: "0.08em",
-    textTransform: "uppercase" as const,
-  },
-  topbar: {
-    padding: "20px 32px 16px",
-    borderBottom: "var(--lst-border)",
-    display: "flex",
-    alignItems: "flex-end",
-    justifyContent: "space-between",
-    gap: 20,
-    background: "var(--lst-bg)",
-  },
   eyebrow: {
     display: "block",
     fontFamily: MONO,
@@ -1331,21 +1171,6 @@ const s: Record<string, React.CSSProperties> = {
     letterSpacing: "0.08em",
     textTransform: "uppercase" as const,
     marginBottom: 7,
-  },
-  pageTitle: {
-    fontFamily: FONT,
-    fontSize: 38,
-    fontWeight: 400,
-    letterSpacing: 0,
-    lineHeight: 1.06,
-    margin: 0,
-    color: "var(--lst-blue)",
-  },
-  topbarActions: {
-    display: "flex",
-    flexWrap: "wrap" as const,
-    justifyContent: "flex-end",
-    gap: 8,
   },
   badge: {
     fontFamily: MONO,
@@ -1372,30 +1197,6 @@ const s: Record<string, React.CSSProperties> = {
     letterSpacing: "0.08em",
     textTransform: "uppercase" as const,
     whiteSpace: "nowrap" as const,
-  },
-  heroPanel: {
-    padding: "42px 48px",
-    border: "var(--lst-border)",
-    background: "var(--lst-ink-08)",
-    animation: "fadeSlideIn 0.3s ease-out",
-  },
-  heroText: {
-    maxWidth: 760,
-    fontSize: 20,
-    lineHeight: 1.48,
-    margin: "0 0 28px",
-    color: "var(--lst-blue)",
-    letterSpacing: 0,
-  },
-  heroStats: {
-    display: "flex",
-    flexWrap: "wrap" as const,
-    gap: 8,
-    fontFamily: MONO,
-    fontSize: 10,
-    letterSpacing: "0.08em",
-    textTransform: "uppercase" as const,
-    color: "var(--lst-blue)",
   },
   statusPanel: {
     padding: "42px 48px",
@@ -1521,5 +1322,14 @@ const s: Record<string, React.CSSProperties> = {
     borderRadius: 999,
     padding: "6px 12px",
     cursor: "pointer",
+  },
+  accountControls: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 10,
+    padding: "16px 18px",
+    border: "var(--lst-border)",
+    background: "var(--lst-bg)",
+    marginTop: 14,
   },
 };
