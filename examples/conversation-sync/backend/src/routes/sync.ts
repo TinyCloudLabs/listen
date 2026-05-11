@@ -3,6 +3,7 @@ import type { Request, Response, RequestHandler } from "express";
 import { FirefliesClient, FirefliesRateLimitError } from "../services/fireflies-client.js";
 import { conversationSql, ensureSchema } from "../schema.js";
 import { persistFullTranscript } from "../services/sync-pipeline.js";
+import { readFirefliesApiKey } from "../services/fireflies-secret.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -19,7 +20,6 @@ interface SyncRoutesConfig {
 
 // ── Constants ────────────────────────────────────────────────────────
 
-const FIREFLIES_KEY_PATH = "config/fireflies-key";
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
 const SYNC_DELAY_MS = 800;
@@ -40,14 +40,12 @@ export function createSyncRouter(config: SyncRoutesConfig) {
   router.post("/fireflies", async (req: Request, res: Response) => {
     const access = req.delegatedAccess!;
 
-    // 1. Read Fireflies API key from KV
-    const keyResult = await access.kv.get(FIREFLIES_KEY_PATH);
-    const apiKey = keyResult.ok && keyResult.data.data != null ? String(keyResult.data.data) : null;
+    // 1. Read Fireflies API key from TinyCloud Secrets
+    const apiKey = await readFirefliesApiKey(req);
     if (!apiKey) {
       res.status(404).json({
         error: "no_api_key",
-        message:
-          "No Fireflies API key configured. Store one first via PUT /api/config/fireflies-key.",
+        message: "No Fireflies API key configured. Store FIREFLIES_API_KEY with TinyCloud Secrets.",
       });
       return;
     }
@@ -174,9 +172,7 @@ export function createSyncRouter(config: SyncRoutesConfig) {
 
     try {
       // 1. Read Fireflies API key
-      const keyResult = await access.kv.get(FIREFLIES_KEY_PATH);
-      const apiKey =
-        keyResult.ok && keyResult.data.data != null ? String(keyResult.data.data) : null;
+      const apiKey = await readFirefliesApiKey(req);
       if (!apiKey) {
         sendEvent("error", { message: "No Fireflies API key configured." });
         res.end();
@@ -295,14 +291,12 @@ export function createSyncRouter(config: SyncRoutesConfig) {
   router.post("/backfill-summaries", async (req: Request, res: Response) => {
     const access = req.delegatedAccess!;
 
-    // 1. Read Fireflies API key from KV
-    const keyResult = await access.kv.get(FIREFLIES_KEY_PATH);
-    const apiKey = keyResult.ok && keyResult.data.data != null ? String(keyResult.data.data) : null;
+    // 1. Read Fireflies API key from TinyCloud Secrets
+    const apiKey = await readFirefliesApiKey(req);
     if (!apiKey) {
       res.status(404).json({
         error: "no_api_key",
-        message:
-          "No Fireflies API key configured. Store one first via PUT /api/config/fireflies-key.",
+        message: "No Fireflies API key configured. Store FIREFLIES_API_KEY with TinyCloud Secrets.",
       });
       return;
     }

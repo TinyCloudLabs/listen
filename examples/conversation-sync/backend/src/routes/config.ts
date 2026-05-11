@@ -1,6 +1,6 @@
 import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
-import { resolveAppPath } from "../manifest.js";
+import { FIREFLIES_SECRET_NAME, resolveAppPath } from "../manifest.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -43,7 +43,6 @@ interface ConfigRoutesConfig {
 
 // ── Constants ────────────────────────────────────────────────────────
 
-const FIREFLIES_KEY_PATH = "config/fireflies-key";
 const GOOGLE_TOKENS_PATH = "config/google-tokens";
 const WEBHOOK_SECRET_PATH = resolveAppPath("webhooks/config/fireflies-secret");
 const WEBHOOK_USER_ADDRESS_PATH = resolveAppPath("webhooks/config/user-address");
@@ -80,92 +79,30 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
   // All config routes require auth
   router.use(authMiddleware);
 
-  // ── Fireflies API key routes (auth + delegation) ──────────────────
-
-  // ── PUT /api/config/fireflies-key — store API key ───────────────
-  router.put("/fireflies-key", delegationMiddleware, async (req: Request, res: Response) => {
-    const { apiKey } = req.body;
-
-    if (!apiKey || typeof apiKey !== "string") {
-      res.status(400).json({
-        error: "invalid_body",
-        message: "Request body must include a non-empty 'apiKey' string field",
-      });
-      return;
-    }
-
-    try {
-      const putResult = await req.delegatedAccess!.kv.put(FIREFLIES_KEY_PATH, apiKey);
-      if (!putResult.ok) {
-        const message = kvErrorMessage(putResult, "TinyCloud rejected the API key write");
-        console.error("[config] failed to store fireflies key:", putResult.error);
-        res.status(500).json({
-          error: "store_failed",
-          message: `Failed to store API key in TinyCloud: ${message}`,
-        });
-        return;
-      }
-
-      const verifyResult = await req.delegatedAccess!.kv.get(FIREFLIES_KEY_PATH);
-      if (!verifyResult.ok || kvData(verifyResult) == null) {
-        const message = kvErrorMessage(
-          verifyResult,
-          "TinyCloud did not return the API key after storing it",
-        );
-        console.error("[config] failed to verify stored fireflies key:", kvError(verifyResult));
-        res.status(500).json({
-          error: "store_verification_failed",
-          message: `Stored API key could not be verified in TinyCloud: ${message}`,
-        });
-        return;
-      }
-
-      res.json({ ok: true });
-    } catch (err) {
-      console.error("[config] failed to store fireflies key:", err);
-      res.status(500).json({
-        error: "store_failed",
-        message: "Failed to store API key",
-      });
-    }
-  });
-
-  // ── DELETE /api/config/fireflies-key — remove API key ───────────
-  router.delete("/fireflies-key", delegationMiddleware, async (req: Request, res: Response) => {
-    try {
-      const deleteResult = await req.delegatedAccess!.kv.delete(FIREFLIES_KEY_PATH);
-      if (!deleteResult.ok) {
-        const message = kvErrorMessage(deleteResult, "TinyCloud rejected the API key delete");
-        console.error("[config] failed to delete fireflies key:", deleteResult.error);
-        res.status(500).json({
-          error: "delete_failed",
-          message: `Failed to delete API key from TinyCloud: ${message}`,
-        });
-        return;
-      }
-      res.json({ ok: true });
-    } catch (err) {
-      console.error("[config] failed to delete fireflies key:", err);
-      res.status(500).json({
-        error: "delete_failed",
-        message: "Failed to delete API key",
-      });
-    }
-  });
-
-  // ── GET /api/config/fireflies-key/exists — check existence ──────
+  // ── GET /api/config/fireflies-key/exists — check backend secret access ─
   router.get("/fireflies-key/exists", delegationMiddleware, async (req: Request, res: Response) => {
     try {
-      const result = await req.delegatedAccess!.kv.get(FIREFLIES_KEY_PATH);
-      if (!result.ok && !isKvNotFound(result)) {
-        const message = kvErrorMessage(result, "TinyCloud rejected the API key lookup");
+      const result = await req.delegatedAccess?.secrets?.get(FIREFLIES_SECRET_NAME);
+      if (!result) {
         res.status(500).json({
           error: "check_failed",
-          message: `Failed to check API key existence in TinyCloud: ${message}`,
+          message: "Delegation does not include TinyCloud Secrets access",
         });
         return;
       }
-      res.json({ exists: kvData(result) != null });
+      if (!result.ok) {
+        const code = result.error?.code?.toLowerCase();
+        if (code === "key_not_found" || code === "not_found" || code === "grant_not_found") {
+          res.json({ exists: false });
+          return;
+        }
+        res.status(500).json({
+          error: "check_failed",
+          message: result.error?.message ?? "Failed to check API key existence in TinyCloud",
+        });
+        return;
+      }
+      res.json({ exists: true });
     } catch (err) {
       console.error("[config] failed to check fireflies key:", err);
       res.status(500).json({

@@ -10,10 +10,10 @@
     "examples/conversation-sync/backend"
   ],
   "overrides": {
-    "@tinycloud/sdk-core": "2.2.0-beta.6",
-    "@tinycloud/sdk-services": "2.1.0",
-    "@tinycloud/web-sdk": "2.2.0-beta.6",
-    "@tinycloud/node-sdk": "2.2.0-beta.6",
+    "@tinycloud/sdk-core": "2.2.0-beta.10",
+    "@tinycloud/sdk-services": "2.2.0-beta.10",
+    "@tinycloud/web-sdk": "2.2.0-beta.10",
+    "@tinycloud/node-sdk": "2.2.0-beta.10",
     "@tinycloud/web-core": "1.7.0",
     "@tinycloud/node-sdk-wasm": "1.7.3-beta.1",
     "@tinycloud/web-sdk-wasm": "1.7.3-beta.1"
@@ -23,6 +23,7 @@
     "predev": "lsof -ti:3001,5173 | xargs kill -9 2>/dev/null; pkill -9 -f 'bun --watch src/index.ts' 2>/dev/null; true",
     "dev": "turbo run dev --filter=@tinyboilerplate/example-frontend --filter=@tinyboilerplate/example-backend",
     "dev:conversation-sync": "turbo run dev --filter=conversation-sync-frontend --filter=conversation-sync-backend",
+    "dev:conversation-sync:portless": "cd examples/conversation-sync && bun run dev:portless",
     "generate-key": "cd packages/server && bun run generate-key",
     "test": "turbo run test",
     "lint": "turbo run lint",
@@ -33,9 +34,10 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@tinycloud/node-sdk": "2.2.0-beta.6",
+    "@tinycloud/node-sdk": "2.2.0-beta.10",
     "eslint": "^10.1.0",
     "husky": "^9.1.7",
+    "portless": "^0.13.0",
     "prettier": "^3.8.1",
     "turbo": "^2.0.0",
     "typescript-eslint": "^8.57.1"

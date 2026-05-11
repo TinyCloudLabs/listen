@@ -2,10 +2,20 @@ import {
   TinyCloudWeb,
   serializeDelegation,
   type ComposedManifestRequest,
+  type PortableDelegation,
+  type ResourceCapability,
 } from "@tinycloud/web-sdk";
 import { type DelegationResponse } from "@tinyboilerplate/core";
 
 // ── Create Delegation ────────────────────────────────────────────────
+
+const DELEGATION_BUNDLE_FORMAT = "tinyboilerplate.delegation-bundle";
+
+interface DelegationBundle {
+  format: typeof DELEGATION_BUNDLE_FORMAT;
+  version: 1;
+  delegations: string[];
+}
 
 /**
  * Manifest-driven delegation helper.
@@ -28,6 +38,28 @@ export async function createManifestDelegation(
     );
   }
 
+  const target = capabilityRequest.delegationTargets.find((entry) => entry.did === backendDID);
+  if (!target) {
+    throw new Error(`No manifest delegation target found for DID ${backendDID}`);
+  }
+
+  const permissionsBySpace = groupPermissionsBySpace(target.permissions);
+  if (permissionsBySpace.size > 1) {
+    const delegations: PortableDelegation[] = [];
+    let prompted = false;
+
+    for (const permissions of permissionsBySpace.values()) {
+      const result = await tcw.delegateTo(target.did, permissions, { expiry: target.expiryMs });
+      delegations.push(result.delegation);
+      prompted ||= result.prompted;
+    }
+
+    return {
+      serialized: serializeDelegationBundle(delegations),
+      prompted,
+    };
+  }
+
   const result = await tcw.materializeDelegation(backendDID, capabilityRequest);
   return {
     serialized: serializeDelegation(result.delegation),
@@ -36,6 +68,36 @@ export async function createManifestDelegation(
 }
 
 export const createDelegation = createManifestDelegation;
+
+function groupPermissionsBySpace(
+  permissions: readonly ResourceCapability[],
+): Map<string, ResourceCapability[]> {
+  const grouped = new Map<string, ResourceCapability[]>();
+
+  for (const permission of permissions) {
+    const key = permission.space;
+    const existing = grouped.get(key);
+    if (existing) {
+      existing.push(permission);
+    } else {
+      grouped.set(key, [permission]);
+    }
+  }
+
+  return grouped;
+}
+
+function serializeDelegationBundle(delegations: readonly PortableDelegation[]): string {
+  if (delegations.length === 1) return serializeDelegation(delegations[0]);
+
+  const bundle: DelegationBundle = {
+    format: DELEGATION_BUNDLE_FORMAT,
+    version: 1,
+    delegations: delegations.map((delegation) => serializeDelegation(delegation)),
+  };
+
+  return JSON.stringify(bundle);
+}
 
 // ── Send Delegation to Backend ───────────────────────────────────────
 

@@ -51,6 +51,8 @@ export interface ServerInfoPermission {
   space?: string;
   path: string;
   actions: string[];
+  /** Skip the app-id prefix when resolving this manifest permission. */
+  skipPrefix?: boolean;
   /** Optional user/agent-facing context for why the permission is needed. */
   description?: string;
 }

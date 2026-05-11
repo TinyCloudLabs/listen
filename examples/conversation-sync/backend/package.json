@@ -5,6 +5,7 @@
   "scripts": {
     "build": "tsc --noEmit",
     "dev": "bun --watch src/index.ts",
+    "dev:portless": "portless run --name api.listen bun --watch src/index.ts",
     "start": "bun src/index.ts",
     "test": "bun test"
   },
@@ -13,7 +14,7 @@
     "@scalar/express-api-reference": "^0.4.0",
     "@tinyboilerplate/core": "workspace:*",
     "@tinyboilerplate/server": "workspace:*",
-    "@tinycloud/node-sdk": "2.2.0-beta.6",
+    "@tinycloud/node-sdk": "2.2.0-beta.10",
     "cors": "^2.8.5",
     "express": "^4.21.0",
     "express-rate-limit": "^8.3.1",

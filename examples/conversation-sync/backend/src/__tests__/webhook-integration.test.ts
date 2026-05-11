@@ -178,7 +178,17 @@ function createMockAccess(apiKey?: string) {
   const sql = createMockSQL();
   if (apiKey) kv._data.set(FIREFLIES_KEY_PATH, apiKey);
 
-  return { kv, sql };
+  return {
+    kv,
+    sql,
+    secrets: {
+      get: async () => {
+        const val = kv._data.get(FIREFLIES_KEY_PATH);
+        if (val === undefined) return { ok: false, error: { code: "KEY_NOT_FOUND" } };
+        return { ok: true, data: val };
+      },
+    },
+  };
 }
 
 function mockAuthMiddleware(req: Request, _res: Response, next: NextFunction) {

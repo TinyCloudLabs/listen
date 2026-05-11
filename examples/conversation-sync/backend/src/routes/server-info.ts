@@ -16,7 +16,7 @@ export function createServerInfoRouter(did: string) {
   const router = Router();
 
   router.get("/", (_req, res) => {
-    const backend = backendManifestConfig();
+    const backend = backendManifestConfig(did);
     const info: ServerInfo = {
       did,
       status: "ready",
@@ -27,6 +27,7 @@ export function createServerInfoRouter(did: string) {
         space: permission.space,
         path: permission.path,
         actions: [...permission.actions],
+        skipPrefix: permission.skipPrefix,
         description: permission.description,
       })),
     };

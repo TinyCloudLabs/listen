@@ -59,13 +59,13 @@ function statusLabel(status: Status): string {
 function statusAccent(status: Status): string {
   switch (status) {
     case "idle":
-      return "#9ca3af";
+      return "var(--lst-ink-55)";
     case "connecting":
-      return "#6366f1";
+      return "var(--lst-blue)";
     case "live":
-      return "#10b981";
+      return "var(--lst-blue)";
     case "error":
-      return "#ef4444";
+      return "var(--lst-blue)";
   }
 }
 
@@ -261,16 +261,15 @@ export const LiveWriteEvents: FC<LiveWriteEventsProps> = ({
 
 // ── Styles ──────────────────────────────────────────────────────────
 
-const FONT = "'Outfit', -apple-system, sans-serif";
-const MONO = "'IBM Plex Mono', 'SF Mono', monospace";
+const FONT = "var(--lst-font)";
+const MONO = "var(--lst-mono)";
 
 const s: Record<string, React.CSSProperties> = {
   panel: {
     fontFamily: FONT,
-    background: "#fff",
-    border: "1px solid #e2e4e9",
-    borderLeft: "3px solid #9ca3af",
-    borderRadius: 12,
+    background: "var(--lst-bg)",
+    border: "var(--lst-border)",
+    borderRadius: 0,
     padding: "18px 20px",
     animation: "fadeSlideIn 0.3s ease-out",
   },
@@ -287,21 +286,24 @@ const s: Record<string, React.CSSProperties> = {
   },
   heading: {
     fontFamily: FONT,
-    fontSize: 15,
-    fontWeight: 600,
-    color: "#1a1a1a",
+    fontSize: 18,
+    fontWeight: 400,
+    color: "var(--lst-blue)",
     margin: 0,
-    letterSpacing: "-0.01em",
+    letterSpacing: 0,
   },
   statusPill: {
     display: "inline-flex",
     alignItems: "center",
     gap: 6,
+    fontFamily: MONO,
     fontSize: 11,
     fontWeight: 500,
-    background: "#f3f4f6",
-    padding: "2px 8px",
-    borderRadius: 4,
+    background: "var(--lst-ink-08)",
+    padding: "3px 8px",
+    borderRadius: 999,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase" as const,
   },
   statusDot: {
     width: 7,
@@ -312,12 +314,12 @@ const s: Record<string, React.CSSProperties> = {
   statusText: {
     fontSize: 11,
     fontWeight: 600,
-    letterSpacing: "0.01em",
+    letterSpacing: 0,
   },
   mutedNote: {
     fontFamily: FONT,
     fontSize: 13,
-    color: "#9ca3af",
+    color: "var(--lst-ink-55)",
     margin: "10px 0 0",
   },
   list: {
@@ -330,9 +332,9 @@ const s: Record<string, React.CSSProperties> = {
   },
   listItem: {
     padding: "8px 10px",
-    background: "#fafafa",
-    border: "1px solid #f3f4f6",
-    borderRadius: 8,
+    background: "var(--lst-ink-08)",
+    border: "var(--lst-hair)",
+    borderRadius: 0,
   },
   listItemTop: {
     display: "flex",
@@ -351,23 +353,23 @@ const s: Record<string, React.CSSProperties> = {
     fontFamily: MONO,
     fontSize: 11,
     fontWeight: 500,
-    color: "#374151",
-    background: "#eef2ff",
+    color: "var(--lst-blue)",
+    background: "var(--lst-bg)",
     padding: "1px 6px",
-    borderRadius: 4,
+    borderRadius: 0,
   },
   timestamp: {
     fontFamily: MONO,
     fontSize: 11,
-    color: "#9ca3af",
+    color: "var(--lst-ink-55)",
   },
   path: {
     fontFamily: MONO,
     fontSize: 11,
-    color: "#6b7280",
-    background: "#f3f4f6",
+    color: "var(--lst-blue)",
+    background: "var(--lst-bg)",
     padding: "1px 6px",
-    borderRadius: 4,
+    borderRadius: 0,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap" as const,
@@ -376,7 +378,7 @@ const s: Record<string, React.CSSProperties> = {
   actor: {
     fontFamily: MONO,
     fontSize: 11,
-    color: "#9ca3af",
+    color: "var(--lst-ink-55)",
   },
   errorCard: {
     display: "flex",
@@ -385,10 +387,10 @@ const s: Record<string, React.CSSProperties> = {
     marginTop: 12,
     padding: "10px 14px",
     fontSize: 13,
-    color: "#991b1b",
-    background: "#fef2f2",
-    border: "1px solid #fecaca",
-    borderRadius: 8,
+    color: "var(--lst-blue)",
+    background: "var(--lst-ink-08)",
+    border: "var(--lst-border)",
+    borderRadius: 0,
     lineHeight: 1.4,
   },
   errorIcon: {
@@ -398,8 +400,8 @@ const s: Record<string, React.CSSProperties> = {
     width: 18,
     height: 18,
     borderRadius: "50%",
-    background: "#ef4444",
-    color: "#fff",
+    background: "var(--lst-blue)",
+    color: "var(--lst-bg)",
     fontSize: 11,
     fontWeight: 700,
     flexShrink: 0,

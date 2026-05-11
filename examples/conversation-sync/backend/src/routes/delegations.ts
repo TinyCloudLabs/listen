@@ -1,11 +1,16 @@
 import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
 import type { TinyCloudNode } from "@tinycloud/node-sdk";
-import { deserializeDelegation } from "@tinycloud/node-sdk";
 import type { DelegationStore, DelegationCache } from "@tinyboilerplate/server";
 import { DEFAULT_DELEGATION_EXPIRY_MS, type ServerInfoPermission } from "@tinyboilerplate/core";
 import { backendDelegationPolicyHash, delegationCoversBackendPolicy } from "../manifest.js";
-import { activatePortableDelegation } from "../delegation-activation.js";
+import {
+  activatePortableDelegation,
+  deserializePortableDelegationSet,
+  portableDelegationExpiry,
+  portableDelegations,
+  type PortableDelegationSet,
+} from "../delegation-activation.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -45,10 +50,10 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
 
     try {
       // Deserialize and validate the delegation
-      const delegation = deserializeDelegation(serialized);
+      const delegation = deserializePortableDelegationSet(serialized);
       const resources = extractDelegationResources(delegation);
 
-      if (!delegationCoversBackendPolicy(resources)) {
+      if (!delegationCoversBackendPolicy(resources, config.did)) {
         throw new Error("Delegation does not cover the current backend permission policy");
       }
 
@@ -56,11 +61,9 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
       const access = await activatePortableDelegation(node, delegation);
 
       // Extract metadata from the delegation itself
-      const expiresAt = delegation.expiry
-        ? (delegation.expiry instanceof Date
-            ? delegation.expiry
-            : new Date(delegation.expiry)
-          ).toISOString()
+      const expiry = portableDelegationExpiry(delegation);
+      const expiresAt = expiry
+        ? expiry.toISOString()
         : new Date(Date.now() + DEFAULT_DELEGATION_EXPIRY_MS).toISOString();
 
       // Store the delegation keyed by wallet address
@@ -69,7 +72,7 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
         actions: resources.flatMap((resource) => resource.actions),
         path: resources.map((resource) => `${resource.service}:${resource.path}`).join(","),
         resources,
-        policyHash: backendDelegationPolicyHash(),
+        policyHash: backendDelegationPolicyHash(config.did),
       });
 
       // Cache the active DelegatedAccess keyed by address
@@ -146,7 +149,7 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
         return;
       }
 
-      if (stored.policyHash !== backendDelegationPolicyHash()) {
+      if (stored.policyHash !== backendDelegationPolicyHash(config.did)) {
         await store.remove(address);
         cache.evict(address);
 
@@ -173,7 +176,13 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
   return router;
 }
 
-function extractDelegationResources(delegation: { resources?: unknown }): ServerInfoPermission[] {
+function extractDelegationResources(delegation: PortableDelegationSet): ServerInfoPermission[] {
+  return portableDelegations(delegation).flatMap(extractSingleDelegationResources);
+}
+
+function extractSingleDelegationResources(delegation: {
+  resources?: unknown;
+}): ServerInfoPermission[] {
   if (!Array.isArray(delegation.resources)) return [];
 
   return delegation.resources.flatMap((resource) => {

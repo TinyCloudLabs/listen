@@ -6,6 +6,10 @@ import { syncSingleTranscript, type SyncSingleResult } from "../services/sync-pi
 import { FirefliesClient } from "../services/fireflies-client.js";
 import { resolveAppPath } from "../manifest.js";
 import { conversationSql, ensureSchema } from "../schema.js";
+import {
+  readFirefliesApiKey,
+  readFirefliesApiKeyFromAccess,
+} from "../services/fireflies-secret.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -35,7 +39,6 @@ interface WebhookRoutesConfig {
 
 const SECRET_KV_KEY = resolveAppPath("webhooks/config/fireflies-secret");
 const PENDING_KV_KEY = resolveAppPath("webhooks/pending/fireflies");
-const FIREFLIES_KEY_PATH = "config/fireflies-key";
 
 // ── Webhook Routes ──────────────────────────────────────────────────
 
@@ -150,10 +153,8 @@ export function createWebhookRouter(config: WebhookRoutesConfig) {
           return;
         }
 
-        // 7. Read Fireflies API key from user's KV
-        const apiKeyResult = await access.kv.get(FIREFLIES_KEY_PATH);
-        const apiKey =
-          apiKeyResult.ok && apiKeyResult.data.data ? String(apiKeyResult.data.data) : null;
+        // 7. Read Fireflies API key from user's TinyCloud Secrets
+        const apiKey = await readFirefliesApiKeyFromAccess(access);
 
         if (!apiKey) {
           console.log(`[webhook] no Fireflies API key found — queuing meetingId=${meetingId}`);
@@ -238,10 +239,8 @@ export function createWebhookRouter(config: WebhookRoutesConfig) {
         return;
       }
 
-      // 2. Get Fireflies API key from user's KV
-      const apiKeyResult = await access.kv.get(FIREFLIES_KEY_PATH);
-      const apiKey =
-        apiKeyResult.ok && apiKeyResult.data.data ? String(apiKeyResult.data.data) : null;
+      // 2. Get Fireflies API key from user's TinyCloud Secrets
+      const apiKey = await readFirefliesApiKey(req);
 
       if (!apiKey) {
         res.status(400).json({

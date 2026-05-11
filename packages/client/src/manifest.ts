@@ -41,6 +41,7 @@ export function backendManifestFromServerInfo(appManifest: Manifest, info: Serve
       ...(p.space !== undefined ? { space: p.space } : {}),
       path: p.path,
       actions: [...p.actions],
+      ...(p.skipPrefix !== undefined ? { skipPrefix: p.skipPrefix } : {}),
       ...(p.description !== undefined ? { description: p.description } : {}),
     })),
   };
@@ -82,14 +83,16 @@ export function resolveManifestPermissions(
 ): ServerInfoPermission[] {
   if (permissions.length === 0) return [];
 
+  const { secrets: _secrets, ...manifestWithoutGeneratedResources } = manifest;
   const resolved = resolveManifest({
-    ...manifest,
+    ...manifestWithoutGeneratedResources,
     defaults: false,
     permissions: permissions.map((permission) => ({
       service: permission.service,
       ...(permission.space !== undefined ? { space: permission.space } : {}),
       path: permission.path,
       actions: [...permission.actions],
+      ...(permission.skipPrefix !== undefined ? { skipPrefix: permission.skipPrefix } : {}),
       ...(permission.description !== undefined ? { description: permission.description } : {}),
     })),
   }).resources;
@@ -99,6 +102,7 @@ export function resolveManifestPermissions(
     space: permission.space,
     path: permission.path,
     actions: [...permission.actions],
+    skipPrefix: permissions[index]?.skipPrefix,
     description: permissions[index]?.description,
   }));
 }
@@ -136,8 +140,9 @@ export function resolveManifestPermissionPath(
   path: string,
   actions: string[] = ["read"],
 ): string {
+  const { secrets: _secrets, ...manifestWithoutGeneratedResources } = manifest;
   const resolved = resolveManifest({
-    ...manifest,
+    ...manifestWithoutGeneratedResources,
     defaults: false,
     permissions: [
       {

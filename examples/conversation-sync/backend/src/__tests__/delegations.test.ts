@@ -2,14 +2,14 @@ import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
 
 // ── Mock @tinycloud/node-sdk BEFORE importing the route ───────────────
 
-const mockDeserializeDelegation = mock((serialized: string) => ({
-  expiry: new Date(Date.now() + 86400_000),
-  actions: ["tinycloud.kv/get", "tinycloud.kv/put"],
-  path: "",
-  resources: [
+const TEST_ADDRESS = "0xTEST";
+const TEST_DID = "did:pkh:eip155:1:0xTEST";
+
+function fullPolicyResources(space = "applications") {
+  return [
     {
       service: "tinycloud.kv",
-      space: "applications",
+      space,
       path: "xyz.tinycloud.listen/",
       actions: [
         "tinycloud.kv/get",
@@ -21,7 +21,7 @@ const mockDeserializeDelegation = mock((serialized: string) => ({
     },
     {
       service: "tinycloud.sql",
-      space: "applications",
+      space,
       path: "xyz.tinycloud.listen/conversations",
       actions: ["tinycloud.sql/read", "tinycloud.sql/write"],
     },
@@ -31,7 +31,32 @@ const mockDeserializeDelegation = mock((serialized: string) => ({
       path: "",
       actions: ["tinycloud.capabilities/read"],
     },
-  ],
+    {
+      service: "tinycloud.kv",
+      space: "secrets",
+      path: "vault/secrets/FIREFLIES_API_KEY",
+      actions: ["tinycloud.kv/get"],
+    },
+    {
+      service: "tinycloud.kv",
+      space: "secrets",
+      path: `grants/${TEST_DID}/secrets/FIREFLIES_API_KEY`,
+      actions: ["tinycloud.kv/get"],
+    },
+    {
+      service: "tinycloud.capabilities",
+      space: "secrets",
+      path: "",
+      actions: ["tinycloud.capabilities/read"],
+    },
+  ];
+}
+
+const mockDeserializeDelegation = mock((serialized: string) => ({
+  expiry: new Date(Date.now() + 86400_000),
+  actions: ["tinycloud.kv/get", "tinycloud.kv/put"],
+  path: "",
+  resources: fullPolicyResources(),
   ownerAddress: "0xTEST",
   _serialized: serialized,
 }));
@@ -121,9 +146,6 @@ function createMockDelegationCache() {
 
 // ── Test Helpers ──────────────────────────────────────────────────────
 
-const TEST_ADDRESS = "0xTEST";
-const TEST_DID = "did:pkh:eip155:1:0xTEST";
-
 function mockAuthMiddleware(req: Request, _res: Response, next: NextFunction) {
   req.user = { address: TEST_ADDRESS };
   req.headers.authorization = "Bearer test-token";
@@ -136,6 +158,12 @@ function createApp(
 ) {
   const mockNode = {
     useDelegation: mockUseDelegation,
+    secrets: {
+      isUnlocked: true,
+      vault: { encryptionIdentity: { privateKey: new Uint8Array(32) } },
+      unlock: async () => ({ ok: true }),
+      lock: () => {},
+    },
   } as any;
 
   const app = express();
@@ -322,10 +350,12 @@ describe("Delegation Routes", () => {
         body: JSON.stringify({ serialized: "activatable" }),
       });
 
-      expect(mockUseDelegation).toHaveBeenCalledTimes(2);
+      expect(mockUseDelegation).toHaveBeenCalledTimes(4);
       expect(mockUseDelegation.mock.calls.map((call) => call[0].path)).toEqual([
         "xyz.tinycloud.listen/",
         "xyz.tinycloud.listen/conversations",
+        "vault/secrets/FIREFLIES_API_KEY",
+        `grants/${TEST_DID}/secrets/FIREFLIES_API_KEY`,
       ]);
     });
 
@@ -343,38 +373,22 @@ describe("Delegation Routes", () => {
       expect(stored!.actions).toContain("tinycloud.sql/write");
       expect(stored!.path).toContain("tinycloud.sql:xyz.tinycloud.listen/conversations");
       expect(stored!.policyHash).toBeDefined();
-      expect(stored!.resources?.length).toBe(3);
+      expect(stored!.resources?.length).toBe(6);
     });
 
     it("accepts SDK portable resources with short service names and fully qualified spaces", async () => {
       mockDeserializeDelegation.mockImplementationOnce((serialized: string) => ({
         expiry: new Date(Date.now() + 86400_000),
-        resources: [
-          {
-            service: "kv",
-            space: "tinycloud:pkh:eip155:1:0xTEST:applications",
-            path: "xyz.tinycloud.listen/",
-            actions: [
-              "tinycloud.kv/get",
-              "tinycloud.kv/put",
-              "tinycloud.kv/del",
-              "tinycloud.kv/list",
-              "tinycloud.kv/metadata",
-            ],
-          },
-          {
-            service: "sql",
-            space: "tinycloud:pkh:eip155:1:0xTEST:applications",
-            path: "xyz.tinycloud.listen/conversations",
-            actions: ["tinycloud.sql/read", "tinycloud.sql/write"],
-          },
-          {
-            service: "capabilities",
-            space: "tinycloud:pkh:eip155:1:0xTEST:applications",
-            path: "",
-            actions: ["tinycloud.capabilities/read"],
-          },
-        ],
+        resources: fullPolicyResources("tinycloud:pkh:eip155:1:0xTEST:applications").map(
+          (resource) =>
+            resource.space === "secrets"
+              ? {
+                  ...resource,
+                  service: resource.service.replace("tinycloud.", ""),
+                  space: "tinycloud:pkh:eip155:1:0xTEST:secrets",
+                }
+              : { ...resource, service: resource.service.replace("tinycloud.", "") },
+        ),
         _serialized: serialized,
       }));
 
@@ -408,6 +422,24 @@ describe("Delegation Routes", () => {
         {
           service: "tinycloud.capabilities",
           space: "applications",
+          path: "",
+          actions: ["tinycloud.capabilities/read"],
+        },
+        {
+          service: "tinycloud.kv",
+          space: "secrets",
+          path: "vault/secrets/FIREFLIES_API_KEY",
+          actions: ["tinycloud.kv/get"],
+        },
+        {
+          service: "tinycloud.kv",
+          space: "secrets",
+          path: `grants/${TEST_DID}/secrets/FIREFLIES_API_KEY`,
+          actions: ["tinycloud.kv/get"],
+        },
+        {
+          service: "tinycloud.capabilities",
+          space: "secrets",
           path: "",
           actions: ["tinycloud.capabilities/read"],
         },

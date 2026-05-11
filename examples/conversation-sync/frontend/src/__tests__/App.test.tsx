@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
+import {
+  checkDelegationStatus,
+  composeManifestWithDelegatees,
+  connectWallet,
+  createAndSignIn,
+  requestNonce,
+  verifySession,
+} from "@tinyboilerplate/client";
 
 // ── Mocks ────────────────────────────────────────────────────────────
 
@@ -65,6 +73,19 @@ vi.mock("@tinyboilerplate/client", () => {
       expiryMs: 2592000000,
       includePublicSpace: true,
     })),
+    composeManifestWithDelegatees: vi.fn((manifest, delegatees) => ({
+      manifests: [manifest],
+      resources: [],
+      delegationTargets: delegatees.map((delegatee: { did: string; name?: string }) => ({
+        did: delegatee.did,
+        name: delegatee.name ?? "Delegatee",
+        expiryMs: 604800000,
+        permissions: [],
+      })),
+      registryRecords: [],
+      expiryMs: 604800000,
+      includePublicSpace: true,
+    })),
     resolveManifestPermissions: vi.fn().mockReturnValue([
       {
         service: "tinycloud.kv",
@@ -98,12 +119,94 @@ function createMockStorage(): Storage {
   };
 }
 
+function jsonResponse(body: unknown): Response {
+  return {
+    ok: true,
+    statusText: "OK",
+    json: () => Promise.resolve(body),
+  } as Response;
+}
+
+function mockAuthFlow() {
+  vi.mocked(connectWallet).mockResolvedValue({
+    address: "0xabc123",
+    web3Provider: {},
+  });
+  vi.mocked(requestNonce).mockResolvedValue("mock-nonce");
+  vi.mocked(createAndSignIn).mockResolvedValue({
+    tcw: {
+      did: "did:pkh:eip155:1:0xabc123",
+      hosts: ["http://localhost:5112"],
+      secrets: {
+        unlock: vi.fn().mockResolvedValue({ ok: true }),
+        get: vi.fn().mockResolvedValue({ ok: true, data: "fireflies-key" }),
+      },
+      signOut: vi.fn(),
+    },
+    session: { siwe: "mock-siwe", signature: "mock-signature" },
+  });
+  vi.mocked(verifySession).mockResolvedValue({ token: "mock-token", expiresIn: 3600 });
+  vi.mocked(checkDelegationStatus).mockResolvedValue({ status: "active" });
+  vi.mocked(composeManifestWithDelegatees).mockImplementation((manifest, delegatees) => ({
+    manifests: [manifest],
+    resources: [],
+    delegationTargets: delegatees.map((delegatee) => ({
+      did: delegatee.did,
+      name: delegatee.name ?? "Delegatee",
+      expiryMs: 604800000,
+      permissions: [],
+    })),
+    registryRecords: [],
+    expiryMs: 604800000,
+    includePublicSpace: true,
+  }));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/server-info")) {
+        return Promise.resolve(
+          jsonResponse({
+            did: "did:key:backend",
+            status: "ready",
+            name: "Backend",
+            expiry: "7d",
+            permissions: [],
+          }),
+        );
+      }
+      if (url.endsWith("/info")) {
+        return Promise.resolve(
+          jsonResponse({
+            did: "did:key:agent",
+            status: "ready",
+            name: "Agent",
+            expiry: "7d",
+            permissions: [],
+          }),
+        );
+      }
+      return Promise.resolve(jsonResponse({}));
+    }),
+  );
+}
+
+async function renderAndSignIn() {
+  render(<App />);
+  fireEvent.click(screen.getByRole("button", { name: /open app/i }));
+
+  await waitFor(() => {
+    expect(createAndSignIn).toHaveBeenCalled();
+  });
+}
+
 // ── Tests ────────────────────────────────────────────────────────────
 
-describe("App auto-process pending", () => {
+describe("App manual sign-in processing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubGlobal("localStorage", createMockStorage());
+    mockAuthFlow();
 
     // Default: backfill returns no updates
     mockPost.mockResolvedValue({ updated: 0, still_missing: 0 });
@@ -140,12 +243,43 @@ describe("App auto-process pending", () => {
     vi.unstubAllGlobals();
   });
 
-  it("calls pending endpoint after session restore with active delegation", async () => {
+  it("does not auto-login from a stored session on the landing page", () => {
     render(<App />);
+
+    expect(screen.getByRole("button", { name: /open app/i })).toBeInTheDocument();
+    expect(connectWallet).not.toHaveBeenCalled();
+    expect(createAndSignIn).not.toHaveBeenCalled();
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it("calls pending endpoint after manual sign-in with active delegation", async () => {
+    await renderAndSignIn();
 
     await waitFor(() => {
       expect(mockGet).toHaveBeenCalledWith("/api/webhooks/fireflies/pending");
     });
+  });
+
+  it("requires Fireflies access when the backend cannot read the shared secret", async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/config/fireflies-key/exists") {
+        return Promise.resolve({ exists: false });
+      }
+      if (url === "/api/config/google-meet/connected") {
+        return Promise.resolve({ connected: false });
+      }
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({ conversations: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
+
+    await renderAndSignIn();
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/finish fireflies access/i).length).toBeGreaterThan(0);
+    });
+    expect(mockGet).not.toHaveBeenCalledWith("/api/webhooks/fireflies/pending");
   });
 
   it("shows banner when pending items were processed", async () => {
@@ -175,7 +309,7 @@ describe("App auto-process pending", () => {
       return Promise.resolve({});
     });
 
-    render(<App />);
+    await renderAndSignIn();
 
     await waitFor(() => {
       expect(screen.getByText(/processed 2 new transcripts from webhooks/i)).toBeInTheDocument();
@@ -183,7 +317,7 @@ describe("App auto-process pending", () => {
   });
 
   it("does not show banner when no pending items processed", async () => {
-    render(<App />);
+    await renderAndSignIn();
 
     await waitFor(() => {
       expect(mockGet).toHaveBeenCalledWith("/api/webhooks/fireflies/pending");
@@ -212,7 +346,7 @@ describe("App auto-process pending", () => {
       return Promise.resolve({});
     });
 
-    render(<App />);
+    await renderAndSignIn();
 
     // App should still render (not crash)
     await waitFor(() => {
@@ -246,15 +380,16 @@ describe("App auto-process pending", () => {
       return Promise.resolve({});
     });
 
-    render(<App />);
+    await renderAndSignIn();
 
     await waitFor(() => {
       expect(screen.getByText(/processed 1 new transcript from webhooks/i)).toBeInTheDocument();
     });
   });
 
-  it("checks google-meet connected status after session restore", async () => {
-    render(<App />);
+  it("checks google-meet connected status after manual sign-in", async () => {
+    await renderAndSignIn();
+
     await waitFor(() => {
       expect(mockGet).toHaveBeenCalledWith("/api/config/google-meet/connected");
     });
@@ -300,6 +435,7 @@ describe("Google Meet webhook check", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubGlobal("localStorage", createMockStorage());
+    mockAuthFlow();
     mockPost.mockResolvedValue({ updated: 0, still_missing: 0 });
   });
 
@@ -308,10 +444,10 @@ describe("Google Meet webhook check", () => {
     vi.unstubAllGlobals();
   });
 
-  it("calls Google Meet webhook check after session restore when Google Meet is connected", async () => {
+  it("calls Google Meet webhook check after manual sign-in when Google Meet is connected", async () => {
     mockGet.mockImplementation(gmMockGet());
 
-    render(<App />);
+    await renderAndSignIn();
 
     await waitFor(() => {
       expect(mockGet).toHaveBeenCalledWith("/api/webhooks/google-meet/check");
@@ -321,7 +457,7 @@ describe("Google Meet webhook check", () => {
   it("shows lapsed banner when webhook check returns lapsed status", async () => {
     mockGet.mockImplementation(gmMockGet({ "google-meet/check": { status: "lapsed" } }));
 
-    render(<App />);
+    await renderAndSignIn();
 
     await waitFor(() => {
       expect(screen.getByText(/real-time sync was inactive/i)).toBeInTheDocument();
@@ -332,7 +468,7 @@ describe("Google Meet webhook check", () => {
   it("does not show lapsed banner when webhook check returns active", async () => {
     mockGet.mockImplementation(gmMockGet({ "google-meet/check": { status: "active" } }));
 
-    render(<App />);
+    await renderAndSignIn();
 
     // Wait for the check call to complete
     await waitFor(() => {
@@ -345,7 +481,7 @@ describe("Google Meet webhook check", () => {
   it("Sync Now button on lapsed banner triggers manual sync", async () => {
     mockGet.mockImplementation(gmMockGet({ "google-meet/check": { status: "lapsed" } }));
 
-    render(<App />);
+    await renderAndSignIn();
 
     await waitFor(() => {
       expect(screen.getByText("Sync Now")).toBeInTheDocument();
@@ -361,7 +497,7 @@ describe("Google Meet webhook check", () => {
   it("dismiss button hides lapsed banner", async () => {
     mockGet.mockImplementation(gmMockGet({ "google-meet/check": { status: "lapsed" } }));
 
-    render(<App />);
+    await renderAndSignIn();
 
     await waitFor(() => {
       expect(screen.getByText(/real-time sync was inactive/i)).toBeInTheDocument();
@@ -380,7 +516,7 @@ describe("Google Meet webhook check", () => {
   it("calls Google Meet pending endpoint when Google Meet is connected", async () => {
     mockGet.mockImplementation(gmMockGet());
 
-    render(<App />);
+    await renderAndSignIn();
 
     await waitFor(() => {
       expect(mockGet).toHaveBeenCalledWith("/api/webhooks/google-meet/pending");
@@ -398,7 +534,7 @@ describe("Google Meet webhook check", () => {
       }),
     );
 
-    render(<App />);
+    await renderAndSignIn();
 
     await waitFor(() => {
       expect(
