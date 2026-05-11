@@ -5,7 +5,9 @@ import {
   composeManifestWithDelegatees,
   connectWallet,
   createAndSignIn,
+  createManifestDelegation,
   requestNonce,
+  sendDelegation,
   verifySession,
 } from "@tinyboilerplate/client";
 
@@ -147,6 +149,14 @@ function mockAuthFlow() {
   });
   vi.mocked(verifySession).mockResolvedValue({ token: "mock-token", expiresIn: 3600 });
   vi.mocked(checkDelegationStatus).mockResolvedValue({ status: "active" });
+  vi.mocked(createManifestDelegation).mockResolvedValue({
+    serialized: "mock-delegation",
+    prompted: false,
+  });
+  vi.mocked(sendDelegation).mockResolvedValue({
+    status: "active",
+    expiresAt: "2026-05-18T00:00:00.000Z",
+  });
   vi.mocked(composeManifestWithDelegatees).mockImplementation((manifest, delegatees) => ({
     manifests: [manifest],
     resources: [],
@@ -258,6 +268,29 @@ describe("App manual sign-in processing", () => {
     await waitFor(() => {
       expect(mockGet).toHaveBeenCalledWith("/api/webhooks/fireflies/pending");
     });
+  });
+
+  it("posts backend delegation during manual sign-in when none is stored", async () => {
+    vi.mocked(checkDelegationStatus).mockResolvedValue({ status: "none", expiresAt: null });
+
+    await renderAndSignIn();
+
+    await waitFor(() => {
+      expect(sendDelegation).toHaveBeenCalledWith(
+        "http://localhost:3001",
+        "mock-delegation",
+        "mock-token",
+      );
+    });
+    expect(createManifestDelegation).toHaveBeenCalledWith(
+      expect.objectContaining({ did: "did:pkh:eip155:1:0xabc123" }),
+      "did:key:backend",
+      expect.objectContaining({
+        delegationTargets: expect.arrayContaining([
+          expect.objectContaining({ did: "did:key:backend" }),
+        ]),
+      }),
+    );
   });
 
   it("requires Fireflies access when the backend cannot read the shared secret", async () => {

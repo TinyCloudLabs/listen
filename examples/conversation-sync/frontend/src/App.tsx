@@ -703,6 +703,16 @@ export function App() {
         status: "none",
         expiresAt: null,
       }));
+      let backendDelegationActive = delegationStatus.status === "active";
+      if (!backendDelegationActive) {
+        const { serialized } = await createManifestDelegation(
+          tcwInstance,
+          info.did,
+          composedRequest,
+        );
+        await sendDelegation(BACKEND_URL, serialized, token);
+        backendDelegationActive = true;
+      }
       setAddress(addr);
       setDid(tcwInstance.did ?? null);
       setTcw(tcwInstance);
@@ -710,7 +720,7 @@ export function App() {
       setAgentInfo(agent);
       setBackendDid(info.did);
       setCapabilityRequest(composedRequest);
-      setHasBackendDelegation(delegationStatus.status === "active");
+      setHasBackendDelegation(backendDelegationActive);
       setLiveWritePathPrefix(conversationEventPathPrefix);
       setLiveWriteHost(tcwInstance.hosts[0] ?? null);
     } catch (err) {
