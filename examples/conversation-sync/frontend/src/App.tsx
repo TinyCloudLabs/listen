@@ -254,8 +254,10 @@ function LandingPage({
           <nav className="landing-nav" aria-label="Main navigation">
             <a href="#features">Features</a>
             <a href="#sources">Sources</a>
-            <a href="#preview">Preview</a>
+            <a href="#">Pricing</a>
+            <a href="#">Changelog</a>
             <span className="landing-divider" />
+            <a href="#">Sign in</a>
             <button className="landing-btn landing-btn-solid" onClick={onSignIn} disabled={loading}>
               {signInLabel}
             </button>
@@ -309,11 +311,11 @@ function LandingPage({
             </div>
             <div className="landing-sources-row">
               {[
+                ["Granola", "desktop - realtime"],
                 ["Fireflies", "meet bot - webhook"],
+                ["Otter", "api - backfill"],
                 ["Google Meet", "captions sync"],
-                ["Audio import", "manual archive"],
-                ["TinyCloud", "sovereign storage"],
-                ["Agents", "delegated access"],
+                ["Audio import", "whisper - diarized"],
               ].map(([name, meta]) => (
                 <div key={name} className="landing-source-cell">
                   <span className="landing-dot" />
