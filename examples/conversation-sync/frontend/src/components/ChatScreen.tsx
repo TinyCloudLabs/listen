@@ -1,229 +1,326 @@
-import { useState, type FC } from "react";
+import { useEffect, useMemo, useState, type FC } from "react";
+import type { ApiClient } from "@tinyboilerplate/client";
 
-// Global Chat screen, per l-app-screens.jsx line 177 (LChat).
-// UI-only: presentational + minimal local state for the active thread and composer
-// input. No backend wiring — props supply data the parent owns.
-
-export interface ChatThread {
+interface ConversationSummary {
   id: string;
   title: string;
-  timestamp: string;
+  source: string;
+  started_at: string;
+  summary: string | null;
 }
 
-export interface ChatMessage {
+interface ConversationsResponse {
+  conversations: ConversationSummary[];
+  total: number;
+}
+
+interface TranscriptSentence {
+  speaker_name: string;
+  text: string;
+  start_time: number;
+}
+
+interface DetailResponse {
+  conversation: ConversationSummary;
+  transcript: TranscriptSentence[] | null;
+}
+
+interface Citation {
+  id: string;
+  title: string;
+  source: string;
+  date: string;
+  snippet: string;
+}
+
+interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
-  meta?: string; // e.g. "LISTEN · SEARCHED 6 TRANSCRIPTS · 1.2s"
-  citations?: ChatCitationInline[];
-  footnote?: string;
+  citations?: Citation[];
 }
 
-export interface ChatCitationInline {
-  label: string;
-  href?: string;
-  at?: string; // "(Apr 18 · 14:32)"
+interface ChatScreenProps {
+  api: ApiClient;
+  refreshKey?: number;
+  onOpenConversation: (id: string) => void;
 }
 
-export interface ChatCitedSource {
-  id: string;
-  title: string;
-  source: string; // human label, e.g. "FIREFLIES"
-  date: string;
-  citedAt: string;
+const STOPWORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "for",
+  "from",
+  "how",
+  "the",
+  "this",
+  "that",
+  "was",
+  "were",
+  "what",
+  "when",
+  "where",
+  "with",
+]);
+
+function tokenize(input: string): string[] {
+  return input
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length > 1 && !STOPWORDS.has(token));
 }
 
-export interface ChatScopeOption {
-  id: string;
-  label: string;
-  checked?: boolean;
+function sourceLabel(source: string): string {
+  switch (source) {
+    case "fireflies":
+      return "FIREFLIES";
+    case "google-meet":
+      return "GOOGLE MEET";
+    default:
+      return source.toUpperCase();
+  }
 }
 
-export interface ChatScreenProps {
-  threads: ChatThread[];
-  activeThreadId: string | null;
-  onSelectThread?: (id: string) => void;
-  onNewChat?: () => void;
-  threadTitle: string;
-  scopeLabel?: string; // e.g. "Scope: Acme · 6 transcripts"
-  messages: ChatMessage[];
-  citedSources: ChatCitedSource[];
-  scopeOptions: ChatScopeOption[];
-  suggestions?: string[];
-  composerPlaceholder?: string;
-  onSend?: (text: string) => void;
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-export const ChatScreen: FC<ChatScreenProps> = ({
-  threads,
-  activeThreadId,
-  onSelectThread,
-  onNewChat,
-  threadTitle,
-  scopeLabel,
-  messages,
-  citedSources,
-  scopeOptions,
-  suggestions = [],
-  composerPlaceholder = "Ask anything across your transcripts…",
-  onSend,
-}) => {
+function cleanText(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/^[-*]\s+/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function scoreText(text: string, tokens: string[]): number {
+  const lower = text.toLowerCase();
+  return tokens.reduce((score, token) => score + (lower.includes(token) ? 1 : 0), 0);
+}
+
+function snippetFor(text: string, tokens: string[], max = 180): string {
+  const clean = cleanText(text);
+  const lower = clean.toLowerCase();
+  const firstHit = tokens
+    .map((token) => lower.indexOf(token))
+    .filter((idx) => idx >= 0)
+    .sort((a, b) => a - b)[0];
+  const start = firstHit == null ? 0 : Math.max(0, firstHit - 48);
+  const snippet = clean.slice(start, start + max);
+  return `${start > 0 ? "... " : ""}${snippet}${start + max < clean.length ? " ..." : ""}`;
+}
+
+export const ChatScreen: FC<ChatScreenProps> = ({ api, refreshKey, onOpenConversation }) => {
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searching, setSearching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    {
+      id: "intro",
+      role: "assistant",
+      content:
+        "Ask about your synced transcripts. I will search titles, summaries, and transcript text, then cite the matching conversations.",
+    },
+  ]);
+
+  useEffect(() => {
+    setLoading(true);
+    api
+      .get<ConversationsResponse>("/api/conversations?limit=100&offset=0")
+      .then((res) => {
+        setConversations(res.conversations);
+        setError(null);
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setLoading(false));
+  }, [api, refreshKey]);
+
+  const suggestions = useMemo(() => {
+    const sources = Array.from(new Set(conversations.map((c) => sourceLabel(c.source)))).slice(
+      0,
+      2,
+    );
+    return [
+      "What did we discuss recently?",
+      sources[0] ? `Find ${sources[0].toLowerCase()} follow-ups` : "Find follow-ups",
+      "Which conversations mention roadmap?",
+    ];
+  }, [conversations]);
+
+  const runSearch = async (query: string) => {
+    const tokens = tokenize(query);
+    if (tokens.length === 0) return;
+
+    setSearching(true);
+    const userMessage: ChatMessage = {
+      id: `u-${Date.now()}`,
+      role: "user",
+      content: query,
+    };
+    setMessages((prev) => [...prev, userMessage]);
+
+    try {
+      const ranked = conversations
+        .map((conversation) => {
+          const haystack = `${conversation.title} ${conversation.source} ${conversation.summary ?? ""}`;
+          return { conversation, score: scoreText(haystack, tokens) };
+        })
+        .filter((item) => item.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 8);
+
+      const details = await Promise.all(
+        ranked.map(({ conversation }) =>
+          api
+            .get<DetailResponse>(`/api/conversations/${conversation.id}`)
+            .catch(() => ({ conversation, transcript: null })),
+        ),
+      );
+
+      const citations = details
+        .map((detail) => {
+          const transcriptText =
+            detail.transcript?.map((line) => `${line.speaker_name}: ${line.text}`).join(" ") ?? "";
+          const searchBody = `${detail.conversation.title} ${detail.conversation.summary ?? ""} ${transcriptText}`;
+          const score = scoreText(searchBody, tokens);
+          if (score === 0) return null;
+          return {
+            id: detail.conversation.id,
+            title: detail.conversation.title,
+            source: sourceLabel(detail.conversation.source),
+            date: formatDate(detail.conversation.started_at),
+            snippet: snippetFor(
+              detail.conversation.summary || transcriptText || detail.conversation.title,
+              tokens,
+            ),
+          } satisfies Citation;
+        })
+        .filter((item): item is Citation => item !== null)
+        .slice(0, 5);
+
+      const assistantMessage: ChatMessage =
+        citations.length === 0
+          ? {
+              id: `a-${Date.now()}`,
+              role: "assistant",
+              content:
+                "I did not find a matching transcript. Try a source name, meeting title, participant name, or exact phrase.",
+            }
+          : {
+              id: `a-${Date.now()}`,
+              role: "assistant",
+              content: `I found ${citations.length} matching transcript${
+                citations.length === 1 ? "" : "s"
+              }. The strongest matches are cited below.`,
+              citations,
+            };
+
+      setMessages((prev) => [...prev, assistantMessage]);
+    } catch (err) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `a-${Date.now()}`,
+          role: "assistant",
+          content: err instanceof Error ? err.message : String(err),
+        },
+      ]);
+    } finally {
+      setSearching(false);
+    }
+  };
 
   const submit = () => {
-    const text = draft.trim();
-    if (text === "") return;
-    onSend?.(text);
+    const query = draft.trim();
+    if (!query || searching) return;
     setDraft("");
+    void runSearch(query);
   };
 
   return (
-    <div style={s.shell}>
-      {/* History rail */}
-      <aside style={s.historyRail}>
-        <div style={s.historyHeader}>
-          <span style={s.eyebrow}>— chat</span>
-          <button style={s.btnPrimaryBlock} onClick={onNewChat}>
-            + New chat
-          </button>
-        </div>
-        <div style={s.historyLabel}>
-          <span style={s.monoMuted}>RECENT</span>
-        </div>
-        {threads.map((thread) => {
-          const active = thread.id === activeThreadId;
-          return (
-            <button
-              key={thread.id}
-              style={active ? s.historyItemActive : s.historyItem}
-              onClick={() => onSelectThread?.(thread.id)}
-            >
-              <div style={s.historyItemTitle}>{thread.title}</div>
-              <div style={s.historyItemTime}>{thread.timestamp}</div>
-            </button>
-          );
-        })}
-      </aside>
+    <section style={s.shell}>
+      <div style={s.header}>
+        <span style={s.eyebrow}>— transcript search</span>
+        <h2 style={s.title}>Chat</h2>
+        <p style={s.lede}>
+          Searches {conversations.length} synced transcript{conversations.length === 1 ? "" : "s"}.
+        </p>
+      </div>
 
-      {/* Thread */}
-      <section style={s.thread}>
-        <div style={s.threadHeader}>
-          <h2 style={s.threadTitle}>{threadTitle}</h2>
-          <span style={s.flex1} />
-          {scopeLabel && <button style={s.btnGhost}>{scopeLabel} ▾</button>}
-          <button style={s.btnIcon}>⋯</button>
-        </div>
+      {error && <div style={s.error}>{error}</div>}
 
-        <div style={s.threadBody}>
-          {messages.map((msg) =>
-            msg.role === "user" ? (
-              <div key={msg.id} style={s.userMessageRow}>
-                <div style={s.userBubble}>{msg.content}</div>
+      <div style={s.body}>
+        {messages.map((message) => (
+          <div
+            key={message.id}
+            style={message.role === "user" ? s.userMessage : s.assistantMessage}
+          >
+            <p style={s.messageText}>{message.content}</p>
+            {message.citations && (
+              <div style={s.citations}>
+                {message.citations.map((citation) => (
+                  <button
+                    key={citation.id}
+                    type="button"
+                    style={s.citation}
+                    onClick={() => onOpenConversation(citation.id)}
+                  >
+                    <span style={s.citationMeta}>
+                      {citation.source} · {citation.date}
+                    </span>
+                    <span style={s.citationTitle}>{citation.title}</span>
+                    <span style={s.citationSnippet}>{citation.snippet}</span>
+                  </button>
+                ))}
               </div>
-            ) : (
-              <div key={msg.id} style={s.assistantRow}>
-                {msg.meta && (
-                  <div style={s.assistantMetaRow}>
-                    <span style={s.mark} />
-                    <span style={s.monoMuted}>{msg.meta}</span>
-                  </div>
-                )}
-                <div style={s.assistantBubble}>
-                  <p style={s.assistantParagraph}>{msg.content}</p>
-                  {msg.citations && msg.citations.length > 0 && (
-                    <ol style={s.citationList}>
-                      {msg.citations.map((c, i) => (
-                        <li key={i}>
-                          <a style={s.citationLink} href={c.href}>
-                            {c.label}
-                          </a>
-                          {c.at && <span style={s.citationAt}> {c.at}</span>}
-                        </li>
-                      ))}
-                    </ol>
-                  )}
-                  {msg.footnote && <p style={s.assistantFootnote}>{msg.footnote}</p>}
-                </div>
-                <div style={s.assistantActions}>
-                  <button style={s.btnGhost}>Copy</button>
-                  <button style={s.btnGhost}>Save as note</button>
-                  <button style={s.btnGhost}>Refine →</button>
-                  <button style={s.btnGhost}>Share thread</button>
-                </div>
-              </div>
-            ),
-          )}
-        </div>
-
-        {/* Composer */}
-        <div style={s.composerWrap}>
-          <div style={s.composer}>
-            <input
-              style={s.composerInput}
-              placeholder={composerPlaceholder}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  submit();
-                }
-              }}
-            />
-            <button style={s.composerScope}>All</button>
-            <button style={s.btnIcon}>🎤</button>
-            <button style={s.btnIconSolid} onClick={submit}>
-              ↑
-            </button>
-          </div>
-          {suggestions.length > 0 && (
-            <div style={s.suggestions}>
-              <span style={s.monoMuted}>TRY</span>
-              {suggestions.map((sug) => (
-                <span key={sug} style={s.chip}>
-                  {sug}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* Cited sources rail */}
-      <aside style={s.citedRail}>
-        <div style={s.citedHeader}>
-          <span style={s.eyebrow}>— sources cited · {citedSources.length}</span>
-        </div>
-        {citedSources.map((src) => (
-          <div key={src.id} style={s.citedCard}>
-            <div style={s.citedCardTop}>
-              <span style={s.dot} />
-              <span style={s.monoMuted}>{src.source}</span>
-              <span style={s.flex1} />
-              <span style={s.monoMuted}>{src.date}</span>
-            </div>
-            <div style={s.citedCardTitle}>{src.title}</div>
-            <div style={s.citedCardFooter}>
-              <span style={s.monoMuted}>cited at {src.citedAt}</span>
-              <span style={s.flex1} />
-              <button style={s.btnGhostSmall}>Open ›</button>
-            </div>
+            )}
           </div>
         ))}
+      </div>
 
-        <div style={s.railDivider} />
-
-        <span style={s.eyebrow}>— scope</span>
-        <div style={s.scopeList}>
-          {scopeOptions.map((opt) => (
-            <label key={opt.id} style={s.scopeRow}>
-              <input type="checkbox" defaultChecked={opt.checked} />
-              {opt.label}
-            </label>
+      <div style={s.composerWrap}>
+        <div style={s.suggestions}>
+          {suggestions.map((suggestion) => (
+            <button
+              key={suggestion}
+              type="button"
+              style={s.suggestion}
+              onClick={() => {
+                setDraft("");
+                void runSearch(suggestion);
+              }}
+              disabled={loading || searching}
+            >
+              {suggestion}
+            </button>
           ))}
         </div>
-      </aside>
-    </div>
+        <div style={s.composer}>
+          <input
+            style={s.input}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder={loading ? "Loading transcripts..." : "Search across transcripts"}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submit();
+            }}
+            disabled={loading || searching}
+          />
+          <button
+            type="button"
+            style={{ ...s.send, ...(!draft.trim() || loading || searching ? s.sendDisabled : {}) }}
+            onClick={submit}
+            disabled={!draft.trim() || loading || searching}
+          >
+            {searching ? "Searching" : "Search"}
+          </button>
+        </div>
+      </div>
+    </section>
   );
 };
 
@@ -233,328 +330,154 @@ const MONO = "var(--lst-mono)";
 const s: Record<string, React.CSSProperties> = {
   shell: {
     fontFamily: FONT,
-    height: "100%",
-    display: "grid",
-    gridTemplateColumns: "240px 1fr 300px",
+    border: "var(--lst-border)",
     background: "var(--lst-bg)",
-    color: "var(--lst-blue)",
-    overflow: "hidden",
-  },
-  historyRail: {
-    borderRight: "var(--lst-border)",
-    overflow: "auto",
+    minHeight: 680,
     display: "flex",
     flexDirection: "column",
   },
-  historyHeader: {
-    padding: "18px 18px 12px",
+  header: {
+    padding: "22px 32px 16px",
     borderBottom: "var(--lst-border)",
-  },
-  historyLabel: {
-    padding: "10px 12px",
-  },
-  historyItem: {
-    textAlign: "left" as const,
-    padding: "11px 14px",
-    borderBottom: "var(--lst-hair)",
-    borderLeft: "2px solid transparent",
-    background: "transparent",
-    cursor: "pointer",
-    color: "var(--lst-blue)",
-    fontFamily: FONT,
-    width: "100%",
-  },
-  historyItemActive: {
-    textAlign: "left" as const,
-    padding: "11px 14px",
-    borderBottom: "var(--lst-hair)",
-    borderLeft: "2px solid var(--lst-blue)",
-    background: "var(--lst-ink-08)",
-    cursor: "pointer",
-    color: "var(--lst-blue)",
-    fontFamily: FONT,
-    width: "100%",
-  },
-  historyItemTitle: {
-    fontSize: 13,
-    marginBottom: 2,
-    lineHeight: 1.3,
-  },
-  historyItemTime: {
-    fontFamily: MONO,
-    opacity: 0.55,
-    fontSize: 10,
-  },
-  thread: {
-    display: "flex",
-    flexDirection: "column",
-    overflow: "hidden",
-  },
-  threadHeader: {
-    padding: "14px 32px",
-    borderBottom: "var(--lst-border)",
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-  },
-  threadTitle: {
-    fontSize: 18,
-    fontWeight: 400,
-    margin: 0,
-    color: "var(--lst-blue)",
-  },
-  threadBody: {
-    flex: 1,
-    overflow: "auto",
-    padding: "24px 32px",
-    display: "flex",
-    flexDirection: "column",
-    gap: 22,
-  },
-  userMessageRow: {
-    alignSelf: "flex-end",
-    maxWidth: "70%",
-  },
-  userBubble: {
-    background: "var(--lst-blue)",
-    color: "var(--lst-bg)",
-    padding: "12px 16px",
-    borderRadius: 18,
-    fontSize: 14,
-    lineHeight: 1.45,
-  },
-  assistantRow: {
-    alignSelf: "flex-start",
-    maxWidth: "88%",
-  },
-  assistantMetaRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 8,
-  },
-  mark: {
-    width: 22,
-    height: 22,
-    borderRadius: 4,
-    background: "var(--lst-blue)",
-    display: "inline-block",
-  },
-  assistantBubble: {
-    border: "var(--lst-border)",
-    borderRadius: 8,
-    padding: 18,
-  },
-  assistantParagraph: {
-    fontSize: 14.5,
-    lineHeight: 1.6,
-    margin: "0 0 14px",
-  },
-  citationList: {
-    paddingLeft: 20,
-    fontSize: 14,
-    lineHeight: 1.75,
-    margin: "0 0 14px",
-  },
-  citationLink: {
-    color: "var(--lst-blue)",
-    borderBottom: "1px solid var(--lst-blue)",
-    textDecoration: "none",
-  },
-  citationAt: {
-    fontFamily: MONO,
-    opacity: 0.55,
-    fontSize: 11,
-    marginLeft: 4,
-  },
-  assistantFootnote: {
-    fontSize: 13.5,
-    lineHeight: 1.55,
-    opacity: 0.75,
-    fontStyle: "italic" as const,
-    margin: 0,
-  },
-  assistantActions: {
-    display: "flex",
-    gap: 8,
-    marginTop: 10,
-  },
-  composerWrap: {
-    padding: "14px 32px 22px",
-    borderTop: "var(--lst-border)",
-  },
-  composer: {
-    border: "var(--lst-border)",
-    borderRadius: 18,
-    padding: "8px 10px",
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-  },
-  composerInput: {
-    flex: 1,
-    background: "transparent",
-    border: "none",
-    outline: "none",
-    fontFamily: FONT,
-    fontSize: 14,
-    color: "var(--lst-blue)",
-    padding: "6px 8px",
-  },
-  composerScope: {
-    fontFamily: FONT,
-    fontSize: 12,
-    color: "var(--lst-blue)",
-    background: "transparent",
-    border: "var(--lst-border)",
-    borderRadius: 999,
-    padding: "4px 10px",
-    cursor: "pointer",
-    whiteSpace: "nowrap" as const,
-  },
-  suggestions: {
-    display: "flex",
-    gap: 6,
-    marginTop: 10,
-    flexWrap: "wrap" as const,
-    alignItems: "center",
-  },
-  chip: {
-    fontFamily: FONT,
-    fontSize: 12,
-    color: "var(--lst-blue)",
-    border: "var(--lst-border)",
-    borderRadius: 999,
-    padding: "4px 10px",
-    background: "transparent",
-  },
-  citedRail: {
-    borderLeft: "var(--lst-border)",
-    overflow: "auto",
-    padding: "18px",
-  },
-  citedHeader: {
-    display: "flex",
-    alignItems: "center",
-    marginBottom: 14,
-  },
-  citedCard: {
-    border: "var(--lst-border)",
-    padding: 12,
-    borderRadius: 4,
-    marginBottom: 10,
-  },
-  citedCardTop: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 4,
-  },
-  citedCardTitle: {
-    fontSize: 13,
-    fontWeight: 500,
-    marginBottom: 6,
-  },
-  citedCardFooter: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-  },
-  railDivider: {
-    height: 1,
-    background: "var(--lst-rule-soft)",
-    margin: "18px 0",
-  },
-  scopeList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 8,
-    fontSize: 13,
-    marginTop: 8,
-  },
-  scopeRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-  },
-  dot: {
-    width: 5,
-    height: 5,
-    borderRadius: 999,
-    background: "var(--lst-blue)",
-    display: "inline-block",
-  },
-  flex1: {
-    flex: 1,
   },
   eyebrow: {
+    fontFamily: MONO,
+    fontSize: 11,
+    color: "var(--lst-ink-55)",
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
+  },
+  title: {
+    margin: "6px 0 4px",
+    fontSize: 38,
+    lineHeight: 1.05,
+    fontWeight: 400,
+    color: "var(--lst-blue)",
+  },
+  lede: {
+    margin: 0,
+    color: "var(--lst-ink-70)",
+    fontSize: 14,
+  },
+  error: {
+    padding: "10px 32px",
+    borderBottom: "var(--lst-border)",
+    background: "var(--lst-ink-08)",
+    color: "var(--lst-blue)",
+    fontSize: 13,
+  },
+  body: {
+    flex: 1,
+    overflow: "auto",
+    padding: "28px 32px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 18,
+  },
+  userMessage: {
+    alignSelf: "flex-end",
+    maxWidth: "68%",
+    border: "var(--lst-border)",
+    background: "var(--lst-blue)",
+    color: "var(--lst-bg)",
+    padding: "10px 14px",
+    borderRadius: 6,
+  },
+  assistantMessage: {
+    alignSelf: "flex-start",
+    maxWidth: "78%",
+    border: "var(--lst-border)",
+    background: "var(--lst-ink-08)",
+    color: "var(--lst-blue)",
+    padding: 14,
+    borderRadius: 6,
+  },
+  messageText: {
+    margin: 0,
+    fontSize: 14,
+    lineHeight: 1.55,
+  },
+  citations: {
+    display: "grid",
+    gap: 8,
+    marginTop: 12,
+  },
+  citation: {
+    fontFamily: FONT,
+    textAlign: "left",
+    border: "var(--lst-border)",
+    background: "var(--lst-bg)",
+    color: "var(--lst-blue)",
+    padding: 12,
+    borderRadius: 4,
+    cursor: "pointer",
+    display: "grid",
+    gap: 4,
+  },
+  citationMeta: {
     fontFamily: MONO,
     fontSize: 10,
     color: "var(--lst-ink-55)",
     letterSpacing: "0.08em",
-    textTransform: "uppercase" as const,
-    display: "block",
-    marginBottom: 8,
   },
-  monoMuted: {
-    fontFamily: MONO,
-    fontSize: 10,
-    color: "var(--lst-ink-55)",
-    letterSpacing: "0.06em",
+  citationTitle: {
+    fontSize: 14,
+    fontWeight: 500,
   },
-  btnPrimaryBlock: {
+  citationSnippet: {
+    fontSize: 12.5,
+    color: "var(--lst-ink-70)",
+    lineHeight: 1.45,
+  },
+  composerWrap: {
+    borderTop: "var(--lst-border)",
+    padding: 16,
+    display: "grid",
+    gap: 10,
+  },
+  suggestions: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  suggestion: {
     fontFamily: FONT,
+    border: "var(--lst-border)",
+    background: "transparent",
+    color: "var(--lst-blue)",
+    borderRadius: 999,
+    padding: "5px 11px",
+    cursor: "pointer",
     fontSize: 12,
-    fontWeight: 600,
-    color: "var(--lst-bg)",
+  },
+  composer: {
+    display: "flex",
+    gap: 8,
+  },
+  input: {
+    flex: 1,
+    border: "var(--lst-border)",
+    background: "transparent",
+    color: "var(--lst-blue)",
+    borderRadius: 999,
+    padding: "10px 14px",
+    fontFamily: FONT,
+    fontSize: 14,
+    outline: "none",
+  },
+  send: {
+    fontFamily: FONT,
+    border: "var(--lst-border)",
     background: "var(--lst-blue)",
-    border: "var(--lst-border)",
-    borderRadius: 999,
-    padding: "8px 12px",
-    cursor: "pointer",
-    width: "100%",
-  },
-  btnGhost: {
-    fontFamily: FONT,
-    fontSize: 12,
-    color: "var(--lst-blue)",
-    background: "transparent",
-    border: "var(--lst-border)",
-    borderRadius: 999,
-    padding: "6px 12px",
-    cursor: "pointer",
-    whiteSpace: "nowrap" as const,
-  },
-  btnGhostSmall: {
-    fontFamily: FONT,
-    fontSize: 11,
-    color: "var(--lst-blue)",
-    background: "transparent",
-    border: "var(--lst-border)",
-    borderRadius: 999,
-    padding: "2px 8px",
-    cursor: "pointer",
-  },
-  btnIcon: {
-    fontFamily: FONT,
-    fontSize: 12,
-    color: "var(--lst-blue)",
-    background: "transparent",
-    border: "var(--lst-border)",
-    borderRadius: 999,
-    padding: "6px 10px",
-    cursor: "pointer",
-    minWidth: 30,
-  },
-  btnIconSolid: {
-    fontFamily: FONT,
-    fontSize: 12,
     color: "var(--lst-bg)",
-    background: "var(--lst-blue)",
-    border: "var(--lst-border)",
     borderRadius: 999,
-    padding: "6px 10px",
+    padding: "10px 16px",
     cursor: "pointer",
-    minWidth: 30,
+    fontSize: 13,
+    fontWeight: 500,
+  },
+  sendDisabled: {
+    opacity: 0.55,
+    cursor: "not-allowed",
   },
 };

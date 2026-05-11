@@ -1,220 +1,198 @@
-import { type FC } from "react";
+import { useState, type FC } from "react";
+import type { ApiClient } from "@tinyboilerplate/client";
 
-// Connections / Sources settings screen, per l-app-screens.jsx line 409 (LConnections).
-// Richer source/import management view: connected sources with sync status,
-// available sources to add, an audio drop zone, and in-progress imports.
-// Presentational — receives data via props.
-
-export type ConnectionStatus = "live" | "warning";
-
-export interface ConnectedSource {
-  id: string;
-  name: string;
-  count: string; // e.g. "24 transcripts"
-  syncedLabel: string; // e.g. "synced 5m ago"
-  status: ConnectionStatus;
-  backfillPercent: number; // 0..100
-  error?: string;
-  onSyncNow?: () => void;
-  onSettings?: () => void;
-  onReconnect?: () => void;
+interface ConnectionsScreenProps {
+  api: ApiClient;
+  hasFireflies: boolean;
+  hasGoogleMeet: boolean;
+  hasFirefliesBackendAccess: boolean;
+  showGoogleMeet: boolean;
+  onAddSource: () => void;
+  onRefresh: () => void;
 }
 
-export interface AvailableSource {
-  id: string;
+type SourceId = "fireflies" | "google-meet";
+
+interface SourceRow {
+  id: SourceId;
   name: string;
+  connected: boolean;
+  ready: boolean;
   description: string;
-  method: string; // e.g. "OAuth", "No setup"
-  actionLabel: string;
-  onAction?: () => void;
-}
-
-export type ImportStatus = "transcribing" | "queued" | "done" | "error";
-
-export interface AudioImport {
-  id: string;
-  filename: string;
-  size: string;
-  status: ImportStatus;
-  percent: number; // 0..100
-  onCancel?: () => void;
-}
-
-export interface ConnectionsScreenProps {
-  connected: ConnectedSource[];
-  available: AvailableSource[];
-  imports: AudioImport[];
-  onSyncAll?: () => void;
-  onAddSource?: () => void;
-  onDropAudio?: (files: FileList) => void;
 }
 
 export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
-  connected,
-  available,
-  imports,
-  onSyncAll,
+  api,
+  hasFireflies,
+  hasGoogleMeet,
+  hasFirefliesBackendAccess,
+  showGoogleMeet,
   onAddSource,
-  onDropAudio,
+  onRefresh,
 }) => {
+  const [busySource, setBusySource] = useState<SourceId | "all" | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const sources: SourceRow[] = [
+    {
+      id: "fireflies",
+      name: "Fireflies",
+      connected: hasFireflies,
+      ready: hasFireflies && hasFirefliesBackendAccess,
+      description: "Syncs Fireflies transcripts and summaries into Listen.",
+    },
+    ...(showGoogleMeet
+      ? [
+          {
+            id: "google-meet" as const,
+            name: "Google Meet",
+            connected: hasGoogleMeet,
+            ready: hasGoogleMeet,
+            description: "Imports Google Meet transcripts through the connected Google account.",
+          },
+        ]
+      : []),
+  ];
+
+  const connected = sources.filter((source) => source.connected);
+  const available = sources.filter((source) => !source.connected);
+
+  const syncSource = async (source: SourceId) => {
+    setBusySource(source);
+    setError(null);
+    setMessage(null);
+    try {
+      if (source === "fireflies") {
+        await api.post("/api/sync/fireflies", { mode: "incremental" });
+      } else {
+        await api.post("/api/sync/google-meet");
+      }
+      setMessage(`${sources.find((item) => item.id === source)?.name ?? "Source"} synced`);
+      onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusySource(null);
+    }
+  };
+
+  const syncAll = async () => {
+    setBusySource("all");
+    setError(null);
+    setMessage(null);
+    try {
+      for (const source of connected) {
+        if (source.ready) {
+          if (source.id === "fireflies") {
+            await api.post("/api/sync/fireflies", { mode: "incremental" });
+          } else {
+            await api.post("/api/sync/google-meet");
+          }
+        }
+      }
+      setMessage("Connected sources synced");
+      onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusySource(null);
+    }
+  };
+
   return (
-    <main style={s.shell}>
+    <section style={s.shell}>
       <header style={s.header}>
         <span style={s.eyebrow}>— settings / sources</span>
         <div style={s.headerRow}>
-          <h1 style={s.title}>Connections</h1>
+          <h2 style={s.title}>Connections</h2>
           <div style={s.headerActions}>
-            <button style={s.btnGhost} onClick={onSyncAll}>
-              Sync now
+            <button
+              type="button"
+              style={{ ...s.btnGhost, ...(connected.length === 0 ? s.btnDisabled : {}) }}
+              onClick={syncAll}
+              disabled={connected.length === 0 || busySource !== null}
+            >
+              {busySource === "all" ? "Syncing" : "Sync connected"}
             </button>
-            <button style={s.btnPrimary} onClick={onAddSource}>
-              + Add source
+            <button type="button" style={s.btnPrimary} onClick={onAddSource}>
+              Add source
             </button>
           </div>
         </div>
-        <p style={s.lede}>
-          Listen pulls transcripts from every tool you connect. Disconnect any time — your
-          transcripts stay. New transcripts appear in the inbox within 30 seconds of being recorded.
-        </p>
+        <p style={s.lede}>Manage the transcript sources that write into your Listen inbox.</p>
       </header>
 
+      {message && <div style={s.notice}>{message}</div>}
+      {error && <div style={s.error}>{error}</div>}
+
       <div style={s.body}>
-        {/* Connected */}
         <div style={s.sectionLabelRow}>
-          <span style={s.sectionLabel}>— CONNECTED · {connected.length}</span>
+          <span style={s.sectionLabel}>— connected · {connected.length}</span>
           <span style={s.sectionRule} />
         </div>
 
-        {connected.map((src) => (
-          <div key={src.id} style={s.connectedCard}>
-            <div style={s.connectedGrid}>
-              <span style={s.mark} />
+        {connected.length === 0 ? (
+          <div style={s.empty}>No sources connected yet.</div>
+        ) : (
+          connected.map((source) => (
+            <div key={source.id} style={s.sourceCard}>
+              <span style={source.ready ? s.markLive : s.markWarn} />
               <div>
-                <div style={s.sourceName}>{src.name}</div>
-                <span style={s.sourceMeta}>
-                  {src.count.toUpperCase()} · {src.syncedLabel.toUpperCase()}
-                </span>
-              </div>
-              <div style={s.backfillCell}>
-                <span style={s.sectionLabel}>BACKFILL</span>
-                <div style={s.backfillTrack}>
-                  <div
-                    style={{
-                      ...s.backfillFill,
-                      width: `${Math.min(100, Math.max(0, src.backfillPercent))}%`,
-                    }}
-                  />
+                <div style={s.sourceName}>{source.name}</div>
+                <div style={s.sourceMeta}>
+                  {source.ready ? "READY" : "NEEDS ACCESS"} · {source.description}
                 </div>
               </div>
-              <span style={src.status === "live" ? s.chipSolid : s.chipGhost}>
-                <span
-                  style={{
-                    ...s.dot,
-                    background: src.status === "live" ? "var(--lst-bg)" : "var(--lst-blue)",
-                  }}
-                />
-                {src.status === "live" ? "Live" : "Needs attention"}
+              <span style={source.ready ? s.chipSolid : s.chipGhost}>
+                {source.ready ? "Live" : "Reconnect"}
               </span>
-              <div style={s.connectedActions}>
-                <button style={s.btnGhostSm} onClick={src.onSyncNow}>
-                  Sync now
-                </button>
-                <button style={s.btnGhostSm} onClick={src.onSettings}>
+              <div style={s.rowActions}>
+                {source.ready ? (
+                  <button
+                    type="button"
+                    style={s.btnGhostSm}
+                    onClick={() => void syncSource(source.id)}
+                    disabled={busySource !== null}
+                  >
+                    {busySource === source.id ? "Syncing" : "Sync now"}
+                  </button>
+                ) : (
+                  <button type="button" style={s.btnGhostSm} onClick={onAddSource}>
+                    Reconnect
+                  </button>
+                )}
+                <button type="button" style={s.btnGhostSm} onClick={onAddSource}>
                   Settings
                 </button>
-                <button style={s.btnIcon}>⋯</button>
               </div>
             </div>
-            {src.error && (
-              <div style={s.errorBanner}>
-                ⚠ {src.error}{" "}
-                <button style={s.errorLink} onClick={src.onReconnect}>
-                  Reconnect →
-                </button>
-              </div>
-            )}
-          </div>
-        ))}
+          ))
+        )}
 
-        {/* Available */}
-        <div style={{ ...s.sectionLabelRow, marginTop: 32 }}>
-          <span style={s.sectionLabel}>— AVAILABLE · {available.length}</span>
+        <div style={{ ...s.sectionLabelRow, marginTop: 28 }}>
+          <span style={s.sectionLabel}>— available · {available.length}</span>
           <span style={s.sectionRule} />
         </div>
 
-        {available.map((src) => (
-          <div key={src.id} style={s.availableCard}>
-            <span style={s.mark} />
-            <div>
-              <div style={s.availableTitleRow}>
-                <span style={s.sourceName}>{src.name}</span>
-                <span style={s.sourceMeta}>· {src.method}</span>
+        {available.length === 0 ? (
+          <div style={s.empty}>All configured sources are connected.</div>
+        ) : (
+          available.map((source) => (
+            <div key={source.id} style={s.availableCard}>
+              <span style={s.markIdle} />
+              <div>
+                <div style={s.sourceName}>{source.name}</div>
+                <p style={s.availableDesc}>{source.description}</p>
               </div>
-              <p style={s.availableDesc}>{src.description}</p>
+              <button type="button" style={s.btnGhostSm} onClick={onAddSource}>
+                Connect
+              </button>
             </div>
-            <button style={s.btnGhostSm} onClick={src.onAction}>
-              {src.actionLabel}
-            </button>
-          </div>
-        ))}
-
-        {/* Drop zone */}
-        <div style={s.dropSection}>
-          <span style={s.sectionLabel}>— DROP AUDIO HERE</span>
-          <div
-            style={s.dropZone}
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => {
-              e.preventDefault();
-              if (e.dataTransfer?.files) onDropAudio?.(e.dataTransfer.files);
-            }}
-          >
-            <div style={s.dropIcon}>🎤</div>
-            <h3 style={s.dropTitle}>Drop .m4a, .mp3, .wav files here</h3>
-            <p style={s.dropSub}>
-              Or click to browse · multiple files at once is fine · transcribed in 2–6 minutes
-            </p>
-            <div style={s.dropFeatures}>
-              <span style={s.dropFeature}>✓ auto-transcribe</span>
-              <span style={s.dropFeature}>✓ speaker diarization</span>
-              <span style={s.dropFeature}>
-                ✓ lands in <span style={s.monoInline}>/Imports</span>
-              </span>
-              <span style={s.dropFeature}>✓ summary auto-generated</span>
-            </div>
-          </div>
-
-          {imports.length > 0 && (
-            <div style={s.importsSection}>
-              <span style={s.sectionLabel}>— IN PROGRESS · {imports.length}</span>
-              {imports.map((imp) => (
-                <div key={imp.id} style={s.importRow}>
-                  <span style={s.importIcon}>📄</span>
-                  <div>
-                    <div style={s.importName}>{imp.filename}</div>
-                    <span style={s.sourceMeta}>
-                      {imp.size} · {imp.status.toUpperCase()}
-                    </span>
-                  </div>
-                  <div style={s.importTrack}>
-                    <div
-                      style={{
-                        ...s.importFill,
-                        width: `${Math.min(100, Math.max(0, imp.percent))}%`,
-                      }}
-                    />
-                  </div>
-                  <span style={s.importPct}>{imp.percent}%</span>
-                  <button style={s.btnIconBare} onClick={imp.onCancel}>
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+          ))
+        )}
       </div>
-    </main>
+    </section>
   );
 };
 
@@ -224,92 +202,91 @@ const MONO = "var(--lst-mono)";
 const s: Record<string, React.CSSProperties> = {
   shell: {
     fontFamily: FONT,
-    height: "100%",
-    display: "flex",
-    flexDirection: "column",
-    overflow: "hidden",
+    border: "var(--lst-border)",
     background: "var(--lst-bg)",
     color: "var(--lst-blue)",
+    minHeight: 680,
+    display: "flex",
+    flexDirection: "column",
   },
   header: {
-    padding: "20px 32px 16px",
+    padding: "22px 32px 16px",
     borderBottom: "var(--lst-border)",
   },
   eyebrow: {
     fontFamily: MONO,
-    fontSize: 10,
+    fontSize: 11,
     color: "var(--lst-ink-55)",
     letterSpacing: "0.08em",
-    textTransform: "uppercase" as const,
+    textTransform: "uppercase",
   },
   headerRow: {
     display: "flex",
-    alignItems: "baseline",
+    alignItems: "center",
     justifyContent: "space-between",
-    marginTop: 4,
+    gap: 16,
+    marginTop: 6,
   },
   title: {
     fontSize: 38,
+    lineHeight: 1.05,
     fontWeight: 400,
     margin: 0,
-    color: "var(--lst-blue)",
   },
   headerActions: {
     display: "flex",
     gap: 8,
   },
   lede: {
+    margin: "10px 0 0",
+    color: "var(--lst-ink-70)",
     fontSize: 14,
-    opacity: 0.7,
-    marginTop: 12,
-    maxWidth: 600,
   },
   body: {
     flex: 1,
     overflow: "auto",
-    padding: "24px 32px 48px",
+    padding: "24px 32px 40px",
   },
   sectionLabelRow: {
     display: "flex",
-    alignItems: "baseline",
+    alignItems: "center",
     gap: 12,
-    marginBottom: 14,
+    marginBottom: 12,
   },
   sectionLabel: {
     fontFamily: MONO,
     fontSize: 11,
     color: "var(--lst-ink-55)",
     letterSpacing: "0.08em",
-    textTransform: "uppercase" as const,
+    textTransform: "uppercase",
   },
   sectionRule: {
     flex: 1,
     height: 1,
     background: "var(--lst-rule-soft)",
   },
-  connectedCard: {
+  sourceCard: {
     border: "var(--lst-border)",
-    padding: "16px 20px",
-    marginBottom: 8,
-  },
-  connectedGrid: {
+    padding: "15px 18px",
     display: "grid",
-    gridTemplateColumns: "32px 1fr 140px 120px auto",
+    gridTemplateColumns: "28px minmax(0, 1fr) auto auto",
     gap: 14,
     alignItems: "center",
+    marginBottom: 8,
   },
-  mark: {
-    width: 26,
-    height: 26,
-    borderRadius: 4,
-    background: "var(--lst-blue)",
-    display: "inline-block",
+  availableCard: {
+    border: "var(--lst-border)",
+    padding: "15px 18px",
+    display: "grid",
+    gridTemplateColumns: "28px minmax(0, 1fr) auto",
+    gap: 14,
+    alignItems: "center",
+    marginBottom: 8,
   },
   sourceName: {
     fontSize: 15,
     fontWeight: 500,
-    marginBottom: 2,
-    color: "var(--lst-blue)",
+    marginBottom: 3,
   },
   sourceMeta: {
     fontFamily: MONO,
@@ -317,227 +294,111 @@ const s: Record<string, React.CSSProperties> = {
     color: "var(--lst-ink-55)",
     letterSpacing: "0.06em",
   },
-  backfillCell: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "flex-start",
-    gap: 4,
+  availableDesc: {
+    margin: 0,
+    color: "var(--lst-ink-70)",
+    fontSize: 13,
   },
-  backfillTrack: {
-    width: 100,
-    height: 4,
-    border: "var(--lst-border)",
-    position: "relative" as const,
-  },
-  backfillFill: {
-    position: "absolute" as const,
-    inset: 0,
+  markLive: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
     background: "var(--lst-blue)",
+  },
+  markWarn: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    border: "var(--lst-border)",
+    background: "var(--lst-ink-08)",
+  },
+  markIdle: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    border: "var(--lst-border)",
+    background: "transparent",
   },
   chipSolid: {
-    fontFamily: FONT,
-    fontSize: 11,
+    fontFamily: MONO,
+    fontSize: 10,
     color: "var(--lst-bg)",
     background: "var(--lst-blue)",
-    border: "var(--lst-border)",
     borderRadius: 999,
-    padding: "4px 10px",
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 6,
-    whiteSpace: "nowrap" as const,
+    padding: "5px 10px",
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
   },
   chipGhost: {
-    fontFamily: FONT,
-    fontSize: 11,
-    color: "var(--lst-blue)",
-    background: "transparent",
-    border: "var(--lst-border)",
-    borderRadius: 999,
-    padding: "4px 10px",
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 6,
-    whiteSpace: "nowrap" as const,
-  },
-  dot: {
-    width: 5,
-    height: 5,
-    borderRadius: 999,
-    display: "inline-block",
-  },
-  connectedActions: {
-    display: "flex",
-    gap: 6,
-  },
-  errorBanner: {
-    marginTop: 12,
-    padding: "8px 12px",
-    border: "1px dashed var(--lst-blue)",
-    fontSize: 12.5,
-    opacity: 0.85,
-  },
-  errorLink: {
-    background: "transparent",
-    border: "none",
-    borderBottom: "1px solid var(--lst-blue)",
-    color: "var(--lst-blue)",
-    fontFamily: FONT,
-    fontSize: 12.5,
-    cursor: "pointer",
-    padding: 0,
-    marginLeft: 6,
-  },
-  availableCard: {
-    border: "var(--lst-border)",
-    padding: "16px 20px",
-    marginBottom: 8,
-    display: "grid",
-    gridTemplateColumns: "32px 1fr auto",
-    gap: 14,
-    alignItems: "center",
-    opacity: 0.85,
-  },
-  availableTitleRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 2,
-  },
-  availableDesc: {
-    fontSize: 13,
-    opacity: 0.7,
-    margin: 0,
-  },
-  dropSection: {
-    marginTop: 28,
-  },
-  dropZone: {
-    marginTop: 10,
-    border: "2px dashed var(--lst-blue)",
-    padding: "40px 20px",
-    textAlign: "center" as const,
-    position: "relative" as const,
-  },
-  dropIcon: {
-    fontSize: 36,
-  },
-  dropTitle: {
-    fontSize: 22,
-    marginTop: 12,
-    fontWeight: 400,
-    color: "var(--lst-blue)",
-    margin: "12px 0 0",
-  },
-  dropSub: {
-    fontSize: 13,
-    opacity: 0.65,
-    marginTop: 6,
-  },
-  dropFeatures: {
-    display: "flex",
-    gap: 18,
-    justifyContent: "center",
-    marginTop: 18,
-    fontSize: 12,
-    flexWrap: "wrap" as const,
-  },
-  dropFeature: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-  },
-  monoInline: {
     fontFamily: MONO,
-  },
-  importsSection: {
-    marginTop: 14,
-  },
-  importRow: {
-    marginTop: 10,
-    border: "var(--lst-border)",
-    padding: "12px 16px",
-    display: "grid",
-    gridTemplateColumns: "20px 1fr 100px 60px 32px",
-    gap: 14,
-    alignItems: "center",
-  },
-  importIcon: {
-    fontSize: 16,
-  },
-  importName: {
-    fontSize: 13,
-    marginBottom: 2,
+    fontSize: 10,
     color: "var(--lst-blue)",
-  },
-  importTrack: {
-    width: 100,
-    height: 4,
-    background: "var(--lst-ink-15)",
-    position: "relative" as const,
-  },
-  importFill: {
-    position: "absolute" as const,
-    inset: 0,
-    background: "var(--lst-blue)",
-  },
-  importPct: {
-    fontFamily: MONO,
-    fontSize: 11,
-    opacity: 0.7,
-  },
-  btnPrimary: {
-    fontFamily: FONT,
-    fontSize: 12,
-    fontWeight: 600,
-    color: "var(--lst-bg)",
-    background: "var(--lst-blue)",
-    border: "var(--lst-border)",
-    borderRadius: 999,
-    padding: "7px 13px",
-    cursor: "pointer",
-    whiteSpace: "nowrap" as const,
-  },
-  btnGhost: {
-    fontFamily: FONT,
-    fontSize: 12,
-    color: "var(--lst-blue)",
-    background: "transparent",
-    border: "var(--lst-border)",
-    borderRadius: 999,
-    padding: "7px 13px",
-    cursor: "pointer",
-    whiteSpace: "nowrap" as const,
-  },
-  btnGhostSm: {
-    fontFamily: FONT,
-    fontSize: 11,
-    color: "var(--lst-blue)",
-    background: "transparent",
     border: "var(--lst-border)",
     borderRadius: 999,
     padding: "5px 10px",
-    cursor: "pointer",
-    whiteSpace: "nowrap" as const,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
   },
-  btnIcon: {
+  rowActions: {
+    display: "flex",
+    gap: 8,
+  },
+  btnPrimary: {
     fontFamily: FONT,
-    fontSize: 12,
-    color: "var(--lst-blue)",
-    background: "transparent",
     border: "var(--lst-border)",
+    background: "var(--lst-blue)",
+    color: "var(--lst-bg)",
     borderRadius: 999,
-    padding: "5px 9px",
+    padding: "8px 14px",
     cursor: "pointer",
-    minWidth: 28,
+    fontSize: 13,
+    fontWeight: 500,
   },
-  btnIconBare: {
+  btnGhost: {
     fontFamily: FONT,
-    fontSize: 12,
-    color: "var(--lst-blue)",
+    border: "var(--lst-border)",
     background: "transparent",
-    border: "none",
+    color: "var(--lst-blue)",
+    borderRadius: 999,
+    padding: "8px 14px",
     cursor: "pointer",
-    padding: 4,
+    fontSize: 13,
+    fontWeight: 500,
+  },
+  btnGhostSm: {
+    fontFamily: FONT,
+    border: "var(--lst-border)",
+    background: "transparent",
+    color: "var(--lst-blue)",
+    borderRadius: 999,
+    padding: "6px 12px",
+    cursor: "pointer",
+    fontSize: 12.5,
+    fontWeight: 500,
+  },
+  btnDisabled: {
+    opacity: 0.45,
+    cursor: "not-allowed",
+  },
+  notice: {
+    padding: "9px 32px",
+    borderBottom: "var(--lst-border)",
+    background: "var(--lst-ink-08)",
+    color: "var(--lst-blue)",
+    fontSize: 13,
+  },
+  error: {
+    padding: "9px 32px",
+    borderBottom: "var(--lst-border)",
+    background: "var(--lst-ink-08)",
+    color: "var(--lst-blue)",
+    fontSize: 13,
+  },
+  empty: {
+    border: "var(--lst-border)",
+    padding: 18,
+    color: "var(--lst-ink-55)",
+    fontSize: 13,
+    marginBottom: 8,
   },
 };
