@@ -9,5 +9,6 @@ dist
 .env.local
 *.pem
 *.tsbuildinfo
+**/*.tsbuildinfo
 test/.passkey.json
 test/.last-run.log
