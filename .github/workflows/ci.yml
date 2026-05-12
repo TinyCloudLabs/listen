@@ -29,8 +29,5 @@ jobs:
       - name: Build
         run: bun run build
 
-      - name: Test (backend)
-        run: bun test packages/ examples/react-express/backend examples/conversation-sync/backend
-
-      - name: Test (frontend)
-        run: cd examples/conversation-sync/frontend && bunx vitest run
+      - name: Test
+        run: bun run test
