@@ -5,7 +5,7 @@
   "scripts": {
     "build": "tsc --noEmit",
     "dev": "bun --watch src/index.ts",
-    "dev:portless": "portless run --name api.listen bun --watch src/index.ts",
+    "dev:portless": "portless run --force --name api.listen bun --watch src/index.ts",
     "start": "bun src/index.ts",
     "test": "bun test"
   },

@@ -17,9 +17,10 @@
     "@tinycloud/web-sdk-wasm": "1.7.3-beta.1"
   },
   "scripts": {
-    "build": "turbo run build",
+    "build": "bun install --frozen-lockfile && bunx turbo run build",
     "predev": "lsof -ti:3001,5173 | xargs kill -9 2>/dev/null; pkill -9 -f 'bun --watch src/index.ts' 2>/dev/null; true",
-    "dev": "bun run dev:backend & bun run dev:frontend",
+    "dev": "bun run dev:portless",
+    "dev:localhost": "bun run dev:backend & bun run dev:frontend",
     "dev:frontend": "cd frontend && bun run dev",
     "dev:backend": "cd backend && bun --env-file=../.env run dev",
     "dev:portless": "bun run dev:portless:backend & bun run dev:portless:frontend",
@@ -31,10 +32,10 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "docker:backend:build": "docker buildx build --platform linux/amd64 -f backend/Dockerfile -t ghcr.io/tinycloudlabs/listen-backend:latest .",
-    "docker:backend:push": "docker buildx build --platform linux/amd64 -f backend/Dockerfile -t ghcr.io/tinycloudlabs/listen-backend:latest --push .",
+    "docker:backend:build": "docker buildx build --platform linux/amd64 -f backend/Dockerfile -t ${LISTEN_BACKEND_IMAGE:-skgbafa/listen-backend:latest} .",
+    "docker:backend:push": "docker buildx build --platform linux/amd64 -f backend/Dockerfile -t ${LISTEN_BACKEND_IMAGE:-skgbafa/listen-backend:latest} --push .",
     "deploy:frontend": "bun run build --filter=listen-frontend && CLOUDFLARE_ACCOUNT_ID=9959301f03d2db1a5fcf5e004278d467 bunx wrangler pages deploy",
-    "deploy:backend:phala": "phala deploy -c docker-compose.phala.yml -n listen-backend --instance-type tdx.small -e .env -e LISTEN_BACKEND_IMAGE=${LISTEN_BACKEND_IMAGE:-ghcr.io/tinycloudlabs/listen-backend:latest} -e FRONTEND_URL=https://listen.tinycloud.xyz -e PORT=3001 --wait",
+    "deploy:backend:phala": "phala deploy --cvm-id listen-backend -c docker-compose.phala.yml -e .env -e LISTEN_BACKEND_IMAGE=${LISTEN_BACKEND_IMAGE:-skgbafa/listen-backend:latest} -e FRONTEND_URL=https://listen.tinycloud.xyz -e PORT=3001 --wait",
     "prepare": "husky"
   },
   "devDependencies": {

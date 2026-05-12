@@ -7,7 +7,7 @@ Listen is a transcript workspace for TinyCloud. It syncs Fireflies and Google Me
 Prerequisites:
 
 - Bun 1.3+
-- An OpenKey OAuth client that allows `https://localhost:5173`
+- An OpenKey OAuth client that allows `https://listen.localhost`
 - A backend private key
 
 ```bash
@@ -21,8 +21,8 @@ Edit `.env`:
 ```bash
 BACKEND_PRIVATE_KEY=0x...
 VITE_OPENKEY_HOST=https://openkey.so
-VITE_BACKEND_URL=http://localhost:3001
-FRONTEND_URL=https://localhost:5173
+VITE_BACKEND_URL=https://api.listen.localhost
+FRONTEND_URL=https://listen.localhost
 PORT=3001
 ```
 
@@ -32,15 +32,15 @@ Run the app:
 bun run dev
 ```
 
-The frontend runs at `https://localhost:5173` and the backend runs at `http://localhost:3001`.
+The default dev stack uses Portless. The frontend runs at `https://listen.localhost` and the backend runs at `https://api.listen.localhost`.
 
-For stable local HTTPS names:
+For raw localhost ports:
 
 ```bash
-bun run dev:portless
+bun run dev:localhost
 ```
 
-This serves the frontend at `https://listen.localhost` and the backend at `https://api.listen.localhost`.
+This serves the frontend at `http://localhost:5173` and the backend at `http://localhost:3001`.
 
 ## Project Layout
 
@@ -66,7 +66,7 @@ Backend:
 | Variable | Required | Description |
 | --- | --- | --- |
 | `BACKEND_PRIVATE_KEY` | Yes | Backend wallet key. Generate with `bun run generate-key`. |
-| `FRONTEND_URL` | Yes | Allowed browser origin for CORS. Local: `https://localhost:5173`. Production: `https://listen.tinycloud.xyz`. |
+| `FRONTEND_URL` | Yes | Allowed browser origin for CORS. Local: `https://listen.localhost`. Production: `https://listen.tinycloud.xyz`. |
 | `PORT` | No | Backend port. Defaults to `3001`. |
 | `TINYCLOUD_HOST` | No | TinyCloud node URL. Defaults to `https://node.tinycloud.xyz`. |
 | `OPENKEY_ISSUER_URL` | No | OpenKey issuer. Defaults to `https://openkey.so`. |
@@ -116,7 +116,8 @@ Configuration still needed outside the repo:
 - Cloudflare custom domain mapping for `listen.tinycloud.xyz`.
 - Phala auth (`phala login` or `PHALA_CLOUD_API_KEY`) with credits/workspace access.
 - Phala gateway/custom domain mapping for `api.listen.tinycloud.xyz`.
-- A pushed amd64 backend image. The default target is `ghcr.io/tinycloudlabs/listen-backend:latest`, which requires a GitHub token with `write:packages`; set `LISTEN_BACKEND_IMAGE` to use a different public image.
+- A pushed amd64 backend image. The default target is the public Docker Hub image `skgbafa/listen-backend:latest`; create that Docker Hub repo as public before the first push, and set `LISTEN_BACKEND_IMAGE` to deploy a specific tag.
+- For automated backend deploys, set GitHub Actions secrets `DOCKER_REGISTRY_USERNAME`, `DOCKER_REGISTRY_PASSWORD`, and `PHALA_CLOUD_API_KEY`.
 - OpenKey OAuth redirect/origin allowlist entries for production and local URLs.
 - Production `.env` values for `BACKEND_PRIVATE_KEY`, `FRONTEND_URL`, and optional Google credentials.
 

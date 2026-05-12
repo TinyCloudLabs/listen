@@ -1,6 +1,6 @@
 services:
   listen-backend:
-    image: ${LISTEN_BACKEND_IMAGE:-ghcr.io/tinycloudlabs/listen-backend:latest}
+    image: ${LISTEN_BACKEND_IMAGE:-skgbafa/listen-backend:latest}
     platform: linux/amd64
     ports:
       - "3001:3001"
