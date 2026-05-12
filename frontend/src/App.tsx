@@ -45,6 +45,10 @@ const FIREFLIES_SECRET_VAULT_KEY = `secrets/${FIREFLIES_SECRET_NAME}`;
 const GRANOLA_SECRET_NAME = "GRANOLA_API_KEY";
 const GRANOLA_SECRET_VAULT_KEY = `secrets/${GRANOLA_SECRET_NAME}`;
 
+function isChatEnabled(): boolean {
+  return import.meta.env.VITE_ENABLE_CHAT === "true";
+}
+
 async function fetchAgentInfo(endpoint: string): Promise<ServerInfo | null> {
   try {
     const res = await fetch(`${endpoint}/info`);
@@ -510,6 +514,22 @@ function WorkspaceStatusPanel({
   );
 }
 
+function ChatUnderDevelopmentPanel() {
+  return (
+    <section style={s.statusPanel}>
+      <span style={s.eyebrow}>- chat beta</span>
+      <h3 style={s.statusTitle}>Chat is under development.</h3>
+      <p style={s.statusText}>
+        Transcript chat is currently in beta and is not available in this workspace yet.
+      </p>
+      <div style={s.statusList}>
+        <span>disabled by default</span>
+        <span>enable with VITE_ENABLE_CHAT=true</span>
+      </div>
+    </section>
+  );
+}
+
 // ── App ─────────────────────────────────────────────────────────────
 
 export function App() {
@@ -545,6 +565,7 @@ export function App() {
 
   const sessionStoreRef = useRef(new SessionStore());
   const isMobile = useIsMobile();
+  const chatEnabled = isChatEnabled();
 
   const renewBackendDelegation = useCallback(async () => {
     if (!tcw || !backendDid || !capabilityRequest) {
@@ -1221,6 +1242,7 @@ export function App() {
         hasGoogleMeet={hasGoogleMeet === true}
         hasFirefliesBackendAccess={hasFirefliesBackendAccess === true}
         googleMeetAvailable={googleMeetAvailable}
+        chatEnabled={chatEnabled}
         onRouteChange={setActivePage}
         onSelectConversation={setSelectedConversationId}
         onAddSource={() => openSourcesSetup()}
@@ -1438,16 +1460,21 @@ export function App() {
         </>
       )}
 
-      {hasUsableInbox && activePage === "chat" && api && (
-        <ChatScreen
-          api={api}
-          refreshKey={refreshKey}
-          onOpenConversation={(id) => {
-            setSelectedConversationId(id);
-            setActivePage("inbox");
-          }}
-        />
-      )}
+      {hasUsableInbox &&
+        activePage === "chat" &&
+        api &&
+        (chatEnabled ? (
+          <ChatScreen
+            api={api}
+            refreshKey={refreshKey}
+            onOpenConversation={(id) => {
+              setSelectedConversationId(id);
+              setActivePage("inbox");
+            }}
+          />
+        ) : (
+          <ChatUnderDevelopmentPanel />
+        ))}
 
       {hasUsableInbox && activePage === "connections" && api && (
         <ConnectionsScreen

@@ -498,6 +498,30 @@ describe("App manual sign-in processing", () => {
       expect(mockSecretDelete).toHaveBeenCalledWith("FIREFLIES_API_KEY");
     });
   });
+
+  it("shows the under-development state when chat beta is disabled", async () => {
+    await renderAndSignIn();
+
+    fireEvent.click(await screen.findByRole("button", { name: /chat/i }));
+
+    expect(await screen.findByText(/chat is under development/i)).toBeInTheDocument();
+    expect(screen.queryByText(/ask about your synced transcripts/i)).not.toBeInTheDocument();
+    expect(mockGet).not.toHaveBeenCalledWith("/api/conversations?limit=100&offset=0");
+  });
+
+  it("renders chat when the chat beta flag is enabled", async () => {
+    vi.stubEnv("VITE_ENABLE_CHAT", "true");
+
+    await renderAndSignIn();
+
+    fireEvent.click(await screen.findByRole("button", { name: /chat/i }));
+
+    expect(await screen.findByText(/ask about your synced transcripts/i)).toBeInTheDocument();
+    expect(screen.queryByText(/chat is under development/i)).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(mockGet).toHaveBeenCalledWith("/api/conversations?limit=100&offset=0");
+    });
+  });
 });
 
 // ── Google Meet Webhook Tests ─────────────────────────────────────────
