@@ -19,7 +19,7 @@ Repository variables:
 | `PHALA_PREVIEW_DOMAIN_SUFFIX` | Yes | | DNS suffix for backend preview domains, for example `tinycloud.xyz`, producing `api-listen-pr-123.tinycloud.xyz`. The Cloudflare token must be able to manage this zone. |
 | `CLOUDFLARE_ACCOUNT_ID` | No | `9959301f03d2db1a5fcf5e004278d467` | Cloudflare account containing the Pages project. |
 | `CLOUDFLARE_PAGES_PROJECT` | No | `listen` | Cloudflare Pages project name. |
-| `LISTEN_BACKEND_IMAGE` | No | `ghcr.io/tinycloudlabs/listen-backend` | GitHub Container Registry image repository used for PR backend tags. |
+| `LISTEN_BACKEND_IMAGE` | No | `ghcr.io/tinycloudlabs/listen/listen-backend` | GitHub Container Registry image repository used for PR backend tags. |
 | `PHALA_PREVIEW_INSTANCE_TYPE` | No | `tdx.small` | Phala instance type for PR CVMs. |
 | `TINYCLOUD_HOST` | No | `https://node.tinycloud.xyz` | TinyCloud node used by previews. |
 | `OPENKEY_ISSUER_URL` | No | `https://openkey.so` | Backend OpenKey issuer. |
@@ -29,7 +29,7 @@ Repository variables:
 
 GHCR package access:
 
-- The default package `ghcr.io/tinycloudlabs/listen-backend` must grant `TinyCloudLabs/listen` GitHub Actions access with the `Write` role. In the package settings, use **Manage Actions access** and add this repository.
+- The default package `ghcr.io/tinycloudlabs/listen/listen-backend` is published by this workflow with `GITHUB_TOKEN` and the `org.opencontainers.image.source` label so GHCR can create and link it to this repository automatically.
 - The package must also be public for Phala to pull it without registry credentials. If the package stays private, configure Phala/private-registry pull credentials outside this workflow.
 - A personal access token secret is not required for the normal path; the workflow publishes with `GITHUB_TOKEN` and `packages: write`.
 
@@ -56,8 +56,13 @@ The issue asks for production environment variables in the preview backend. That
 The safer default is to use preview-scoped credentials and only reuse production values after an explicit repository-admin decision. Forked PRs are skipped so secrets are not exposed to untrusted forks.
 
 Preview backend images are pushed to GitHub Container Registry with the workflow `GITHUB_TOKEN`.
-If the package was created before it was connected to this repository, GHCR rejects pushes from
-the workflow with `403 Forbidden` until the package grants this repository Actions write access.
+If `LISTEN_BACKEND_IMAGE` points at a package that was created before it was connected to this
+repository, GHCR rejects pushes from the workflow with `403 Forbidden` until the package grants this
+repository Actions write access.
+
+When required deployment secrets are missing, the workflow still builds the backend image, pushes it
+to GHCR, builds the frontend, and comments on the PR with the missing secret names. Phala and
+Cloudflare deployment steps are skipped until those secrets are configured.
 
 ## Cleanup
 
