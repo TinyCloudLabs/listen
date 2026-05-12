@@ -6,7 +6,9 @@
   "defaults": true,
   "secrets": {
     "FIREFLIES_API_KEY": ["read", "write"],
-    "GRANOLA_API_KEY": ["read", "write"]
+    "GRANOLA_API_KEY": ["read", "write"],
+    "ASSEMBLYAI_API_KEY": ["read", "write"],
+    "DEEPGRAM_API_KEY": ["read", "write"]
   },
   "permissions": [
     {
