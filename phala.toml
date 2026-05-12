@@ -1,5 +1,5 @@
 name = "listen-backend"
-profile = "skgbafa's projects"
+profile = "tinycloudxyz"
 compose_file = "docker-compose.phala.yml"
 gateway_domain = "api.listen.tinycloud.xyz"
 gateway_port = 3001
