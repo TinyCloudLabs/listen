@@ -19,7 +19,7 @@ export function _resetForTesting(): void {
  * Parse Pub/Sub env vars and ensure infrastructure exists.
  * Call once during app startup, after backend identity setup.
  * Logs a warning and returns gracefully if env vars are missing.
- * Throws if ensurePubSubInfra encounters a non-recoverable error.
+ * Logs a warning and leaves webhooks disabled if Pub/Sub setup fails.
  */
 export async function initGoogleMeetWebhooks(): Promise<void> {
   const config = parsePubSubConfig();
@@ -30,7 +30,12 @@ export async function initGoogleMeetWebhooks(): Promise<void> {
     return;
   }
 
-  await ensurePubSubInfra(config);
-  _enabled = true;
-  console.log("[webhooks] Google Meet webhooks enabled");
+  try {
+    await ensurePubSubInfra(config);
+    _enabled = true;
+    console.log("[webhooks] Google Meet webhooks enabled");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[webhooks] Google Meet webhooks disabled — Pub/Sub setup failed: ${message}`);
+  }
 }

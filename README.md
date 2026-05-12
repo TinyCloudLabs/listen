@@ -115,7 +115,7 @@ Configuration still needed outside the repo:
 - Cloudflare auth (`wrangler login` or `CLOUDFLARE_API_TOKEN`) with access to the `listen` Pages project.
 - Cloudflare custom domain mapping for `listen.tinycloud.xyz`.
 - Phala auth (`phala login` or `PHALA_CLOUD_API_KEY`) with credits/workspace access.
-- Phala gateway/custom domain mapping for `api.listen.tinycloud.xyz`.
+- `CLOUDFLARE_API_TOKEN` and `CERTBOT_EMAIL` in `.env.prod`; `dstack-ingress` uses those to map `api.listen.tinycloud.xyz` and issue the certificate.
 - A pushed amd64 backend image. The default target is the public Docker Hub image `skgbafa/listen-backend:latest`; create that Docker Hub repo as public before the first push, and set `LISTEN_BACKEND_IMAGE` to deploy a specific tag.
 - For automated backend deploys, set GitHub Actions secrets `DOCKER_REGISTRY_USERNAME`, `DOCKER_REGISTRY_PASSWORD`, and `PHALA_CLOUD_API_KEY`.
 - OpenKey OAuth redirect/origin allowlist entries for production and local URLs.

@@ -6,6 +6,7 @@ WORKDIR /app
 ENV HUSKY=0
 
 COPY package.json tsconfig.base.json turbo.json ./
+COPY manifest.json ./
 COPY packages ./packages
 COPY backend ./backend
 COPY frontend/package.json ./frontend/package.json

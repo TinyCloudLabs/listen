@@ -78,14 +78,17 @@ describe("google-meet-webhooks startup integration", () => {
     );
   });
 
-  it("stays disabled when ensurePubSubInfra throws", async () => {
+  it("stays disabled and logs warning when ensurePubSubInfra throws", async () => {
     process.env.GOOGLE_SERVICE_ACCOUNT_KEY = JSON.stringify(FAKE_SERVICE_ACCOUNT);
     process.env.GOOGLE_PUBSUB_PUSH_URL = FAKE_PUSH_URL;
 
     mockEnsurePubSubInfra.mockRejectedValueOnce(new Error("API error"));
 
-    await expect(initGoogleMeetWebhooks()).rejects.toThrow("API error");
+    await initGoogleMeetWebhooks();
+
     expect(isGoogleMeetWebhooksEnabled()).toBe(false);
+    const warnCalls = consoleWarnSpy.mock.calls.flat();
+    expect(warnCalls.some((msg: string) => msg.includes("Pub/Sub setup failed"))).toBe(true);
   });
 
   it("stays disabled when service account JSON is invalid", async () => {
