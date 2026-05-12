@@ -80,6 +80,9 @@ jobs:
           push: true
           no-cache: true
           tags: ${{ steps.preview.outputs.image_tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=Listen PR preview backend
 
       - name: Install Phala CLI
         run: npm install -g phala

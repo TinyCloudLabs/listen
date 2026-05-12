@@ -27,6 +27,12 @@ Repository variables:
 | `VITE_ENABLE_TINYCLOUD_HOOKS` | No | `false` | Frontend feature flag. |
 | `VITE_ENABLE_AGENT` | No | `false` | Frontend feature flag. |
 
+GHCR package access:
+
+- The default package `ghcr.io/tinycloudlabs/listen-backend` must grant `TinyCloudLabs/listen` GitHub Actions access with the `Write` role. In the package settings, use **Manage Actions access** and add this repository.
+- The package must also be public for Phala to pull it without registry credentials. If the package stays private, configure Phala/private-registry pull credentials outside this workflow.
+- A personal access token secret is not required for the normal path; the workflow publishes with `GITHUB_TOKEN` and `packages: write`.
+
 Repository secrets:
 
 | Name | Required | Notes |
@@ -50,8 +56,8 @@ The issue asks for production environment variables in the preview backend. That
 The safer default is to use preview-scoped credentials and only reuse production values after an explicit repository-admin decision. Forked PRs are skipped so secrets are not exposed to untrusted forks.
 
 Preview backend images are pushed to GitHub Container Registry with the workflow `GITHUB_TOKEN`.
-The GHCR package must be readable by Phala when the CVM pulls the image; keep the preview image
-public or configure Phala/private-registry pull credentials outside this workflow.
+If the package was created before it was connected to this repository, GHCR rejects pushes from
+the workflow with `403 Forbidden` until the package grants this repository Actions write access.
 
 ## Cleanup
 
