@@ -33,9 +33,36 @@ const BACKEND_DELEGATION_NAME = "Listen Backend";
 const BACKEND_DELEGATION_EXPIRY = "7d";
 export const FIREFLIES_SECRET_NAME = "FIREFLIES_API_KEY";
 export const FIREFLIES_SECRET_VAULT_KEY = `secrets/${FIREFLIES_SECRET_NAME}`;
+export const GRANOLA_SECRET_NAME = "GRANOLA_API_KEY";
+export const GRANOLA_SECRET_VAULT_KEY = `secrets/${GRANOLA_SECRET_NAME}`;
 
-function firefliesSecretGrantPath(backendDid: string): string {
-  return `grants/${backendDid}/${FIREFLIES_SECRET_VAULT_KEY}`;
+function secretGrantPath(backendDid: string, vaultKey: string): string {
+  return `grants/${backendDid}/${vaultKey}`;
+}
+
+function secretPermissions(
+  backendDid: string,
+  secretName: string,
+  vaultKey: string,
+): ServerInfoPermission[] {
+  return [
+    {
+      service: "tinycloud.kv",
+      space: "secrets",
+      path: `vault/${vaultKey}`,
+      actions: ["get"],
+      skipPrefix: true,
+      description: `Read the encrypted ${secretName} payload for backend sync.`,
+    },
+    {
+      service: "tinycloud.kv",
+      space: "secrets",
+      path: secretGrantPath(backendDid, vaultKey),
+      actions: ["get"],
+      skipPrefix: true,
+      description: `Read the ${secretName} vault grant shared with this backend.`,
+    },
+  ];
 }
 
 function backendDelegationPermissions(backendDid: string): ServerInfoPermission[] {
@@ -53,22 +80,8 @@ function backendDelegationPermissions(backendDid: string): ServerInfoPermission[
       actions: ["read", "write"],
       description: "Read and write normalized conversation records created from transcript sync.",
     },
-    {
-      service: "tinycloud.kv",
-      space: "secrets",
-      path: `vault/${FIREFLIES_SECRET_VAULT_KEY}`,
-      actions: ["get"],
-      skipPrefix: true,
-      description: "Read the encrypted Fireflies API key payload for backend sync.",
-    },
-    {
-      service: "tinycloud.kv",
-      space: "secrets",
-      path: firefliesSecretGrantPath(backendDid),
-      actions: ["get"],
-      skipPrefix: true,
-      description: "Read the Fireflies API key vault grant shared with this backend.",
-    },
+    ...secretPermissions(backendDid, FIREFLIES_SECRET_NAME, FIREFLIES_SECRET_VAULT_KEY),
+    ...secretPermissions(backendDid, GRANOLA_SECRET_NAME, GRANOLA_SECRET_VAULT_KEY),
   ];
 }
 
@@ -77,10 +90,18 @@ function runtimeGrantPermissions(backendDid: string): DescribedPermissionEntry[]
     {
       service: "tinycloud.kv",
       space: "secrets",
-      path: firefliesSecretGrantPath(backendDid),
+      path: secretGrantPath(backendDid, FIREFLIES_SECRET_VAULT_KEY),
       actions: ["get", "put"],
       skipPrefix: true,
       description: "Share the Fireflies API key with the Listen backend for sync.",
+    },
+    {
+      service: "tinycloud.kv",
+      space: "secrets",
+      path: secretGrantPath(backendDid, GRANOLA_SECRET_VAULT_KEY),
+      actions: ["get", "put"],
+      skipPrefix: true,
+      description: "Share the Granola API key with the Listen backend for sync.",
     },
   ];
 }

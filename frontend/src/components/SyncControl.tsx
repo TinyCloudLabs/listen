@@ -40,6 +40,7 @@ interface SyncControlProps {
   getAccessToken: () => string | null;
   onSyncComplete: () => void;
   hasFireflies?: boolean;
+  hasGranola?: boolean;
   hasGoogleMeet?: boolean;
 }
 
@@ -100,13 +101,17 @@ export const SyncControl: FC<SyncControlProps> = ({
   getAccessToken,
   onSyncComplete,
   hasFireflies: hasFirefliesProp,
+  hasGranola: hasGranolaProp,
   hasGoogleMeet: hasGoogleMeetProp,
 }) => {
   const hasFireflies = hasFirefliesProp !== false;
+  const hasGranola = hasGranolaProp === true;
   const hasGM = hasGoogleMeetProp === true;
 
   const [syncing, setSyncing] = useState(false);
-  const [syncSource, setSyncSource] = useState<"fireflies" | "google-meet" | null>(null);
+  const [syncSource, setSyncSource] = useState<"fireflies" | "granola" | "google-meet" | null>(
+    null,
+  );
   const [progress, setProgress] = useState<SyncProgress | null>(null);
   const [result, setResult] = useState<SyncResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -141,7 +146,10 @@ export const SyncControl: FC<SyncControlProps> = ({
   // ── SSE sync handler ──────────────────────────────────────────────
 
   const startStreamSync = useCallback(
-    async (mode: "incremental" | "full", source: "fireflies" | "google-meet" = "fireflies") => {
+    async (
+      mode: "incremental" | "full",
+      source: "fireflies" | "granola" | "google-meet" = "fireflies",
+    ) => {
       setSyncing(true);
       setSyncSource(source);
       setResult(null);
@@ -156,7 +164,9 @@ export const SyncControl: FC<SyncControlProps> = ({
         const url =
           source === "google-meet"
             ? `${backendUrl}/api/sync/google-meet/stream`
-            : `${backendUrl}/api/sync/fireflies/stream?mode=${mode}`;
+            : source === "granola"
+              ? `${backendUrl}/api/sync/granola/stream?mode=${mode}`
+              : `${backendUrl}/api/sync/fireflies/stream?mode=${mode}`;
         const response = await fetch(url, {
           headers: { Authorization: `Bearer ${token}` },
           signal: controller.signal,
@@ -248,6 +258,11 @@ export const SyncControl: FC<SyncControlProps> = ({
     [startStreamSync],
   );
 
+  const handleGranolaSync = useCallback(
+    () => startStreamSync("incremental", "granola"),
+    [startStreamSync],
+  );
+
   const handleClearAndResync = useCallback(async () => {
     setSyncing(true);
     setResult(null);
@@ -272,7 +287,12 @@ export const SyncControl: FC<SyncControlProps> = ({
       ? Math.round(((progress.current ?? 0) / progress.total) * 100)
       : 0;
 
-  const listingLabel = syncSource === "google-meet" ? "Scanning Google Meet" : "Scanning Fireflies";
+  const listingLabel =
+    syncSource === "google-meet"
+      ? "Scanning Google Meet"
+      : syncSource === "granola"
+        ? "Scanning Granola"
+        : "Scanning Fireflies";
 
   // ── Render ────────────────────────────────────────────────────────
 
@@ -303,6 +323,11 @@ export const SyncControl: FC<SyncControlProps> = ({
               {hasFireflies && (
                 <button style={s.btnPrimary} onClick={handleFirefliesSync}>
                   Sync Fireflies
+                </button>
+              )}
+              {hasGranola && (
+                <button style={s.btnPrimary} onClick={handleGranolaSync}>
+                  Sync Granola
                 </button>
               )}
               {hasGM && (

@@ -234,6 +234,22 @@ describe("SyncControl", () => {
     expect(screen.getByRole("button", { name: /sync google meet/i })).toBeInTheDocument();
   });
 
+  it("shows Sync Granola button when hasGranola is true", () => {
+    render(
+      <SyncControl
+        api={api}
+        backendUrl="http://localhost:3001"
+        getAccessToken={getAccessToken}
+        onSyncComplete={onSyncComplete}
+        hasFireflies={false}
+        hasGranola={true}
+        hasGoogleMeet={false}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /sync fireflies/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /sync granola/i })).toBeInTheDocument();
+  });
+
   it("shows both sync buttons when both sources connected", () => {
     // When hasGoogleMeet is true, the component also fetches GM webhook status
     const getMock = vi.fn().mockImplementation((url: string) => {
@@ -258,10 +274,12 @@ describe("SyncControl", () => {
         getAccessToken={getAccessToken}
         onSyncComplete={onSyncComplete}
         hasFireflies={true}
+        hasGranola={true}
         hasGoogleMeet={true}
       />,
     );
     expect(screen.getByRole("button", { name: /sync fireflies/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /sync granola/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /sync google meet/i })).toBeInTheDocument();
   });
 

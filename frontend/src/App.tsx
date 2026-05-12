@@ -41,6 +41,8 @@ const ENABLE_AGENT = import.meta.env.VITE_ENABLE_AGENT === "true";
 const ENABLE_TINYCLOUD_HOOKS = import.meta.env.VITE_ENABLE_TINYCLOUD_HOOKS === "true";
 const FIREFLIES_SECRET_NAME = "FIREFLIES_API_KEY";
 const FIREFLIES_SECRET_VAULT_KEY = `secrets/${FIREFLIES_SECRET_NAME}`;
+const GRANOLA_SECRET_NAME = "GRANOLA_API_KEY";
+const GRANOLA_SECRET_VAULT_KEY = `secrets/${GRANOLA_SECRET_NAME}`;
 
 async function fetchAgentInfo(endpoint: string): Promise<ServerInfo | null> {
   try {
@@ -409,27 +411,34 @@ function LandingPage({
   );
 }
 
-async function checkFirefliesSecretExists(tcw: TinyCloudWeb): Promise<boolean> {
+async function checkSecretExists(
+  tcw: TinyCloudWeb,
+  secretName: string,
+  label: string,
+): Promise<boolean> {
   const unlockResult = await tcw.secrets.unlock();
   if (!unlockResult.ok) {
     throw new Error(unlockResult.error.message);
   }
 
-  const result = await tcw.secrets.get(FIREFLIES_SECRET_NAME);
+  const result = await tcw.secrets.get(secretName);
   if (result.ok) return Boolean(result.data);
 
   const code = result.error?.code?.toLowerCase();
   if (code === "key_not_found" || code === "not_found") return false;
 
-  throw new Error(result.error?.message ?? "Failed to check Fireflies API key");
+  throw new Error(result.error?.message ?? `Failed to check ${label} API key`);
 }
 
-async function checkFirefliesSecretExistsFromBackend(api: ApiClient): Promise<boolean> {
-  const result = await api.get<{ exists: boolean }>("/api/config/fireflies-key/exists");
+async function checkSecretExistsFromBackend(
+  api: ApiClient,
+  source: "fireflies" | "granola",
+): Promise<boolean> {
+  const result = await api.get<{ exists: boolean }>(`/api/config/${source}-key/exists`);
   return result.exists;
 }
 
-type WorkspaceStatusMode = "checking" | "fireflies-access" | "wallet";
+type WorkspaceStatusMode = "checking" | "fireflies-access" | "granola-access" | "wallet";
 
 function WorkspaceStatusPanel({
   mode,
@@ -453,6 +462,12 @@ function WorkspaceStatusPanel({
       eyebrow: "fireflies",
       title: "Finish Fireflies access.",
       copy: "The Fireflies key is stored in TinyCloud Secrets. Delegate access to the Listen backend so sync can run.",
+      action: "Finish access",
+    },
+    "granola-access": {
+      eyebrow: "granola",
+      title: "Finish Granola access.",
+      copy: "The Granola key is stored in TinyCloud Secrets. Delegate access to the Listen backend so sync can run.",
       action: "Finish access",
     },
     wallet: {
@@ -499,8 +514,10 @@ export function App() {
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [hasKey, setHasKey] = useState<boolean | null>(null);
+  const [hasGranolaKey, setHasGranolaKey] = useState<boolean | null>(null);
   const [hasBackendDelegation, setHasBackendDelegation] = useState<boolean | null>(null);
   const [hasFirefliesBackendAccess, setHasFirefliesBackendAccess] = useState<boolean | null>(null);
+  const [hasGranolaBackendAccess, setHasGranolaBackendAccess] = useState<boolean | null>(null);
   const [hasGoogleMeet, setHasGoogleMeet] = useState<boolean | null>(null);
   const [hasExistingConversations, setHasExistingConversations] = useState<boolean | null>(null);
   const [workspaceActionLoading, setWorkspaceActionLoading] = useState(false);
@@ -575,20 +592,43 @@ export function App() {
     }
 
     if (tcw) {
-      checkFirefliesSecretExists(tcw)
+      checkSecretExists(tcw, FIREFLIES_SECRET_NAME, "Fireflies")
         .then((exists) => setHasKey(exists))
         .catch(() => setHasKey(false));
       return;
     }
 
     if (api && hasBackendDelegation === true) {
-      checkFirefliesSecretExistsFromBackend(api)
+      checkSecretExistsFromBackend(api, "fireflies")
         .then((exists) => setHasKey(exists))
         .catch(() => setHasKey(false));
       return;
     }
 
     setHasKey(false);
+  }, [api, tcw, hasBackendDelegation]);
+
+  useEffect(() => {
+    if (hasBackendDelegation === null) {
+      setHasGranolaKey(null);
+      return;
+    }
+
+    if (tcw) {
+      checkSecretExists(tcw, GRANOLA_SECRET_NAME, "Granola")
+        .then((exists) => setHasGranolaKey(exists))
+        .catch(() => setHasGranolaKey(false));
+      return;
+    }
+
+    if (api && hasBackendDelegation === true) {
+      checkSecretExistsFromBackend(api, "granola")
+        .then((exists) => setHasGranolaKey(exists))
+        .catch(() => setHasGranolaKey(false));
+      return;
+    }
+
+    setHasGranolaKey(false);
   }, [api, tcw, hasBackendDelegation]);
 
   useEffect(() => {
@@ -608,10 +648,32 @@ export function App() {
     }
 
     setHasFirefliesBackendAccess(null);
-    checkFirefliesSecretExistsFromBackend(api)
+    checkSecretExistsFromBackend(api, "fireflies")
       .then((exists) => setHasFirefliesBackendAccess(exists))
       .catch(() => setHasFirefliesBackendAccess(false));
   }, [api, hasBackendDelegation, hasKey]);
+
+  useEffect(() => {
+    if (!api || hasGranolaKey !== true) {
+      setHasGranolaBackendAccess(null);
+      return;
+    }
+
+    if (hasBackendDelegation === false) {
+      setHasGranolaBackendAccess(false);
+      return;
+    }
+
+    if (hasBackendDelegation !== true) {
+      setHasGranolaBackendAccess(null);
+      return;
+    }
+
+    setHasGranolaBackendAccess(null);
+    checkSecretExistsFromBackend(api, "granola")
+      .then((exists) => setHasGranolaBackendAccess(exists))
+      .catch(() => setHasGranolaBackendAccess(false));
+  }, [api, hasBackendDelegation, hasGranolaKey]);
 
   useEffect(() => {
     if (!api || hasBackendDelegation !== true) {
@@ -779,8 +841,10 @@ export function App() {
     setLiveWriteHost(null);
     setAuthError(null);
     setHasKey(null);
+    setHasGranolaKey(null);
     setHasBackendDelegation(null);
     setHasFirefliesBackendAccess(null);
+    setHasGranolaBackendAccess(null);
     setHasGoogleMeet(null);
     setHasExistingConversations(null);
     setWorkspaceActionError(null);
@@ -793,33 +857,52 @@ export function App() {
     await renewBackendDelegation();
   }, [renewBackendDelegation]);
 
-  const ensureFirefliesBackendAccess = useCallback(async () => {
-    if (!tcw || !backendDid || !api) {
-      throw new Error("Reconnect your wallet to finish Fireflies setup.");
-    }
+  const ensureSourceBackendAccess = useCallback(
+    async (source: "fireflies" | "granola") => {
+      if (!tcw || !backendDid || !api) {
+        throw new Error(`Reconnect your wallet to finish ${source} setup.`);
+      }
 
-    setHasFirefliesBackendAccess(null);
-    await ensureBackendAccess();
+      if (source === "fireflies") setHasFirefliesBackendAccess(null);
+      else setHasGranolaBackendAccess(null);
+      await ensureBackendAccess();
 
-    const unlockResult = await tcw.secrets.unlock();
-    if (!unlockResult.ok) {
-      throw new Error(unlockResult.error.message);
-    }
+      const unlockResult = await tcw.secrets.unlock();
+      if (!unlockResult.ok) {
+        throw new Error(unlockResult.error.message);
+      }
 
-    const shareResult = await tcw.secrets.vault.reencrypt(FIREFLIES_SECRET_VAULT_KEY, backendDid);
-    if (!shareResult.ok) {
-      throw new Error(shareResult.error.message);
-    }
+      const vaultKey =
+        source === "fireflies" ? FIREFLIES_SECRET_VAULT_KEY : GRANOLA_SECRET_VAULT_KEY;
+      const shareResult = await tcw.secrets.vault.reencrypt(vaultKey, backendDid);
+      if (!shareResult.ok) {
+        throw new Error(shareResult.error.message);
+      }
 
-    const backendCanRead = await checkFirefliesSecretExistsFromBackend(api);
-    if (!backendCanRead) {
-      setHasFirefliesBackendAccess(false);
-      throw new Error("Backend still cannot read FIREFLIES_API_KEY. Re-save the key or try again.");
-    }
+      const backendCanRead = await checkSecretExistsFromBackend(api, source);
+      if (!backendCanRead) {
+        if (source === "fireflies") setHasFirefliesBackendAccess(false);
+        else setHasGranolaBackendAccess(false);
+        const secretName = source === "fireflies" ? FIREFLIES_SECRET_NAME : GRANOLA_SECRET_NAME;
+        throw new Error(`Backend still cannot read ${secretName}. Re-save the key or try again.`);
+      }
 
-    setHasBackendDelegation(true);
-    setHasFirefliesBackendAccess(true);
-  }, [api, backendDid, ensureBackendAccess, tcw]);
+      setHasBackendDelegation(true);
+      if (source === "fireflies") setHasFirefliesBackendAccess(true);
+      else setHasGranolaBackendAccess(true);
+    },
+    [api, backendDid, ensureBackendAccess, tcw],
+  );
+
+  const ensureFirefliesBackendAccess = useCallback(
+    () => ensureSourceBackendAccess("fireflies"),
+    [ensureSourceBackendAccess],
+  );
+
+  const ensureGranolaBackendAccess = useCallback(
+    () => ensureSourceBackendAccess("granola"),
+    [ensureSourceBackendAccess],
+  );
 
   const handleFinishFirefliesAccess = useCallback(async () => {
     setWorkspaceActionLoading(true);
@@ -841,35 +924,59 @@ export function App() {
   const isSignedIn = address !== null && api !== null;
   const firefliesConnected =
     hasKey === true && hasBackendDelegation === true && hasFirefliesBackendAccess === true;
-  const connectedSourceCount = [firefliesConnected, hasGoogleMeet === true].filter(Boolean).length;
+  const granolaConnected =
+    hasGranolaKey === true && hasBackendDelegation === true && hasGranolaBackendAccess === true;
+  const connectedSourceCount = [
+    firefliesConnected,
+    granolaConnected,
+    hasGoogleMeet === true,
+  ].filter(Boolean).length;
   const hasUsableInbox = connectedSourceCount > 0 || hasExistingConversations === true;
   const backendStatusReady = hasBackendDelegation !== null;
   const firefliesKeyReady = hasKey !== null;
+  const granolaKeyReady = hasGranolaKey !== null;
   const firefliesBackendAccessReady =
     hasKey === true && hasBackendDelegation === true ? hasFirefliesBackendAccess !== null : true;
+  const granolaBackendAccessReady =
+    hasGranolaKey === true && hasBackendDelegation === true
+      ? hasGranolaBackendAccess !== null
+      : true;
   const backendBackedChecksReady =
     hasBackendDelegation === true
-      ? hasGoogleMeet !== null && hasExistingConversations !== null && firefliesBackendAccessReady
+      ? hasGoogleMeet !== null &&
+        hasExistingConversations !== null &&
+        firefliesBackendAccessReady &&
+        granolaBackendAccessReady
       : true;
   const workspaceChecksReady =
-    isSignedIn && backendStatusReady && firefliesKeyReady && backendBackedChecksReady;
+    isSignedIn &&
+    backendStatusReady &&
+    firefliesKeyReady &&
+    granolaKeyReady &&
+    backendBackedChecksReady;
   const setupAvailable = tcw !== null && backendDid !== null;
   const needsFirefliesAccess =
     workspaceChecksReady &&
     hasKey === true &&
     (hasBackendDelegation === false || hasFirefliesBackendAccess === false);
+  const needsGranolaAccess =
+    workspaceChecksReady &&
+    hasGranolaKey === true &&
+    (hasBackendDelegation === false || hasGranolaBackendAccess === false);
   const showWorkspaceLoading = isSignedIn && !workspaceChecksReady;
   const showOnboarding =
     isSignedIn &&
     workspaceChecksReady &&
     !hasUsableInbox &&
     !needsFirefliesAccess &&
+    !needsGranolaAccess &&
     setupAvailable;
   const showWalletSetupState =
     isSignedIn &&
     workspaceChecksReady &&
     !hasUsableInbox &&
     !needsFirefliesAccess &&
+    !needsGranolaAccess &&
     !setupAvailable;
   const showSourcesSetup =
     isSignedIn && hasUsableInbox && activePage === "sources" && setupAvailable;
@@ -888,17 +995,19 @@ export function App() {
         ? "workspace / checking"
         : needsFirefliesAccess
           ? "sources / access"
-          : showWalletSetupState || showSourcesWalletState
-            ? "sources / reconnect"
-            : activePage === "sources"
-              ? "sources / manage"
-              : activePage === "connections"
-                ? "settings / sources"
-                : activePage === "chat"
-                  ? "library / chat"
-                  : hasUsableInbox
-                    ? `inbox · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`
-                    : "onboarding / sources";
+          : needsGranolaAccess
+            ? "sources / access"
+            : showWalletSetupState || showSourcesWalletState
+              ? "sources / reconnect"
+              : activePage === "sources"
+                ? "sources / manage"
+                : activePage === "connections"
+                  ? "settings / sources"
+                  : activePage === "chat"
+                    ? "library / chat"
+                    : hasUsableInbox
+                      ? `inbox · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`
+                      : "onboarding / sources";
   const pageTitle = !isSignedIn
     ? "Capture thoughts. Operate on data."
     : selectedConversationId
@@ -907,19 +1016,24 @@ export function App() {
         ? "Checking workspace."
         : needsFirefliesAccess
           ? "Finish Fireflies access."
-          : showWalletSetupState || showSourcesWalletState
-            ? "Reconnect wallet."
-            : activePage === "sources"
-              ? "Add sources."
-              : activePage === "connections"
-                ? "Connections."
-                : activePage === "chat"
-                  ? "Ask your transcripts."
-                  : hasUsableInbox
-                    ? "Everything you've said."
-                    : "Connect what you already have.";
+          : needsGranolaAccess
+            ? "Finish Granola access."
+            : showWalletSetupState || showSourcesWalletState
+              ? "Reconnect wallet."
+              : activePage === "sources"
+                ? "Add sources."
+                : activePage === "connections"
+                  ? "Connections."
+                  : activePage === "chat"
+                    ? "Ask your transcripts."
+                    : hasUsableInbox
+                      ? "Everything you've said."
+                      : "Connect what you already have.";
 
-  const sourceItems: ShellSourceConfig[] = [{ key: "fireflies", name: "Fireflies", count: null }];
+  const sourceItems: ShellSourceConfig[] = [
+    { key: "fireflies", name: "Fireflies", count: null },
+    { key: "granola", name: "Granola", count: null },
+  ];
   if (GOOGLE_CLIENT_ID) {
     sourceItems.push({ key: "gmeet", name: "Google Meet", count: null });
   }
@@ -956,6 +1070,11 @@ export function App() {
         (hasBackendDelegation === false || hasFirefliesBackendAccess === false) && (
           <span style={s.badge}>Fireflies key saved</span>
         )}
+      {granolaConnected && <span style={s.badge}>Granola</span>}
+      {hasGranolaKey === true &&
+        (hasBackendDelegation === false || hasGranolaBackendAccess === false) && (
+          <span style={s.badge}>Granola key saved</span>
+        )}
       {hasGoogleMeet && <span style={s.badge}>Google Meet</span>}
       <span style={s.badgeSolid}>{did ? "Connected" : "Restored"}</span>
     </>
@@ -982,7 +1101,7 @@ export function App() {
           refreshLabel="Refresh conversations"
         />
       )}
-      {(hasKey || hasGoogleMeet) && (
+      {(hasKey || hasGranolaKey || hasGoogleMeet) && (
         <div style={s.userMenuSourceSection}>
           <span style={s.userMenuLabel}>Sources</span>
           {hasKey && tcw && (
@@ -999,6 +1118,22 @@ export function App() {
               }}
             >
               Disconnect Fireflies
+            </button>
+          )}
+          {hasGranolaKey && tcw && (
+            <button
+              type="button"
+              style={s.userMenuAction}
+              onClick={async () => {
+                const unlockResult = await tcw.secrets.unlock();
+                if (!unlockResult.ok) throw new Error(unlockResult.error.message);
+                const result = await tcw.secrets.delete(GRANOLA_SECRET_NAME);
+                if (!result.ok) throw new Error(result.error.message);
+                setHasGranolaKey(false);
+                setHasGranolaBackendAccess(null);
+              }}
+            >
+              Disconnect Granola
             </button>
           )}
           {hasGoogleMeet && (
@@ -1024,6 +1159,7 @@ export function App() {
     hasUsableInbox &&
     !showWorkspaceLoading &&
     !needsFirefliesAccess &&
+    !needsGranolaAccess &&
     !showOnboarding &&
     !showWalletSetupState &&
     !showSourcesSetup &&
@@ -1070,6 +1206,28 @@ export function App() {
         />
       )}
 
+      {needsGranolaAccess && (
+        <WorkspaceStatusPanel
+          mode="granola-access"
+          loading={workspaceActionLoading}
+          error={workspaceActionError}
+          onAction={async () => {
+            setWorkspaceActionLoading(true);
+            setWorkspaceActionError(null);
+            try {
+              await ensureGranolaBackendAccess();
+              setHasBackendDelegation(true);
+              setHasGranolaBackendAccess(true);
+              setRefreshKey((k) => k + 1);
+            } catch (err) {
+              setWorkspaceActionError(err instanceof Error ? err.message : String(err));
+            } finally {
+              setWorkspaceActionLoading(false);
+            }
+          }}
+        />
+      )}
+
       {(showWalletSetupState || showSourcesWalletState) && (
         <WorkspaceStatusPanel
           mode="wallet"
@@ -1085,16 +1243,26 @@ export function App() {
           tcw={tcw}
           mode="onboarding"
           hasFirefliesKey={hasKey}
+          hasGranolaKey={hasGranolaKey}
           hasBackendDelegation={hasBackendDelegation}
           hasFirefliesBackendAccess={hasFirefliesBackendAccess}
+          hasGranolaBackendAccess={hasGranolaBackendAccess}
           hasGoogleMeet={hasGoogleMeet}
           initialStep="cards"
           onEnsureBackendAccess={ensureBackendAccess}
           onEnsureFirefliesBackendAccess={ensureFirefliesBackendAccess}
+          onEnsureGranolaBackendAccess={ensureGranolaBackendAccess}
           onFirefliesComplete={() => {
             setHasKey(true);
             setHasBackendDelegation(true);
             setHasFirefliesBackendAccess(true);
+            setRefreshKey((k) => k + 1);
+            setActivePage("inbox");
+          }}
+          onGranolaComplete={() => {
+            setHasGranolaKey(true);
+            setHasBackendDelegation(true);
+            setHasGranolaBackendAccess(true);
             setRefreshKey((k) => k + 1);
             setActivePage("inbox");
           }}
@@ -1117,16 +1285,26 @@ export function App() {
           tcw={tcw}
           mode="sources"
           hasFirefliesKey={hasKey}
+          hasGranolaKey={hasGranolaKey}
           hasBackendDelegation={hasBackendDelegation}
           hasFirefliesBackendAccess={hasFirefliesBackendAccess}
+          hasGranolaBackendAccess={hasGranolaBackendAccess}
           hasGoogleMeet={hasGoogleMeet}
           initialStep={sourcesInitialStep}
           onEnsureBackendAccess={ensureBackendAccess}
           onEnsureFirefliesBackendAccess={ensureFirefliesBackendAccess}
+          onEnsureGranolaBackendAccess={ensureGranolaBackendAccess}
           onFirefliesComplete={() => {
             setHasKey(true);
             setHasBackendDelegation(true);
             setHasFirefliesBackendAccess(true);
+            setRefreshKey((k) => k + 1);
+            setActivePage("inbox");
+          }}
+          onGranolaComplete={() => {
+            setHasGranolaKey(true);
+            setHasBackendDelegation(true);
+            setHasGranolaBackendAccess(true);
             setRefreshKey((k) => k + 1);
             setActivePage("inbox");
           }}
@@ -1193,6 +1371,7 @@ export function App() {
             getAccessToken={() => sessionStoreRef.current.getToken()}
             onSyncComplete={() => setRefreshKey((k) => k + 1)}
             hasFireflies={firefliesConnected}
+            hasGranola={granolaConnected}
             hasGoogleMeet={hasGoogleMeet === true}
           />
           {ENABLE_TINYCLOUD_HOOKS && liveWriteHost && (
