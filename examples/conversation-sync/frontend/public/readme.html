@@ -27,12 +27,15 @@
 
       html {
         min-height: 100%;
+        width: 100%;
         scroll-behavior: smooth;
       }
 
       body {
         margin: 0;
         min-height: 100%;
+        width: 100%;
+        overflow-x: hidden;
         background: var(--lst-bg);
         color: var(--lst-blue);
         font-family: var(--lst-font);
@@ -89,6 +92,7 @@
       code {
         font-family: var(--lst-mono);
         font-size: 0.92em;
+        overflow-wrap: anywhere;
       }
 
       .container {
@@ -261,6 +265,13 @@
         border-bottom: var(--lst-border);
       }
 
+      .hero > *,
+      .split > *,
+      .grid-3 > *,
+      .data-map > * {
+        min-width: 0;
+      }
+
       .section-head {
         display: flex;
         align-items: end;
@@ -304,6 +315,8 @@
         border: var(--lst-border);
         background: var(--lst-bg-2);
         overflow: auto;
+        min-width: 0;
+        max-width: 100%;
         min-height: 380px;
         padding: 18px;
       }
@@ -324,7 +337,14 @@
       }
 
       .diagram-source {
-        display: none;
+        display: block;
+        min-width: 720px;
+        margin: 0;
+        color: var(--lst-ink-70);
+        font-family: var(--lst-mono);
+        font-size: 12px;
+        line-height: 1.45;
+        white-space: pre;
       }
 
       .split {
@@ -414,11 +434,44 @@
 
         .nav {
           flex-wrap: wrap;
+          gap: 12px;
         }
 
         .rule-row {
           grid-template-columns: 1fr;
           gap: 8px;
+        }
+
+        .diagram-card svg,
+        .diagram-card .mermaid {
+          min-width: 0;
+        }
+      }
+
+      @media (max-width: 540px) {
+        .container {
+          padding: 0 18px;
+        }
+
+        .btn {
+          padding: 10px 16px;
+        }
+
+        h1 {
+          font-size: clamp(38px, 12vw, 48px);
+        }
+
+        .lede {
+          font-size: 18px;
+        }
+
+        .section {
+          padding: 52px 0;
+        }
+
+        .diagram-card {
+          min-height: 320px;
+          padding: 14px;
         }
       }
     </style>
@@ -447,16 +500,16 @@
             <span class="eyebrow">v0.4 - TinyCloud architecture</span>
             <h1>How Listen signs in, delegates, and syncs.</h1>
             <p class="lede">
-              Listen is a transcript workspace where the browser owns TinyCloud sign-in and
-              sensitive secret writes, while the backend receives delegated capability to sync,
-              normalize, and persist conversation data.
+              Listen is a transcript workspace where the browser owns TinyCloud sign-in, source
+              setup, and sensitive secret writes, while the backend receives delegated capability to
+              import, sync, normalize, and persist conversation data.
             </p>
             <div class="hero-meta">
               <span>OpenKey wallet</span>
               <span>-</span>
               <span>TinyCloud spaces</span>
               <span>-</span>
-              <span>Fireflies + Google Meet</span>
+              <span>Fireflies + Google Meet + manual import</span>
             </div>
           </div>
           <div class="hero-graphic" aria-hidden="true">
@@ -483,7 +536,8 @@
               <h3>Wallet and Secrets owner</h3>
               <p>
                 Loads the manifest, signs in with OpenKey, unlocks TinyCloud Secrets, stores the
-                Fireflies key, and reencrypts the secret vault item for the backend DID.
+                Fireflies key, starts Google OAuth, uploads or pastes transcripts, and reencrypts
+                the secret vault item for the backend DID.
               </p>
             </article>
             <article class="cell">
@@ -491,15 +545,16 @@
               <h3>Delegated sync worker</h3>
               <p>
                 Verifies sessions, stores portable delegations by wallet address, activates
-                delegated access, reads granted secrets, and runs source sync routes.
+                delegated access, reads granted secrets, and runs provider sync and manual import
+                routes.
               </p>
             </article>
             <article class="cell">
               <span class="cell-num mono">- tinycloud</span>
               <h3>Data and capability boundary</h3>
               <p>
-                Holds the app space, Secrets vault, KV transcript blobs, webhook state, and SQL
-                tables for normalized conversation and participant rows.
+                Holds user app SQL/KV data and the Secrets vault. Webhook subscription, pending, and
+                failed-event bookkeeping is stored through backend-owned KV.
               </p>
             </article>
           </div>
@@ -512,8 +567,8 @@
               <h2>Landing, sign-in, delegation, and sync.</h2>
             </div>
             <p class="section-note">
-              This follows the app code in <code>frontend/src/App.tsx</code>, the manifest and
-              server-info routes, and the Fireflies stream sync route.
+              This follows <code>frontend/src/App.tsx</code>, the manifest and server-info routes,
+              Fireflies and Google Meet sync routes, and the manual transcript import endpoint.
             </p>
           </div>
           <div class="diagram-card">
@@ -527,6 +582,7 @@ sequenceDiagram
   participant Backend as Listen backend
   participant TinyCloud as TinyCloud
   participant Fireflies as Fireflies API
+  participant Google as Google Meet API
 
   User-&gt;&gt;Landing: Open app
   Landing-&gt;&gt;OpenKey: connectWallet()
@@ -552,12 +608,28 @@ sequenceDiagram
     Frontend-&gt;&gt;TinyCloud: secrets.unlock()
     Frontend-&gt;&gt;TinyCloud: secrets.vault.reencrypt(secrets/FIREFLIES_API_KEY, backend DID)
   end
-  Frontend-&gt;&gt;Backend: GET /api/sync/fireflies/stream
-  Backend-&gt;&gt;TinyCloud: delegated secrets.get(FIREFLIES_API_KEY)
-  Backend-&gt;&gt;Fireflies: listAllTranscripts()
-  Backend-&gt;&gt;TinyCloud: SQL dedup + INSERT conversation/participant
-  Backend-&gt;&gt;TinyCloud: KV put transcript/{conversationId}
-  Backend--&gt;&gt;Frontend: SSE progress + complete
+  alt manual transcript import
+    User-&gt;&gt;Frontend: paste or upload .txt/.md/.srt/.vtt
+    Frontend-&gt;&gt;Backend: POST /api/conversations/import
+    Backend-&gt;&gt;TinyCloud: normalize manual transcript + SQL/KV writes
+  else Fireflies sync
+    Frontend-&gt;&gt;Backend: GET /api/sync/fireflies/stream
+    Backend-&gt;&gt;TinyCloud: delegated secrets.get(FIREFLIES_API_KEY)
+    Backend-&gt;&gt;Fireflies: listAllTranscripts()
+    Backend-&gt;&gt;TinyCloud: SQL dedup + INSERT conversation/participant
+    Backend-&gt;&gt;TinyCloud: KV put transcript/{conversationId}
+    Backend--&gt;&gt;Frontend: SSE progress + complete
+  else Google Meet sync
+    Frontend-&gt;&gt;Backend: GET /api/auth/google
+    Backend--&gt;&gt;Frontend: Google OAuth URL
+    Frontend-&gt;&gt;Google: user grants Meet read access
+    Google--&gt;&gt;Backend: /api/auth/google/callback
+    Backend-&gt;&gt;TinyCloud: KV put config/google-tokens
+    Frontend-&gt;&gt;Backend: GET /api/sync/google-meet/stream or POST /api/sync/google-meet
+    Backend-&gt;&gt;Google: list conferences, participants, transcripts
+    Backend-&gt;&gt;TinyCloud: SQL dedup + INSERT conversation/participant
+    Backend-&gt;&gt;TinyCloud: KV put transcript/{conversationId}
+  end
   Frontend-&gt;&gt;Backend: GET /api/conversations
   Backend-&gt;&gt;TinyCloud: SQL query newest conversations
   Backend--&gt;&gt;Frontend: inbox rows</pre
@@ -569,11 +641,12 @@ sequenceDiagram
           <div class="section-head">
             <div>
               <span class="eyebrow">03 - state</span>
-              <h2>Workspace and secret grant states.</h2>
+              <h2>Workspace, source, and secret states.</h2>
             </div>
             <p class="section-note">
               The UI gates the inbox on source availability, existing conversations, delegation
-              status, and whether the Fireflies key can be read by the backend.
+              status, manual imports, and whether provider credentials can be used by the backend.
+              Google Meet appears only when Google OAuth is configured.
             </p>
           </div>
           <div class="split">
@@ -621,8 +694,10 @@ stateDiagram-v2
   CheckingWorkspace --&gt; InboxReady: source connected or rows exist
 
   WalletOnly --&gt; SigningIn: reconnect wallet
+  NeedsSource --&gt; ManualImport: paste or upload transcript
   NeedsSource --&gt; SavingFirefliesKey: paste Fireflies key
   NeedsSource --&gt; GoogleConnect: connect Google Meet
+  ManualImport --&gt; InboxReady: POST /api/conversations/import
   SavingFirefliesKey --&gt; NeedsFirefliesGrant: secrets.put complete
   NeedsFirefliesGrant --&gt; InboxReady: backend delegation + vault grant
   GoogleConnect --&gt; InboxReady: OAuth tokens saved
@@ -708,16 +783,23 @@ stateDiagram-v2
             </div>
             <p class="section-note">
               The manifest app id is <code>xyz.tinycloud.listen</code>. Defaults create the app
-              space, and runtime permissions add backend access to app KV, SQL, and secret grants.
+              space. <code>/api/server-info</code> supplies backend KV/SQL/secret-read delegation
+              permissions, while <code>/api/manifest</code> appends the Fireflies grant path at
+              runtime. The backend SQL helper opens
+              <code>xyz.tinycloud.listen/conversations</code> rather than the SDK default database.
             </p>
           </div>
           <div class="diagram-card">
             <pre class="diagram-source">
 flowchart LR
   subgraph UserSpace["TinyCloud app space: xyz.tinycloud.listen"]
-    KV["KV\ntranscript/{conversationId}\nconfig/google-tokens\nwebhook pending/config"]
-    SQL["SQL database: conversations\nconversation table\nparticipant table"]
+    KV["User KV\ntranscript/{conversationId}\nconfig/google-tokens"]
+    SQL["SQL database: xyz.tinycloud.listen/conversations\nconversation table\nparticipant table"]
     Hooks["hooks subscription\nsql/.../conversations/conversation"]
+  end
+
+  subgraph BackendKV["Backend-owned TinyCloud KV"]
+    Webhooks["webhook config\npending queues\nfailed webhook events"]
   end
 
   subgraph Secrets["TinyCloud Secrets space"]
@@ -729,6 +811,7 @@ flowchart LR
   Browser -- "unlock, put, delete, reencrypt" --&gt; Secrets
   Backend["Listen backend"] -- "delegated kv get/put/list" --&gt; KV
   Backend -- "delegated sql read/write" --&gt; SQL
+  Backend -- "backend session kv get/put" --&gt; Webhooks
   Backend -- "delegated secrets.get after grant" --&gt; Grant
   Backend -- "SSE sync + webhooks" --&gt; Browser
   Agent["TinyCloud agent"] -. "optional delegatee" .-&gt; UserSpace</pre
@@ -738,15 +821,19 @@ flowchart LR
             <article class="data-item">
               <span class="mono">tinycloud.sql</span>
               <p>
-                <code>conversation</code> stores normalized metadata and summaries.
-                <code>participant</code> stores speaker rows.
+                <code>xyz.tinycloud.listen/conversations</code> contains the
+                <code>conversation</code> and <code>participant</code> tables. Current server
+                storage aliases databases by final path segment, so paths ending in
+                <code>/conversations</code> must not be treated as isolated stores. Manual imports
+                write <code>conversation.source = "manual"</code>.
               </p>
             </article>
             <article class="data-item">
               <span class="mono">tinycloud.kv</span>
               <p>
-                <code>transcript/{id}</code> stores the transcript JSON blob. KV also stores source
-                config, webhook queues, and OAuth token data.
+                User KV stores <code>transcript/{id}</code> blobs for Fireflies, Google Meet, and
+                manual imports, plus <code>config/google-tokens</code>. Backend-owned KV stores
+                webhook config, pending queues, and failed webhook events.
               </p>
             </article>
             <article class="data-item">
