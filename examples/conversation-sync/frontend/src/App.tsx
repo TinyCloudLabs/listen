@@ -390,6 +390,7 @@ function LandingPage({
                 <a href="#features">Features</a>
                 <a href="#sources">Sources</a>
                 <a href="#preview">Preview</a>
+                <a href="/readme.html">Documentation</a>
               </div>
               <div>
                 <h3>Company</h3>
