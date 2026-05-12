@@ -20,19 +20,20 @@ interface DelegationRoutesConfig {
   store: DelegationStore;
   cache: DelegationCache;
   authMiddleware: RequestHandler;
+  writeLimiter?: RequestHandler;
 }
 
 // ── Delegation Routes ────────────────────────────────────────────────
 
 export function createDelegationRouter(config: DelegationRoutesConfig) {
-  const { node, store, cache, authMiddleware } = config;
+  const { node, store, cache, authMiddleware, writeLimiter } = config;
   const router = Router();
 
   // All delegation routes require authentication
   router.use(authMiddleware);
 
   // ── POST /api/delegations — receive + store delegation ─────────
-  router.post("/", async (req: Request, res: Response) => {
+  router.post("/", ...(writeLimiter ? [writeLimiter] : []), async (req: Request, res: Response) => {
     if (!req.user) {
       res.status(401).json({ error: "unauthenticated", message: "Authentication required" });
       return;
@@ -92,29 +93,33 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
   });
 
   // ── DELETE /api/delegations — revoke delegation ────────────────
-  router.delete("/", async (req: Request, res: Response) => {
-    if (!req.user) {
-      res.status(401).json({ error: "unauthenticated", message: "Authentication required" });
-      return;
-    }
-    const { address } = req.user;
+  router.delete(
+    "/",
+    ...(writeLimiter ? [writeLimiter] : []),
+    async (req: Request, res: Response) => {
+      if (!req.user) {
+        res.status(401).json({ error: "unauthenticated", message: "Authentication required" });
+        return;
+      }
+      const { address } = req.user;
 
-    try {
-      await store.remove(address);
-      cache.evict(address);
+      try {
+        await store.remove(address);
+        cache.evict(address);
 
-      res.json({
-        status: "none",
-        expiresAt: null,
-      });
-    } catch (err) {
-      console.error("[delegations] failed to revoke delegation:", err);
-      res.status(500).json({
-        error: "revoke_failed",
-        message: "Failed to revoke delegation",
-      });
-    }
-  });
+        res.json({
+          status: "none",
+          expiresAt: null,
+        });
+      } catch (err) {
+        console.error("[delegations] failed to revoke delegation:", err);
+        res.status(500).json({
+          error: "revoke_failed",
+          message: "Failed to revoke delegation",
+        });
+      }
+    },
+  );
 
   // ── GET /api/delegations/status — check delegation status ─────
   router.get("/status", async (req: Request, res: Response) => {

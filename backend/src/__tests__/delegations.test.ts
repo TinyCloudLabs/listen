@@ -170,6 +170,7 @@ function mockAuthMiddleware(req: Request, _res: Response, next: NextFunction) {
 function createApp(
   store: ReturnType<typeof createMockDelegationStore>,
   cache: ReturnType<typeof createMockDelegationCache>,
+  writeLimiter?: RequestHandler,
 ) {
   const mockNode = {
     useDelegation: mockUseDelegation,
@@ -191,6 +192,7 @@ function createApp(
       store: store as any,
       cache: cache as any,
       authMiddleware: mockAuthMiddleware,
+      writeLimiter,
     }),
   );
   return app;
@@ -244,6 +246,28 @@ describe("Delegation Routes", () => {
       const body = await res.json();
       expect(body.status).toBe("none");
       expect(body.expiresAt).toBeNull();
+    });
+
+    it("does not apply the write limiter to status checks", async () => {
+      if (server) await closeServer(server);
+
+      const limiter: RequestHandler = (_req, res) => {
+        res.status(429).json({ error: "rate_limited" });
+      };
+      const limitedApp = createApp(store, cache, limiter);
+      const result = await startServer(limitedApp);
+      server = result.server;
+      baseUrl = `http://localhost:${result.port}`;
+
+      const statusRes = await fetch(`${baseUrl}/api/delegations/status`);
+      expect(statusRes.status).toBe(200);
+
+      const postRes = await fetch(`${baseUrl}/api/delegations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serialized: "test-delegation-data" }),
+      });
+      expect(postRes.status).toBe(429);
     });
 
     it("returns 'active' after storing a delegation", async () => {

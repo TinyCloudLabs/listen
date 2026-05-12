@@ -822,10 +822,7 @@ export function App() {
         sessionStore: sessionStoreRef.current,
       });
 
-      const delegationStatus = await checkDelegationStatus(BACKEND_URL, token).catch(() => ({
-        status: "none",
-        expiresAt: null,
-      }));
+      const delegationStatus = await checkDelegationStatus(BACKEND_URL, token);
       let backendDelegationActive = delegationStatus.status === "active";
       if (!backendDelegationActive) {
         const { serialized } = await createManifestDelegation(
