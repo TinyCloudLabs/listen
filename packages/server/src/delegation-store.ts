@@ -1,5 +1,5 @@
 import type { TinyCloudNode } from "@tinycloud/node-sdk";
-import type { StoredDelegation } from "@tinyboilerplate/core";
+import type { StoredDelegation } from "@listen/core";
 import { withSessionRefresh } from "./identity.js";
 
 // ── Types ────────────────────────────────────────────────────────────

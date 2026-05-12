@@ -21,7 +21,7 @@ export class SessionStore {
   /** Buffer before actual expiry (30 seconds). */
   private static readonly EXPIRY_BUFFER_MS = 30_000;
 
-  constructor(storageKey = "tinyboilerplate:session") {
+  constructor(storageKey = "listen:session") {
     this.storageKey = storageKey;
     this._loadFromStorage();
   }

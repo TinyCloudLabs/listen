@@ -132,9 +132,9 @@ async function driveOpenKeyFrames(): Promise<void> {
 log(`Opening ${APP_URL}`);
 await page.goto(APP_URL);
 
-const signInBtn = page.getByRole("button", { name: /sign in/i });
+const signInBtn = page.getByRole("button", { name: /open app|sign in/i });
 await signInBtn.waitFor({ timeout: 10_000 });
-log("Clicking Sign In");
+log("Clicking Open app");
 await signInBtn.click();
 
 const frameDriver = setInterval(() => {
@@ -162,7 +162,7 @@ clearInterval(frameDriver);
 log(`Outcome: ${ok ?? "timeout"}`);
 
 async function backendRequest<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const sessionRaw = await page.evaluate(() => localStorage.getItem("tinyboilerplate:session"));
+  const sessionRaw = await page.evaluate(() => localStorage.getItem("listen:session"));
   if (!sessionRaw) throw new Error("No frontend session in localStorage after sign-in");
 
   const token = JSON.parse(sessionRaw).token;
@@ -174,7 +174,7 @@ async function backendRequest<T>(method: string, path: string, body?: unknown): 
         method,
         headers: {
           Authorization: `Bearer ${token}`,
-          "X-Requested-With": "TinyBoilerplate",
+          "X-Requested-With": "Listen",
           ...(body === undefined ? {} : { "Content-Type": "application/json" }),
         },
         body: body === undefined ? undefined : JSON.stringify(body),

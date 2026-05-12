@@ -33,7 +33,7 @@ export async function createBackendIdentity(
   const node = new TinyCloudNode({
     privateKey: config.privateKey,
     host: config.host ?? "https://node.tinycloud.xyz",
-    prefix: config.prefix ?? "boilerplate-be",
+    prefix: config.prefix ?? "listen-be",
     autoCreateSpace: config.autoCreateSpace ?? true,
   });
 

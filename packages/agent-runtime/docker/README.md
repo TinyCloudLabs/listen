@@ -6,7 +6,7 @@ Part of [TC-1344](https://linear.app/tinycloudlabs/issue/TC-1344). An app-agnost
 - The official `@tinycloud/cli` (binary `tc`) from npm — the agent invokes `tc kv …` / `tc sql …` from bash.
 - `delegation-endpoint` — a small Bun sidecar on `:4097` that receives a serialized `PortableDelegation` from an app's frontend, activates it via `node.useDelegation()`, and writes a `tc`-compatible session profile to `/root/.tinycloud/profiles/default/`. Refreshes the session every 25 min.
 
-**App-specific schema docs live outside this image.** Apps mount their own `CLAUDE.md` at `/workspace/CLAUDE.md:ro` — see `examples/conversation-sync/` for a listen example.
+**App-specific schema docs live outside this image.** Apps mount their own `CLAUDE.md` at `/workspace/CLAUDE.md:ro` — see `./` for a listen example.
 
 For the architecture rationale + full sidecar API, see `packages/agent-runtime/README.md`.
 
@@ -30,7 +30,7 @@ docker run --rm -it \
   tc-agent
 ```
 
-Or, from any `examples/<app>/` that provides a `docker-compose.yml` + `agent/CLAUDE.md`:
+Or, from the Listen repo root:
 
 ```bash
 cp .env.example .env       # fill in OPENCODE_ZEN_API_KEY

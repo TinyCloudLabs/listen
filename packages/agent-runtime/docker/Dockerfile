@@ -6,18 +6,18 @@
 FROM oven/bun:1.3 AS builder
 WORKDIR /build
 
-# Copy just what we need to bun-install + bun-build the cli package.
-COPY package.json bun.lock tsconfig.base.json ./
+# Copy just what we need to bun-install + bun-build the agent runtime package.
+COPY package.json tsconfig.base.json ./
 COPY packages/core packages/core
 COPY packages/agent-runtime packages/agent-runtime
-# Needed for @tinyboilerplate/cli's postinstall (fix-wasm-esm.mjs lives here).
+# Needed for @listen/server's postinstall (fix-wasm-esm.mjs lives here).
 COPY packages/server/scripts packages/server/scripts
 # Minimal server/client package.json stubs so bun install's workspace scan doesn't error.
 COPY packages/server/package.json packages/server/package.json
 COPY packages/client/package.json packages/client/package.json
 
 # Trim the root workspaces list to only the packages we actually COPYed in —
-# the example frontend/backend dirs aren't present in this build context.
+# the app frontend/backend dirs aren't present in this build context.
 RUN bun -e "const f=require('fs'); const p=JSON.parse(f.readFileSync('package.json')); p.workspaces=['packages/core','packages/agent-runtime','packages/server','packages/client']; f.writeFileSync('package.json', JSON.stringify(p, null, 2));"
 
 # husky "prepare" script must be neutralized in CI/Docker.

@@ -1,0 +1,18 @@
+services:
+  listen-backend:
+    image: ${LISTEN_BACKEND_IMAGE:-ghcr.io/tinycloudlabs/listen-backend:latest}
+    platform: linux/amd64
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      BACKEND_PRIVATE_KEY: ${BACKEND_PRIVATE_KEY}
+      TINYCLOUD_HOST: ${TINYCLOUD_HOST:-https://node.tinycloud.xyz}
+      FRONTEND_URL: ${FRONTEND_URL:-https://listen.tinycloud.xyz}
+      OPENKEY_ISSUER_URL: ${OPENKEY_ISSUER_URL:-https://openkey.so}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_SERVICE_ACCOUNT_KEY: ${GOOGLE_SERVICE_ACCOUNT_KEY:-}
+      GOOGLE_PUBSUB_PUSH_URL: ${GOOGLE_PUBSUB_PUSH_URL:-}
+    restart: unless-stopped

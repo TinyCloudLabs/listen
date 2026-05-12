@@ -5,7 +5,7 @@ import {
   type ComposedManifestRequest,
   type Manifest,
 } from "@tinycloud/sdk-core";
-import type { ServerInfo, ServerInfoPermission } from "@tinyboilerplate/core";
+import type { ServerInfo, ServerInfoPermission } from "@listen/core";
 
 // ── Manifest Loading ──────────────────────────────────────────────────
 

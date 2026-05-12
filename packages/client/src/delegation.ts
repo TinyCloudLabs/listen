@@ -5,11 +5,11 @@ import {
   type PortableDelegation,
   type ResourceCapability,
 } from "@tinycloud/web-sdk";
-import { type DelegationResponse } from "@tinyboilerplate/core";
+import { type DelegationResponse } from "@listen/core";
 
 // ── Create Delegation ────────────────────────────────────────────────
 
-const DELEGATION_BUNDLE_FORMAT = "tinyboilerplate.delegation-bundle";
+const DELEGATION_BUNDLE_FORMAT = "listen.delegation-bundle";
 
 interface DelegationBundle {
   format: typeof DELEGATION_BUNDLE_FORMAT;
@@ -111,7 +111,7 @@ export async function sendDelegation(
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${sessionToken}`,
-      "X-Requested-With": "TinyBoilerplate",
+      "X-Requested-With": "Listen",
     },
     body: JSON.stringify({ serialized }),
   });
@@ -133,7 +133,7 @@ export async function checkDelegationStatus(
   const res = await fetch(`${backendUrl}/api/delegations/status`, {
     headers: {
       Authorization: `Bearer ${sessionToken}`,
-      "X-Requested-With": "TinyBoilerplate",
+      "X-Requested-With": "Listen",
     },
   });
 
@@ -152,7 +152,7 @@ export async function revokeDelegation(backendUrl: string, sessionToken: string)
     method: "DELETE",
     headers: {
       Authorization: `Bearer ${sessionToken}`,
-      "X-Requested-With": "TinyBoilerplate",
+      "X-Requested-With": "Listen",
     },
   });
 

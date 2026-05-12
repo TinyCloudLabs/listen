@@ -1,0 +1,513 @@
+import { useState, useEffect, useCallback, useRef, type FC, type MouseEvent } from "react";
+import type { ApiClient } from "@listen/client";
+import { InboxFilters, type SourceFilter } from "./InboxFilters";
+import { InboxBulkBar } from "./InboxBulkBar";
+import { InboxRow, InboxRowGrid } from "./InboxRow";
+
+interface Conversation {
+  id: string;
+  title: string;
+  source: string;
+  source_url: string | null;
+  started_at: string;
+  duration_secs: number;
+  summary: string | null;
+  created_at: string;
+  participant_count: number;
+}
+
+interface ConversationsResponse {
+  conversations: Conversation[];
+  total: number;
+}
+
+interface ConversationListProps {
+  api: ApiClient;
+  onSelectConversation: (id: string) => void;
+  refreshKey?: number;
+}
+
+const PAGE_SIZE = 20;
+
+function formatGroupDate(isoString: string): string {
+  return new Date(isoString).toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+async function copyText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+}
+
+export const ConversationList: FC<ConversationListProps> = ({
+  api,
+  onSelectConversation,
+  refreshKey,
+}) => {
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  const fetchConversations = useCallback(
+    async (offset: number, append: boolean) => {
+      const sourceParam = sourceFilter !== "all" ? `&source=${sourceFilter}` : "";
+      try {
+        const data = await api.get<ConversationsResponse>(
+          `/api/conversations?limit=${PAGE_SIZE}&offset=${offset}${sourceParam}`,
+        );
+        if (append) {
+          setConversations((prev) => [...prev, ...data.conversations]);
+        } else {
+          setConversations(data.conversations);
+        }
+        setTotal(data.total);
+        setError(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [api, sourceFilter],
+  );
+
+  useEffect(() => {
+    setLoading(true);
+    setConversations([]);
+    setSelected(new Set());
+    fetchConversations(0, false).finally(() => setLoading(false));
+  }, [fetchConversations, refreshKey]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [contextMenu]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 1800);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
+  const handleLoadMore = async () => {
+    setLoadingMore(true);
+    await fetchConversations(conversations.length, true);
+    setLoadingMore(false);
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelected(new Set());
+
+  const openContextMenu = (event: MouseEvent, id: string) => {
+    event.preventDefault();
+    setContextMenu({ x: event.clientX, y: event.clientY, id });
+  };
+
+  const selectedConversations = conversations.filter((conversation) =>
+    selected.has(conversation.id),
+  );
+  const selectedSummaries = selectedConversations.filter((conversation) => conversation.summary);
+
+  const copySelectedSummaries = async () => {
+    const text = selectedSummaries
+      .map((conversation) => `${conversation.title}\n${conversation.summary}`)
+      .join("\n\n");
+    await copyText(text);
+    setNotice(
+      `Copied ${selectedSummaries.length} summar${selectedSummaries.length === 1 ? "y" : "ies"}`,
+    );
+  };
+
+  const copySummary = async (conversation: Conversation) => {
+    if (!conversation.summary) return;
+    await copyText(`${conversation.title}\n${conversation.summary}`);
+    setNotice("Summary copied");
+    setContextMenu(null);
+  };
+
+  if (loading) {
+    return (
+      <div style={s.loadingCard}>
+        <div style={s.loadingDots}>
+          <span style={{ ...s.loadingDot, animationDelay: "0s" }} />
+          <span style={{ ...s.loadingDot, animationDelay: "0.15s" }} />
+          <span style={{ ...s.loadingDot, animationDelay: "0.3s" }} />
+        </div>
+        <p style={s.loadingText}>Loading conversations</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={s.errorCard}>
+        <span style={s.errorIcon}>!</span>
+        {error}
+      </div>
+    );
+  }
+
+  if (conversations.length === 0) {
+    return (
+      <div style={s.emptyCard}>
+        <p style={s.emptyTitle}>No conversations yet</p>
+        <p style={s.emptySub}>Sync your first meetings above.</p>
+      </div>
+    );
+  }
+
+  const hasMore = conversations.length < total;
+  const groupedConversations = conversations.reduce<Array<{ date: string; items: Conversation[] }>>(
+    (groups, conversation) => {
+      const date = formatGroupDate(conversation.started_at);
+      const last = groups[groups.length - 1];
+      if (last?.date === date) {
+        last.items.push(conversation);
+      } else {
+        groups.push({ date, items: [conversation] });
+      }
+      return groups;
+    },
+    [],
+  );
+
+  return (
+    <section style={s.card} ref={containerRef}>
+      <div style={s.headerRow}>
+        <span style={s.countLabel}>
+          {total} conversation{total !== 1 ? "s" : ""}
+        </span>
+      </div>
+
+      <InboxFilters
+        total={total}
+        sourceFilter={sourceFilter}
+        onSourceFilterChange={setSourceFilter}
+        showingCount={conversations.length}
+      />
+
+      {selected.size > 0 && (
+        <InboxBulkBar
+          selectedCount={selected.size}
+          hasSummaries={selectedSummaries.length > 0}
+          onCopySummaries={copySelectedSummaries}
+          onClear={clearSelection}
+        />
+      )}
+
+      {notice && <div style={s.notice}>{notice}</div>}
+
+      <div style={s.columnHeader}>
+        <span />
+        <span style={s.colLabel}>TIME</span>
+        <span style={s.colLabel}>SOURCE</span>
+        <span style={s.colLabel}>TITLE / PREVIEW</span>
+        <span style={s.colLabel}>PEOPLE</span>
+        <span style={{ ...s.colLabel, textAlign: "right" }}>DUR</span>
+        <span style={{ ...s.colLabel, textAlign: "center" }}>SUM</span>
+        <span />
+      </div>
+
+      <div style={s.list}>
+        {groupedConversations.map((group) => (
+          <div key={group.date}>
+            <div style={s.groupHeader}>
+              <span>— {group.date.toUpperCase()}</span>
+              <span style={s.groupRule} />
+              <span>
+                {group.items.length} record{group.items.length === 1 ? "" : "s"}
+              </span>
+            </div>
+            {group.items.map((c) => (
+              <InboxRow
+                key={c.id}
+                conversation={c}
+                selected={selected.has(c.id)}
+                onToggleSelect={toggleSelect}
+                onOpen={onSelectConversation}
+                onContextMenu={openContextMenu}
+                onMenu={openContextMenu}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+
+      {hasMore && (
+        <button
+          style={{ ...s.loadMore, ...(loadingMore ? s.loadMoreDisabled : {}) }}
+          disabled={loadingMore}
+          onClick={handleLoadMore}
+        >
+          {loadingMore ? "Loading\u2026" : "Load More"}
+        </button>
+      )}
+
+      {contextMenu && (
+        <div
+          style={{ ...s.contextMenu, top: contextMenu.y, left: contextMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+          role="menu"
+        >
+          {(() => {
+            const conversation = conversations.find((item) => item.id === contextMenu.id);
+            if (!conversation) return null;
+            return (
+              <>
+                <button
+                  type="button"
+                  style={s.contextItem}
+                  role="menuitem"
+                  onClick={() => {
+                    setContextMenu(null);
+                    onSelectConversation(conversation.id);
+                  }}
+                >
+                  <span style={{ flex: 1 }}>Open transcript</span>
+                  <span style={s.contextShortcut}>↵</span>
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    ...s.contextItem,
+                    ...(!conversation.summary ? s.contextItemDisabled : {}),
+                  }}
+                  role="menuitem"
+                  disabled={!conversation.summary}
+                  onClick={() => copySummary(conversation)}
+                >
+                  <span style={{ flex: 1 }}>Copy summary</span>
+                  <span style={s.contextShortcut}>⌘⇧C</span>
+                </button>
+              </>
+            );
+          })()}
+        </div>
+      )}
+    </section>
+  );
+};
+
+// ── Styles ──────────────────────────────────────────────────────────
+
+const FONT = "var(--lst-font)";
+const MONO = "var(--lst-mono)";
+
+const s: Record<string, React.CSSProperties> = {
+  card: {
+    fontFamily: FONT,
+    background: "var(--lst-bg)",
+    border: "var(--lst-border)",
+    borderRadius: 0,
+    overflow: "hidden",
+    position: "relative",
+  },
+  headerRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "14px 32px",
+    borderBottom: "var(--lst-border)",
+  },
+  countLabel: {
+    fontFamily: MONO,
+    fontSize: 11,
+    fontWeight: 500,
+    color: "var(--lst-ink-55)",
+    letterSpacing: "0.08em",
+    textTransform: "uppercase" as const,
+  },
+  columnHeader: {
+    ...InboxRowGrid,
+    padding: "10px 32px",
+    borderBottom: "var(--lst-border)",
+    position: "sticky",
+    top: 0,
+    background: "var(--lst-bg)",
+    zIndex: 2,
+  },
+  colLabel: {
+    fontFamily: MONO,
+    fontSize: 10,
+    color: "var(--lst-ink-55)",
+    letterSpacing: "0.08em",
+  },
+  list: { margin: 0, padding: 0 },
+  groupHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    padding: "20px 32px 8px",
+    fontFamily: MONO,
+    fontSize: 11,
+    color: "var(--lst-ink-55)",
+    letterSpacing: "0.08em",
+  },
+  groupRule: {
+    height: 1,
+    background: "var(--lst-rule-soft)",
+    flex: 1,
+  },
+  loadMore: {
+    fontFamily: FONT,
+    display: "block",
+    width: "100%",
+    padding: "12px 0",
+    fontSize: 13,
+    fontWeight: 500,
+    color: "var(--lst-blue)",
+    background: "transparent",
+    border: "none",
+    borderTop: "var(--lst-border)",
+    cursor: "pointer",
+  },
+  loadMoreDisabled: { opacity: 0.5, cursor: "not-allowed" },
+  loadingCard: {
+    fontFamily: FONT,
+    display: "flex",
+    flexDirection: "column" as const,
+    alignItems: "center",
+    gap: 14,
+    padding: "40px 20px",
+    background: "var(--lst-bg)",
+    border: "var(--lst-border)",
+    borderRadius: 0,
+    animation: "fadeSlideIn 0.3s ease-out",
+  },
+  loadingDots: { display: "flex", gap: 6 },
+  loadingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: "50%",
+    background: "var(--lst-blue)",
+    animation: "syncPulse 1s ease-in-out infinite",
+  },
+  loadingText: {
+    fontFamily: FONT,
+    fontSize: 13,
+    fontWeight: 500,
+    color: "var(--lst-ink-70)",
+    margin: 0,
+  },
+  emptyCard: {
+    fontFamily: FONT,
+    textAlign: "center" as const,
+    padding: "36px 20px",
+    background: "var(--lst-bg)",
+    border: "var(--lst-border)",
+    borderRadius: 0,
+  },
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: 500,
+    color: "var(--lst-blue)",
+    margin: "0 0 4px",
+  },
+  emptySub: { fontSize: 13, color: "var(--lst-ink-55)", margin: 0 },
+  errorCard: {
+    fontFamily: FONT,
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 8,
+    padding: "12px 16px",
+    fontSize: 13,
+    color: "var(--lst-blue)",
+    background: "var(--lst-ink-08)",
+    border: "var(--lst-border)",
+    borderRadius: 0,
+    lineHeight: 1.4,
+  },
+  errorIcon: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 18,
+    height: 18,
+    borderRadius: "50%",
+    background: "var(--lst-blue)",
+    color: "var(--lst-bg)",
+    fontSize: 11,
+    fontWeight: 700,
+    flexShrink: 0,
+  },
+  contextMenu: {
+    position: "fixed",
+    zIndex: 50,
+    background: "var(--lst-bg)",
+    border: "var(--lst-border)",
+    borderRadius: 14,
+    minWidth: 240,
+    boxShadow: "0 8px 0 rgba(28,53,184,0.08)",
+    padding: "6px 0",
+    fontFamily: FONT,
+  },
+  contextItem: {
+    width: "100%",
+    padding: "8px 14px",
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    fontSize: 13,
+    fontFamily: FONT,
+    cursor: "pointer",
+    color: "var(--lst-blue)",
+    border: "none",
+    background: "transparent",
+    textAlign: "left",
+  },
+  contextItemDisabled: {
+    opacity: 0.45,
+    cursor: "not-allowed",
+  },
+  contextShortcut: {
+    fontFamily: MONO,
+    color: "var(--lst-ink-55)",
+    fontSize: 10,
+  },
+  notice: {
+    padding: "8px 32px",
+    borderBottom: "var(--lst-border)",
+    background: "var(--lst-ink-08)",
+    color: "var(--lst-blue)",
+    fontFamily: MONO,
+    fontSize: 11,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
+  },
+};

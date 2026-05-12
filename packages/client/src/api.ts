@@ -1,4 +1,4 @@
-import type { ApiError } from "@tinyboilerplate/core";
+import type { ApiError } from "@listen/core";
 import type { SessionStore } from "./tokens.js";
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -40,7 +40,7 @@ export function createApiClient(backendUrl: string, config: ApiClientConfig): Ap
       headers: {
         ...init.headers,
         Authorization: `Bearer ${token}`,
-        "X-Requested-With": "TinyBoilerplate",
+        "X-Requested-With": "Listen",
       },
     });
 
