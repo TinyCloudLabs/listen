@@ -6,7 +6,7 @@ interface ConnectionsScreenProps {
   hasFireflies: boolean;
   hasGoogleMeet: boolean;
   hasFirefliesBackendAccess: boolean;
-  showGoogleMeet: boolean;
+  googleMeetAvailable: boolean;
   onAddSource: () => void;
   onAddTranscript?: () => void;
   onRefresh: () => void;
@@ -19,6 +19,7 @@ interface SourceRow {
   name: string;
   connected: boolean;
   ready: boolean;
+  available: boolean;
   description: string;
 }
 
@@ -27,7 +28,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
   hasFireflies,
   hasGoogleMeet,
   hasFirefliesBackendAccess,
-  showGoogleMeet,
+  googleMeetAvailable,
   onAddSource,
   onAddTranscript,
   onRefresh,
@@ -43,19 +44,19 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
       name: "Fireflies",
       connected: hasFireflies,
       ready: hasFireflies && hasFirefliesBackendAccess,
+      available: true,
       description: "Syncs Fireflies transcripts and summaries into Listen.",
     },
-    ...(showGoogleMeet
-      ? [
-          {
-            id: "google-meet" as const,
-            name: "Google Meet",
-            connected: hasGoogleMeet,
-            ready: hasGoogleMeet,
-            description: "Imports Google Meet transcripts through the connected Google account.",
-          },
-        ]
-      : []),
+    {
+      id: "google-meet",
+      name: "Google Meet",
+      connected: hasGoogleMeet,
+      ready: hasGoogleMeet && googleMeetAvailable,
+      available: googleMeetAvailable,
+      description: googleMeetAvailable
+        ? "Imports Google Meet transcripts through the connected Google account."
+        : "Google Meet is not configured on this Listen server.",
+    },
   ];
 
   const connected = sources.filter((source) => source.connected);
@@ -201,8 +202,16 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
                 <div style={s.sourceName}>{source.name}</div>
                 <p style={s.availableDesc}>{source.description}</p>
               </div>
-              <button type="button" style={s.btnGhostSm} onClick={onAddSource}>
-                Connect
+              <button
+                type="button"
+                style={{
+                  ...s.btnGhostSm,
+                  ...(!source.available ? s.btnDisabled : {}),
+                }}
+                onClick={onAddSource}
+                disabled={!source.available}
+              >
+                {source.available ? "Connect" : "Unavailable"}
               </button>
             </div>
           ))

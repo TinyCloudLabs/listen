@@ -39,7 +39,7 @@ interface SourcesSetupProps {
   onGoogleMeetComplete?: () => void;
   onDone?: () => void;
   backendUrl?: string;
-  showGoogleMeet?: boolean;
+  googleMeetAvailable?: boolean;
 }
 
 interface UserInfo {
@@ -77,7 +77,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   onGoogleMeetComplete,
   onDone,
   backendUrl = "",
-  showGoogleMeet,
+  googleMeetAvailable = false,
 }) => {
   const [step, setStep] = useState<SetupStep>(initialStep);
   const [apiKey, setApiKey] = useState("");
@@ -762,22 +762,31 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
             }}
           />
 
-          {showGoogleMeet && (
-            <SourceCard
-              title="Google Meet"
-              meta="caption sync"
-              description={
-                hasBackendDelegation === true
+          <SourceCard
+            title="Google Meet"
+            meta="caption sync"
+            description={
+              googleMeetAvailable
+                ? hasBackendDelegation === true
                   ? "Pulls captions and recordings from Google."
                   : "Backend access will be delegated before OAuth."
-              }
-              detail="google oauth"
-              connected={hasGoogleMeet === true}
-              actionLabel={hasGoogleMeet === true ? "Connected" : "Connect ->"}
-              disabled={hasGoogleMeet === true}
-              onAction={() => setStep("google-connect")}
-            />
-          )}
+                : "Google Meet is not configured on this Listen server."
+            }
+            detail={googleMeetAvailable ? "google oauth" : "unavailable"}
+            connected={hasGoogleMeet === true}
+            actionLabel={
+              hasGoogleMeet === true
+                ? "Connected"
+                : googleMeetAvailable
+                  ? "Connect ->"
+                  : "Unavailable"
+            }
+            disabled={hasGoogleMeet === true || !googleMeetAvailable}
+            onAction={() => {
+              if (!googleMeetAvailable) return;
+              setStep("google-connect");
+            }}
+          />
         </div>
 
         {detail}
