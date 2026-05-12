@@ -198,7 +198,7 @@ async function main() {
     }),
   );
 
-  app.use(express.json());
+  app.use(express.json({ limit: "25mb" }));
 
   // Google Meet push endpoint — after JSON parsing, before CSRF (public, OIDC-verified)
   const pubSubConfig = parsePubSubConfig();

@@ -913,6 +913,29 @@ export function App() {
     [ensureSourceBackendAccess],
   );
 
+  const ensureSecretBackendAccess = useCallback(
+    async (secretName: string) => {
+      if (!tcw || !backendDid) {
+        throw new Error("Reconnect your wallet to finish source setup.");
+      }
+
+      await ensureBackendAccess();
+
+      const unlockResult = await tcw.secrets.unlock();
+      if (!unlockResult.ok) {
+        throw new Error(unlockResult.error.message);
+      }
+
+      const shareResult = await tcw.secrets.vault.reencrypt(`secrets/${secretName}`, backendDid);
+      if (!shareResult.ok) {
+        throw new Error(shareResult.error.message);
+      }
+
+      setHasBackendDelegation(true);
+    },
+    [backendDid, ensureBackendAccess, tcw],
+  );
+
   const handleFinishFirefliesAccess = useCallback(async () => {
     setWorkspaceActionLoading(true);
     setWorkspaceActionError(null);
@@ -1275,6 +1298,7 @@ export function App() {
           onEnsureBackendAccess={ensureBackendAccess}
           onEnsureFirefliesBackendAccess={ensureFirefliesBackendAccess}
           onEnsureGranolaBackendAccess={ensureGranolaBackendAccess}
+          onEnsureSecretBackendAccess={ensureSecretBackendAccess}
           onFirefliesComplete={() => {
             setHasKey(true);
             setHasBackendDelegation(true);
@@ -1317,6 +1341,7 @@ export function App() {
           onEnsureBackendAccess={ensureBackendAccess}
           onEnsureFirefliesBackendAccess={ensureFirefliesBackendAccess}
           onEnsureGranolaBackendAccess={ensureGranolaBackendAccess}
+          onEnsureSecretBackendAccess={ensureSecretBackendAccess}
           onFirefliesComplete={() => {
             setHasKey(true);
             setHasBackendDelegation(true);

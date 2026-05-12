@@ -3,12 +3,21 @@ import type { Request, Response, RequestHandler } from "express";
 import type { NormalizedConversation } from "../adapters/types.js";
 import { conversationSql, ensureSchema } from "../schema.js";
 import { persistConversation } from "../services/persist-conversation.js";
+import {
+  TRANSCRIPTION_SECRET_NAMES,
+  createTranscriptionProvider,
+  parseTranscriptionProvider,
+  type TranscriptionProvider,
+  type TranscriptionProviderName,
+  type TranscriptionResult,
+} from "../services/transcription.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
 interface ConversationsRoutesConfig {
   authMiddleware: RequestHandler;
   delegationMiddleware: RequestHandler;
+  transcriptionProviders?: Partial<Record<TranscriptionProviderName, TranscriptionProvider>>;
 }
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -24,6 +33,15 @@ interface ManualTranscriptImportBody {
   summary?: unknown;
   sourceUrl?: unknown;
   participants?: unknown;
+}
+
+interface TranscribeBody {
+  provider?: unknown;
+  title?: unknown;
+  fileName?: unknown;
+  contentType?: unknown;
+  contentBase64?: unknown;
+  startedAt?: unknown;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -216,10 +234,78 @@ function normalizeManualTranscript(body: ManualTranscriptImportBody): Normalized
   };
 }
 
+function normalizeTranscription(
+  body: TranscribeBody,
+  provider: TranscriptionProviderName,
+  mediaKey: string,
+  result: TranscriptionResult,
+): NormalizedConversation {
+  const title = cleanOptionalString(body.title) ?? cleanRequiredString(body.fileName, "fileName");
+  const startedAtRaw = cleanOptionalString(body.startedAt);
+  const startedAt = startedAtRaw ? new Date(startedAtRaw) : new Date();
+  if (Number.isNaN(startedAt.getTime())) {
+    throw new Error("startedAt must be a valid date");
+  }
+
+  const transcript =
+    result.utterances.length > 0
+      ? result.utterances.map((line, index) => ({
+          index,
+          speaker_id: line.speaker.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "speaker",
+          speaker_name: line.speaker,
+          text: line.text,
+          start_time: line.start,
+          end_time: line.end,
+        }))
+      : [
+          {
+            index: 0,
+            speaker_id: "speaker",
+            speaker_name: "Speaker",
+            text: result.text,
+            start_time: 0,
+            end_time: result.durationSecs ?? estimateDuration(result.text),
+          },
+        ];
+  const durationSecs =
+    result.durationSecs ?? Math.max(...transcript.map((line) => line.end_time), 0);
+  const id = crypto.randomUUID();
+  const speakers = Array.from(new Set(transcript.map((line) => line.speaker_name)));
+
+  return {
+    conversation: {
+      id,
+      title,
+      source: `transcription:${provider}`,
+      source_id: `${provider}:${result.sourceId}`,
+      source_url: null,
+      started_at: startedAt.toISOString(),
+      ended_at: new Date(startedAt.getTime() + durationSecs * 1000).toISOString(),
+      duration_secs: durationSecs,
+      summary: null,
+      metadata: {
+        import_type: "transcription",
+        provider,
+        file_name: cleanRequiredString(body.fileName, "fileName"),
+        content_type: cleanOptionalString(body.contentType),
+        media_key: mediaKey,
+        transcribed_at: new Date().toISOString(),
+      },
+    },
+    participants: speakers.map((name) => ({
+      id: crypto.randomUUID(),
+      name,
+      email: null,
+      speaker_label: name.toLowerCase().replace(/[^a-z0-9]+/g, "-") || null,
+    })),
+    transcript,
+  };
+}
+
 // ── Conversations Routes ─────────────────────────────────────────────
 
 export function createConversationsRouter(config: ConversationsRoutesConfig) {
-  const { authMiddleware, delegationMiddleware } = config;
+  const { authMiddleware, delegationMiddleware, transcriptionProviders = {} } = config;
   const router = Router();
 
   router.use(authMiddleware);
@@ -297,6 +383,73 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
       const status = message.includes("is required") || message.includes("valid date") ? 400 : 500;
       if (status >= 500) console.error("[conversations] import failed:", err);
       res.status(status).json({ error: "import_failed", message });
+    }
+  });
+
+  // ── POST /transcribe — upload audio/video, transcribe, then import ──
+  router.post("/transcribe", async (req: Request, res: Response) => {
+    const access = req.delegatedAccess!;
+
+    try {
+      await ensureSchema(access);
+      const body = (req.body ?? {}) as TranscribeBody;
+      const providerName = parseTranscriptionProvider(body.provider);
+      const fileName = cleanRequiredString(body.fileName, "fileName");
+      const contentType = cleanOptionalString(body.contentType) ?? "application/octet-stream";
+      const contentBase64 = cleanRequiredString(body.contentBase64, "contentBase64");
+      const apiKeyResult = await access.secrets?.get(TRANSCRIPTION_SECRET_NAMES[providerName]);
+
+      if (!apiKeyResult) {
+        res.status(500).json({
+          error: "missing_secret_access",
+          message: "Delegation does not include TinyCloud Secrets access",
+        });
+        return;
+      }
+      if (!apiKeyResult.ok || typeof apiKeyResult.data !== "string" || apiKeyResult.data === "") {
+        res.status(400).json({
+          error: "missing_provider_key",
+          message: `${TRANSCRIPTION_SECRET_NAMES[providerName]} is not available to the backend`,
+        });
+        return;
+      }
+
+      const audio = Uint8Array.from(Buffer.from(contentBase64, "base64"));
+      if (audio.byteLength === 0) throw new Error("contentBase64 must contain uploaded content");
+
+      const uploadId = crypto.randomUUID();
+      const mediaKey = `source-media/${uploadId}/${fileName}`;
+      await access.kv.put(
+        mediaKey,
+        JSON.stringify({
+          fileName,
+          contentType,
+          contentBase64,
+          uploadedAt: new Date().toISOString(),
+        }),
+      );
+
+      const provider =
+        transcriptionProviders[providerName] ?? createTranscriptionProvider(providerName);
+      const result = await provider.transcribe({ audio, contentType, fileName }, apiKeyResult.data);
+      const normalized = normalizeTranscription(body, providerName, mediaKey, result);
+      await persistConversation(access, normalized);
+
+      res.status(201).json({
+        conversationId: normalized.conversation.id,
+        title: normalized.conversation.title,
+        provider: providerName,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status =
+        message.includes("must be") ||
+        message.includes("is required") ||
+        message.includes("contentBase64")
+          ? 400
+          : 500;
+      if (status >= 500) console.error("[conversations] transcribe failed:", err);
+      res.status(status).json({ error: "transcribe_failed", message });
     }
   });
 

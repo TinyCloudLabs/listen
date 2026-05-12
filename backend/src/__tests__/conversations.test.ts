@@ -108,9 +108,25 @@ function mockAuthMiddleware(req: Request, _res: Response, next: NextFunction) {
 function createApp(
   mockKV: ReturnType<typeof createMockKV>,
   mockSQL: ReturnType<typeof createMockSQL>,
+  opts: {
+    secrets?: Map<string, string>;
+    transcriptionProviders?: Parameters<
+      typeof createConversationsRouter
+    >[0]["transcriptionProviders"];
+  } = {},
 ) {
   const mockDelegationMiddleware = (req: Request, _res: Response, next: NextFunction) => {
-    req.delegatedAccess = { kv: mockKV, sql: mockSQL } as any;
+    req.delegatedAccess = {
+      kv: mockKV,
+      sql: mockSQL,
+      secrets: {
+        get: async (name: string) => {
+          const value = opts.secrets?.get(name);
+          if (!value) return { ok: false, error: { code: "key_not_found" } };
+          return { ok: true, data: value };
+        },
+      },
+    } as any;
     next();
   };
 
@@ -121,6 +137,7 @@ function createApp(
     createConversationsRouter({
       authMiddleware: mockAuthMiddleware,
       delegationMiddleware: mockDelegationMiddleware,
+      transcriptionProviders: opts.transcriptionProviders,
     }),
   );
   return app;
@@ -475,6 +492,122 @@ describe("Conversations Routes — POST /api/conversations/import", () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toBe("import_failed");
+  });
+});
+
+// ── Tests — POST /api/conversations/transcribe ─────────────────────
+
+describe("Conversations Routes — POST /api/conversations/transcribe", () => {
+  let mockKV: ReturnType<typeof createMockKV>;
+  let mockSQL: ReturnType<typeof createMockSQL>;
+  let server: Server;
+  let port: number;
+
+  afterEach(async () => {
+    await closeServer(server);
+  });
+
+  it("stores uploaded media and imports a provider transcript", async () => {
+    mockKV = createMockKV();
+    mockSQL = createMockSQL();
+    const secrets = new Map([["ASSEMBLYAI_API_KEY", "assembly-key"]]);
+    const providerCalls: Array<{ fileName: string; apiKey: string; text: string }> = [];
+    const app = createApp(mockKV, mockSQL, {
+      secrets,
+      transcriptionProviders: {
+        assemblyai: {
+          transcribe: async (input, apiKey) => {
+            providerCalls.push({
+              fileName: input.fileName,
+              apiKey,
+              text: new TextDecoder().decode(input.audio),
+            });
+            return {
+              sourceId: "aa-1",
+              text: "Hello from audio",
+              durationSecs: 5,
+              utterances: [{ speaker: "Speaker A", text: "Hello from audio", start: 0, end: 5 }],
+              raw: { id: "aa-1" },
+            };
+          },
+        },
+      },
+    });
+    ({ server, port } = await startServer(app));
+
+    const res = await fetch(`http://localhost:${port}/api/conversations/transcribe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: "assemblyai",
+        title: "Uploaded customer call",
+        fileName: "call.txt",
+        contentType: "text/plain",
+        contentBase64: Buffer.from("audio bytes").toString("base64"),
+        startedAt: "2026-05-11T15:00:00.000Z",
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.provider).toBe("assemblyai");
+    expect(providerCalls).toEqual([
+      { fileName: "call.txt", apiKey: "assembly-key", text: "audio bytes" },
+    ]);
+    expect([...mockKV._data.keys()].some((key) => key.startsWith("source-media/"))).toBe(true);
+
+    const conversationInsert = mockSQL._calls.find(
+      (call) => call.method === "execute" && call.sql.includes("INSERT INTO conversation"),
+    );
+    expect(conversationInsert!.params).toContain("Uploaded customer call");
+    expect(conversationInsert!.params).toContain("transcription:assemblyai");
+
+    const transcript = JSON.parse(mockKV._data.get(`transcript/${body.conversationId}`)!);
+    expect(transcript[0].speaker_name).toBe("Speaker A");
+    expect(transcript[0].text).toBe("Hello from audio");
+  });
+
+  it("returns 400 for unsupported providers", async () => {
+    mockKV = createMockKV();
+    mockSQL = createMockSQL();
+    const app = createApp(mockKV, mockSQL);
+    ({ server, port } = await startServer(app));
+
+    const res = await fetch(`http://localhost:${port}/api/conversations/transcribe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: "other",
+        fileName: "call.wav",
+        contentBase64: "YXVkaW8=",
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("transcribe_failed");
+  });
+
+  it("returns 400 when the selected provider key is missing", async () => {
+    mockKV = createMockKV();
+    mockSQL = createMockSQL();
+    const app = createApp(mockKV, mockSQL);
+    ({ server, port } = await startServer(app));
+
+    const res = await fetch(`http://localhost:${port}/api/conversations/transcribe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: "deepgram",
+        fileName: "call.wav",
+        contentBase64: "YXVkaW8=",
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("missing_provider_key");
+    expect(body.message).toContain("DEEPGRAM_API_KEY");
   });
 });
 

@@ -6,6 +6,7 @@ type SetupMode = "onboarding" | "sources";
 type SetupStep =
   | "cards"
   | "transcript-import"
+  | "transcription-upload"
   | "transcript-success"
   | "fireflies-key"
   | "fireflies-test"
@@ -17,7 +18,12 @@ type SetupStep =
 
 const FIREFLIES_SECRET_NAME = "FIREFLIES_API_KEY";
 const GRANOLA_SECRET_NAME = "GRANOLA_API_KEY";
+const TRANSCRIPTION_SECRET_NAMES = {
+  assemblyai: "ASSEMBLYAI_API_KEY",
+  deepgram: "DEEPGRAM_API_KEY",
+} as const;
 const VERIFY_RETRY_DELAYS_MS = [250, 750, 1500];
+type TranscriptionProvider = keyof typeof TRANSCRIPTION_SECRET_NAMES;
 
 interface SourcesSetupProps {
   api: ApiClient;
@@ -33,6 +39,7 @@ interface SourcesSetupProps {
   onEnsureBackendAccess: () => Promise<void>;
   onEnsureFirefliesBackendAccess: () => Promise<void>;
   onEnsureGranolaBackendAccess: () => Promise<void>;
+  onEnsureSecretBackendAccess?: (secretName: string) => Promise<void>;
   onFirefliesComplete: () => void;
   onGranolaComplete: () => void;
   onTranscriptImportComplete?: (conversationId: string) => void;
@@ -50,6 +57,10 @@ interface UserInfo {
 interface ImportTranscriptResponse {
   conversationId: string;
   title: string;
+}
+
+interface TranscribeResponse extends ImportTranscriptResponse {
+  provider: TranscriptionProvider;
 }
 
 function toDatetimeLocal(date: Date): string {
@@ -71,6 +82,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   onEnsureBackendAccess,
   onEnsureFirefliesBackendAccess,
   onEnsureGranolaBackendAccess,
+  onEnsureSecretBackendAccess,
   onFirefliesComplete,
   onGranolaComplete,
   onTranscriptImportComplete,
@@ -101,6 +113,16 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   const [importSaving, setImportSaving] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [importedConversationId, setImportedConversationId] = useState<string | null>(null);
+  const [transcriptionProvider, setTranscriptionProvider] =
+    useState<TranscriptionProvider>("assemblyai");
+  const [transcriptionKey, setTranscriptionKey] = useState("");
+  const [transcriptionFile, setTranscriptionFile] = useState<File | null>(null);
+  const [transcriptionTitle, setTranscriptionTitle] = useState("");
+  const [transcriptionStartedAt, setTranscriptionStartedAt] = useState(() =>
+    toDatetimeLocal(new Date()),
+  );
+  const [transcriptionSaving, setTranscriptionSaving] = useState(false);
+  const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
 
   const webhookUrl = `${backendUrl}/api/webhooks/fireflies`;
   const firefliesConnected =
@@ -262,6 +284,43 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
     }
   };
 
+  const submitTranscription = async () => {
+    if (!transcriptionFile) return;
+    setTranscriptionSaving(true);
+    setTranscriptionError(null);
+    try {
+      if (hasBackendDelegation !== true) {
+        await onEnsureBackendAccess();
+      }
+
+      const secretName = TRANSCRIPTION_SECRET_NAMES[transcriptionProvider];
+      if (transcriptionKey.trim()) {
+        const unlockResult = await tcw.secrets.unlock();
+        if (!unlockResult.ok) throw new Error(unlockResult.error.message);
+        const putResult = await tcw.secrets.put(secretName, transcriptionKey.trim());
+        if (!putResult.ok) throw new Error(putResult.error.message);
+      }
+      await (onEnsureSecretBackendAccess ?? onEnsureBackendAccess)(secretName);
+
+      const result = await api.post<TranscribeResponse>("/api/conversations/transcribe", {
+        provider: transcriptionProvider,
+        title: transcriptionTitle.trim() || transcriptionFile.name.replace(/\.[^.]+$/, ""),
+        fileName: transcriptionFile.name,
+        contentType: transcriptionFile.type || "application/octet-stream",
+        contentBase64: await fileToBase64(transcriptionFile),
+        startedAt: transcriptionStartedAt
+          ? new Date(transcriptionStartedAt).toISOString()
+          : undefined,
+      });
+      setImportedConversationId(result.conversationId);
+      setStep("transcript-success");
+    } catch (err) {
+      setTranscriptionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTranscriptionSaving(false);
+    }
+  };
+
   const detail = (() => {
     if (step === "transcript-import") {
       return (
@@ -390,6 +449,99 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
               }}
             >
               Continue to inbox
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    if (step === "transcription-upload") {
+      const canTranscribe = Boolean(transcriptionFile) && !transcriptionSaving;
+      return (
+        <div style={s.detailPanel}>
+          <span style={s.fieldLabel}>Transcription</span>
+          <p style={s.detailText}>
+            Upload audio or video, choose AssemblyAI or Deepgram, and Listen will store the source
+            file in TinyCloud KV before importing the transcript.
+          </p>
+          <div style={s.fieldGrid}>
+            <label style={s.fieldStack}>
+              <span style={s.fieldLabel}>Provider</span>
+              <select
+                value={transcriptionProvider}
+                onChange={(event) =>
+                  setTranscriptionProvider(event.target.value as TranscriptionProvider)
+                }
+                style={s.input}
+              >
+                <option value="assemblyai">AssemblyAI</option>
+                <option value="deepgram">Deepgram</option>
+              </select>
+            </label>
+            <label style={s.fieldStack}>
+              <span style={s.fieldLabel}>Provider API key</span>
+              <input
+                type="password"
+                placeholder={`Optional if ${TRANSCRIPTION_SECRET_NAMES[transcriptionProvider]} is saved`}
+                value={transcriptionKey}
+                onChange={(event) => setTranscriptionKey(event.target.value)}
+                style={s.input}
+              />
+            </label>
+          </div>
+          <div style={s.fieldGrid}>
+            <label style={s.fieldStack}>
+              <span style={s.fieldLabel}>Title</span>
+              <input
+                type="text"
+                placeholder="Defaults to file name"
+                value={transcriptionTitle}
+                onChange={(event) => setTranscriptionTitle(event.target.value)}
+                style={s.input}
+              />
+            </label>
+            <label style={s.fieldStack}>
+              <span style={s.fieldLabel}>Recorded at</span>
+              <input
+                type="datetime-local"
+                value={transcriptionStartedAt}
+                onChange={(event) => setTranscriptionStartedAt(event.target.value)}
+                style={s.input}
+              />
+            </label>
+          </div>
+          <label style={s.fieldStack}>
+            <span style={s.fieldLabel}>Media file</span>
+            <input
+              type="file"
+              accept="audio/*,video/*"
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0] ?? null;
+                setTranscriptionFile(file);
+                setTranscriptionError(null);
+                if (file && transcriptionTitle.trim() === "") {
+                  setTranscriptionTitle(file.name.replace(/\.[^.]+$/, ""));
+                }
+              }}
+              style={s.fileInput}
+            />
+          </label>
+          {transcriptionFile && (
+            <div style={s.successInline}>
+              {transcriptionFile.name} · {Math.ceil(transcriptionFile.size / 1024)} KB
+            </div>
+          )}
+          {transcriptionError && <div style={s.errorCard}>{transcriptionError}</div>}
+          <div style={s.btnRow}>
+            <button style={s.btnGhost} onClick={() => setStep("cards")}>
+              Back
+            </button>
+            <button
+              style={{ ...s.btnPrimary, ...(!canTranscribe ? s.btnDisabled : {}) }}
+              disabled={!canTranscribe}
+              onClick={submitTranscription}
+            >
+              {transcriptionSaving ? "Transcribing..." : "Upload and transcribe"}
             </button>
           </div>
         </div>
@@ -711,6 +863,15 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
           />
 
           <SourceCard
+            title="Transcription"
+            meta="audio - video"
+            description="Upload media and transcribe with AssemblyAI or Deepgram."
+            detail="provider transcription"
+            actionLabel="Transcribe ->"
+            onAction={() => setStep("transcription-upload")}
+          />
+
+          <SourceCard
             title="Fireflies"
             meta="meeting bot - webhook"
             description={
@@ -896,6 +1057,13 @@ function isMissingSecretError(err: unknown): boolean {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fileToBase64(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  let binary = "";
+  for (const byte of new Uint8Array(buffer)) binary += String.fromCharCode(byte);
+  return btoa(binary);
 }
 
 const FONT = "var(--lst-font)";
