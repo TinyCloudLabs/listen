@@ -19,7 +19,7 @@ Repository variables:
 | `PHALA_PREVIEW_DOMAIN_SUFFIX` | Yes | | DNS suffix for backend preview domains, for example `tinycloud.xyz`, producing `api-listen-pr-123.tinycloud.xyz`. The Cloudflare token must be able to manage this zone. |
 | `CLOUDFLARE_ACCOUNT_ID` | No | `9959301f03d2db1a5fcf5e004278d467` | Cloudflare account containing the Pages project. |
 | `CLOUDFLARE_PAGES_PROJECT` | No | `listen` | Cloudflare Pages project name. |
-| `LISTEN_BACKEND_IMAGE` | No | `skgbafa/listen-backend` | Docker image repository used for PR backend tags. |
+| `LISTEN_BACKEND_IMAGE` | No | `ghcr.io/tinycloudlabs/listen-backend` | GitHub Container Registry image repository used for PR backend tags. |
 | `PHALA_PREVIEW_INSTANCE_TYPE` | No | `tdx.small` | Phala instance type for PR CVMs. |
 | `TINYCLOUD_HOST` | No | `https://node.tinycloud.xyz` | TinyCloud node used by previews. |
 | `OPENKEY_ISSUER_URL` | No | `https://openkey.so` | Backend OpenKey issuer. |
@@ -31,8 +31,6 @@ Repository secrets:
 
 | Name | Required | Notes |
 | --- | --- | --- |
-| `DOCKER_REGISTRY_USERNAME` | Yes | Docker registry username for backend image pushes. |
-| `DOCKER_REGISTRY_PASSWORD` | Yes | Docker registry password/token. |
 | `PHALA_CLOUD_API_KEY` | Yes | Phala Cloud API key with access to create, update, and delete preview CVMs. |
 | `CLOUDFLARE_API_TOKEN` | Yes | Cloudflare token for Pages uploads and `dstack-ingress` DNS/cert setup. |
 | `CERTBOT_EMAIL` | Yes | Let's Encrypt contact for preview backend certificates. |
@@ -50,6 +48,10 @@ The issue asks for production environment variables in the preview backend. That
 - Google OAuth/webhook credentials may need allowlist updates for each preview backend/frontend domain.
 
 The safer default is to use preview-scoped credentials and only reuse production values after an explicit repository-admin decision. Forked PRs are skipped so secrets are not exposed to untrusted forks.
+
+Preview backend images are pushed to GitHub Container Registry with the workflow `GITHUB_TOKEN`.
+The GHCR package must be readable by Phala when the CVM pulls the image; keep the preview image
+public or configure Phala/private-registry pull credentials outside this workflow.
 
 ## Cleanup
 
