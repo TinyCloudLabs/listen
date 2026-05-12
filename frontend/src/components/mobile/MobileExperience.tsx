@@ -42,6 +42,7 @@ interface MobileExperienceProps {
   hasGoogleMeet: boolean;
   hasFirefliesBackendAccess: boolean;
   googleMeetAvailable: boolean;
+  chatEnabled: boolean;
   onRouteChange: (route: ShellRoute) => void;
   onSelectConversation: (id: string | null) => void;
   onAddSource: () => void;
@@ -179,6 +180,7 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
   hasGoogleMeet,
   hasFirefliesBackendAccess,
   googleMeetAvailable,
+  chatEnabled,
   onRouteChange,
   onSelectConversation,
   onAddSource,
@@ -383,7 +385,7 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
       content = <MobileState title="Conversation not found" />;
     }
   } else if (activeTab === "chat") {
-    content = (
+    content = chatEnabled ? (
       <MobileChat
         scopeLabel={`All transcripts - ${total}`}
         messages={chatMessages}
@@ -392,6 +394,11 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
         onSend={(text) => void runSearch(text)}
         onSelectSuggestion={(text) => void runSearch(text)}
         onOpenConversation={openConversation}
+      />
+    ) : (
+      <MobileState
+        title="Chat is under development."
+        detail="Transcript chat is currently in beta and is not available in this workspace yet."
       />
     );
   } else if (activeTab === "connections") {
