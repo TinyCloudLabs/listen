@@ -2,10 +2,11 @@
   "manifest_version": 1,
   "app_id": "xyz.tinycloud.listen",
   "name": "Listen",
-  "description": "Sync Fireflies and Google Meet transcripts into a TinyCloud space.",
+  "description": "Sync Fireflies, Granola, and Google Meet transcripts into a TinyCloud space.",
   "defaults": true,
   "secrets": {
-    "FIREFLIES_API_KEY": ["read", "write"]
+    "FIREFLIES_API_KEY": ["read", "write"],
+    "GRANOLA_API_KEY": ["read", "write"]
   },
   "permissions": [
     {

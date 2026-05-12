@@ -78,6 +78,8 @@ function sourceLabel(source: string): string {
       return "FIREFLIES";
     case "google-meet":
       return "GOOGLE MEET";
+    case "granola":
+      return "GRANOLA";
     case "manual":
       return "MANUAL";
     default:

@@ -10,10 +10,13 @@ type SetupStep =
   | "fireflies-key"
   | "fireflies-test"
   | "fireflies-webhook"
+  | "granola-key"
+  | "granola-test"
   | "google-connect"
   | "google-success";
 
 const FIREFLIES_SECRET_NAME = "FIREFLIES_API_KEY";
+const GRANOLA_SECRET_NAME = "GRANOLA_API_KEY";
 const VERIFY_RETRY_DELAYS_MS = [250, 750, 1500];
 
 interface SourcesSetupProps {
@@ -21,13 +24,17 @@ interface SourcesSetupProps {
   tcw: TinyCloudWeb;
   mode?: SetupMode;
   hasFirefliesKey?: boolean | null;
+  hasGranolaKey?: boolean | null;
   hasBackendDelegation?: boolean | null;
   hasFirefliesBackendAccess?: boolean | null;
+  hasGranolaBackendAccess?: boolean | null;
   hasGoogleMeet?: boolean | null;
   initialStep?: Extract<SetupStep, "cards" | "transcript-import">;
   onEnsureBackendAccess: () => Promise<void>;
   onEnsureFirefliesBackendAccess: () => Promise<void>;
+  onEnsureGranolaBackendAccess: () => Promise<void>;
   onFirefliesComplete: () => void;
+  onGranolaComplete: () => void;
   onTranscriptImportComplete?: (conversationId: string) => void;
   onGoogleMeetComplete?: () => void;
   onDone?: () => void;
@@ -55,13 +62,17 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   tcw,
   mode = "onboarding",
   hasFirefliesKey = null,
+  hasGranolaKey = null,
   hasBackendDelegation = null,
   hasFirefliesBackendAccess = null,
+  hasGranolaBackendAccess = null,
   hasGoogleMeet = null,
   initialStep = "cards",
   onEnsureBackendAccess,
   onEnsureFirefliesBackendAccess,
+  onEnsureGranolaBackendAccess,
   onFirefliesComplete,
+  onGranolaComplete,
   onTranscriptImportComplete,
   onGoogleMeetComplete,
   onDone,
@@ -70,6 +81,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
 }) => {
   const [step, setStep] = useState<SetupStep>(initialStep);
   const [apiKey, setApiKey] = useState("");
+  const [granolaApiKey, setGranolaApiKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [testError, setTestError] = useState<string | null>(null);
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
@@ -96,7 +108,13 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   const firefliesNeedsAccess =
     hasFirefliesKey === true &&
     (hasBackendDelegation !== true || hasFirefliesBackendAccess !== true);
-  const connectedCount = [firefliesConnected, hasGoogleMeet === true].filter(Boolean).length;
+  const granolaConnected =
+    hasGranolaKey === true && hasBackendDelegation === true && hasGranolaBackendAccess === true;
+  const granolaNeedsAccess =
+    hasGranolaKey === true && (hasBackendDelegation !== true || hasGranolaBackendAccess !== true);
+  const connectedCount = [firefliesConnected, granolaConnected, hasGoogleMeet === true].filter(
+    Boolean,
+  ).length;
 
   useEffect(() => {
     setStep(initialStep);
@@ -153,6 +171,42 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
     } catch (err) {
       setTestError(err instanceof Error ? err.message : String(err));
       setStep("fireflies-test");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveGranolaKey = async () => {
+    setSaving(true);
+    setTestError(null);
+    try {
+      const unlockResult = await tcw.secrets.unlock();
+      if (!unlockResult.ok) throw new Error(unlockResult.error.message);
+
+      const putResult = await tcw.secrets.put(GRANOLA_SECRET_NAME, granolaApiKey.trim());
+      if (!putResult.ok) throw new Error(putResult.error.message);
+
+      await onEnsureGranolaBackendAccess();
+      await verifyGranolaStatus(api);
+      setStep("granola-test");
+    } catch (err) {
+      setTestError(err instanceof Error ? err.message : String(err));
+      setStep("granola-test");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const finishGranolaAccess = async () => {
+    setSaving(true);
+    setTestError(null);
+    try {
+      await onEnsureGranolaBackendAccess();
+      await verifyGranolaStatus(api);
+      setStep("granola-test");
+    } catch (err) {
+      setTestError(err instanceof Error ? err.message : String(err));
+      setStep("granola-test");
     } finally {
       setSaving(false);
     }
@@ -497,6 +551,77 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
       );
     }
 
+    if (step === "granola-key") {
+      return (
+        <div style={s.detailPanel}>
+          <span style={s.fieldLabel}>Granola API key</span>
+          <p style={s.detailText}>
+            Paste the key from Granola settings. It is stored in TinyCloud Secrets, then shared to
+            the Listen backend for sync.
+          </p>
+          <input
+            type="password"
+            placeholder="Paste your Granola API key"
+            value={granolaApiKey}
+            onChange={(event) => setGranolaApiKey(event.target.value)}
+            style={s.input}
+          />
+          <div style={s.btnRow}>
+            <button style={s.btnGhost} onClick={() => setStep("cards")}>
+              Back
+            </button>
+            <button
+              style={{
+                ...s.btnPrimary,
+                ...(granolaApiKey.trim() === "" || saving ? s.btnDisabled : {}),
+              }}
+              disabled={granolaApiKey.trim() === "" || saving}
+              onClick={saveGranolaKey}
+            >
+              {saving ? "Connecting..." : "Save key and connect"}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    if (step === "granola-test") {
+      return (
+        <div style={s.detailPanel}>
+          {testError ? (
+            <>
+              <div style={s.errorCard}>{testError}</div>
+              <div style={s.btnRow}>
+                <button style={s.btnGhost} onClick={() => setStep("granola-key")}>
+                  Edit key
+                </button>
+                {hasGranolaKey && (
+                  <button style={s.btnPrimary} onClick={finishGranolaAccess} disabled={saving}>
+                    {saving ? "Connecting..." : "Try access again"}
+                  </button>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={s.successCard}>
+                <span style={s.checkmark}>✓</span>
+                <div>
+                  <p style={s.successTitle}>Granola connected</p>
+                  <p style={s.successSub}>Notes with summaries and transcripts can sync.</p>
+                </div>
+              </div>
+              <div style={s.btnRow}>
+                <button style={s.btnPrimary} onClick={onGranolaComplete}>
+                  Continue to inbox
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      );
+    }
+
     if (step === "google-connect" || step === "google-success") {
       return (
         <div style={s.detailPanel}>
@@ -613,6 +738,30 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
             }}
           />
 
+          <SourceCard
+            title="Granola"
+            meta="notes api"
+            description={
+              granolaNeedsAccess
+                ? "API key saved. Backend access is still needed."
+                : "Pull summaries and transcripts from Granola."
+            }
+            detail="api key"
+            connected={granolaConnected}
+            actionLabel={
+              granolaConnected ? "Connected" : granolaNeedsAccess ? "Finish setup ->" : "Connect ->"
+            }
+            disabled={saving || granolaConnected}
+            onAction={() => {
+              if (granolaConnected) return;
+              if (granolaNeedsAccess) {
+                void finishGranolaAccess();
+                return;
+              }
+              setStep("granola-key");
+            }}
+          />
+
           {showGoogleMeet && (
             <SourceCard
               title="Google Meet"
@@ -707,11 +856,29 @@ async function verifyFirefliesUser(api: ApiClient): Promise<UserInfo> {
   throw lastError;
 }
 
+async function verifyGranolaStatus(api: ApiClient): Promise<void> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= VERIFY_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      await api.get<{ connected: boolean }>("/api/granola/status");
+      return;
+    } catch (err) {
+      lastError = err;
+      if (!isMissingSecretError(err) || attempt === VERIFY_RETRY_DELAYS_MS.length) break;
+      await delay(VERIFY_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+
+  throw lastError;
+}
+
 function isMissingSecretError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const message = err.message.toLowerCase();
   return (
     message.includes("no fireflies api key configured") ||
+    message.includes("no granola api key configured") ||
     message.includes("grant_not_found") ||
     message.includes("key_not_found") ||
     message.includes("storage_error")

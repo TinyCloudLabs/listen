@@ -31,7 +31,9 @@ import { createServerInfoRouter } from "./routes/server-info.js";
 import { createDelegationRouter } from "./routes/delegations.js";
 import { createConfigRouter } from "./routes/config.js";
 import { createFirefliesRouter } from "./routes/fireflies.js";
+import { createGranolaRouter } from "./routes/granola.js";
 import { createSyncRouter } from "./routes/sync.js";
+import { createGranolaSyncRouter } from "./routes/granola-sync.js";
 import { createConversationsRouter } from "./routes/conversations.js";
 import { createWebhookRouter } from "./routes/webhooks.js";
 import { createGoogleMeetPushRouter } from "./routes/google-meet-webhooks.js";
@@ -350,10 +352,28 @@ async function main() {
     }),
   );
 
+  // Granola proxy routes (connection test)
+  app.use(
+    "/api/granola",
+    createGranolaRouter({
+      authMiddleware,
+      delegationMiddleware,
+    }),
+  );
+
   // Sync routes (Fireflies transcript sync with pre-fetch dedup)
   app.use(
     "/api/sync",
     createSyncRouter({
+      authMiddleware,
+      delegationMiddleware,
+    }),
+  );
+
+  // Granola sync routes
+  app.use(
+    "/api/sync/granola",
+    createGranolaSyncRouter({
       authMiddleware,
       delegationMiddleware,
     }),

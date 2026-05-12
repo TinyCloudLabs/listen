@@ -1,6 +1,6 @@
 import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
-import { FIREFLIES_SECRET_NAME, resolveAppPath } from "../manifest.js";
+import { FIREFLIES_SECRET_NAME, GRANOLA_SECRET_NAME, resolveAppPath } from "../manifest.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -70,19 +70,10 @@ function isKvNotFound(result: KVResult): boolean {
   return !result.ok && result.error?.code === "KV_NOT_FOUND";
 }
 
-// ── Config Routes ────────────────────────────────────────────────────
-
-export function createConfigRouter(config: ConfigRoutesConfig) {
-  const { authMiddleware, delegationMiddleware, backendKV, deleteSubscription } = config;
-  const router = Router();
-
-  // All config routes require auth
-  router.use(authMiddleware);
-
-  // ── GET /api/config/fireflies-key/exists — check backend secret access ─
-  router.get("/fireflies-key/exists", delegationMiddleware, async (req: Request, res: Response) => {
+function createSecretExistsHandler(secretName: string, label: string) {
+  return async (req: Request, res: Response) => {
     try {
-      const result = await req.delegatedAccess?.secrets?.get(FIREFLIES_SECRET_NAME);
+      const result = await req.delegatedAccess?.secrets?.get(secretName);
       if (!result) {
         res.status(500).json({
           error: "check_failed",
@@ -104,13 +95,37 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
       }
       res.json({ exists: true });
     } catch (err) {
-      console.error("[config] failed to check fireflies key:", err);
+      console.error(`[config] failed to check ${label} key:`, err);
       res.status(500).json({
         error: "check_failed",
         message: "Failed to check API key existence",
       });
     }
-  });
+  };
+}
+
+// ── Config Routes ────────────────────────────────────────────────────
+
+export function createConfigRouter(config: ConfigRoutesConfig) {
+  const { authMiddleware, delegationMiddleware, backendKV, deleteSubscription } = config;
+  const router = Router();
+
+  // All config routes require auth
+  router.use(authMiddleware);
+
+  // ── GET /api/config/fireflies-key/exists — check backend secret access ─
+  router.get(
+    "/fireflies-key/exists",
+    delegationMiddleware,
+    createSecretExistsHandler(FIREFLIES_SECRET_NAME, "fireflies"),
+  );
+
+  // ── GET /api/config/granola-key/exists — check backend secret access ─
+  router.get(
+    "/granola-key/exists",
+    delegationMiddleware,
+    createSecretExistsHandler(GRANOLA_SECRET_NAME, "granola"),
+  );
 
   // ── Google Meet connection routes (auth + delegation) ──────────────
 

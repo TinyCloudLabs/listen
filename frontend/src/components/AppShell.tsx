@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type CSSProperties, type FC, type ReactNod
 
 export type ShellRoute = "inbox" | "chat" | "connections" | "sources";
 
-export type ShellSourceKey = "fireflies" | "gmeet";
+export type ShellSourceKey = "fireflies" | "granola" | "gmeet";
 
 export interface ShellSourceConfig {
   key: ShellSourceKey;
