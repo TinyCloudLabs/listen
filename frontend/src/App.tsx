@@ -949,6 +949,32 @@ export function App() {
     setActivePage(route);
   };
 
+  const handleDisconnectFireflies = async () => {
+    if (!tcw) return;
+    const confirmed = window.confirm(
+      "Disconnect Fireflies? Listen will stop syncing Fireflies transcripts until you reconnect.",
+    );
+    if (!confirmed) return;
+
+    const unlockResult = await tcw.secrets.unlock();
+    if (!unlockResult.ok) throw new Error(unlockResult.error.message);
+    const result = await tcw.secrets.delete(FIREFLIES_SECRET_NAME);
+    if (!result.ok) throw new Error(result.error.message);
+    setHasKey(false);
+    setHasFirefliesBackendAccess(null);
+  };
+
+  const handleDisconnectGoogleMeet = async () => {
+    if (!api) return;
+    const confirmed = window.confirm(
+      "Disconnect Google Meet? Listen will stop syncing Google Meet transcripts until you reconnect.",
+    );
+    if (!confirmed) return;
+
+    await api.del("/api/config/google-meet");
+    setHasGoogleMeet(false);
+  };
+
   const topbarActions = (
     <>
       {firefliesConnected && <span style={s.badge}>Fireflies</span>}
@@ -989,14 +1015,7 @@ export function App() {
             <button
               type="button"
               style={s.userMenuAction}
-              onClick={async () => {
-                const unlockResult = await tcw.secrets.unlock();
-                if (!unlockResult.ok) throw new Error(unlockResult.error.message);
-                const result = await tcw.secrets.delete(FIREFLIES_SECRET_NAME);
-                if (!result.ok) throw new Error(result.error.message);
-                setHasKey(false);
-                setHasFirefliesBackendAccess(null);
-              }}
+              onClick={() => void handleDisconnectFireflies()}
             >
               Disconnect Fireflies
             </button>
@@ -1005,11 +1024,7 @@ export function App() {
             <button
               type="button"
               style={s.userMenuAction}
-              onClick={async () => {
-                if (!api) return;
-                await api.del("/api/config/google-meet");
-                setHasGoogleMeet(false);
-              }}
+              onClick={() => void handleDisconnectGoogleMeet()}
             >
               Disconnect Google Meet
             </button>

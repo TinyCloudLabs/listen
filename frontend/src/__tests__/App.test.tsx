@@ -25,6 +25,7 @@ const mockGet = vi.fn();
 const mockPost = vi.fn();
 const mockPut = vi.fn();
 const mockDel = vi.fn();
+const mockSecretDelete = vi.fn();
 
 const mockApiClient = { get: mockGet, post: mockPost, put: mockPut, del: mockDel };
 
@@ -142,6 +143,7 @@ function mockAuthFlow() {
       secrets: {
         unlock: vi.fn().mockResolvedValue({ ok: true }),
         get: vi.fn().mockResolvedValue({ ok: true, data: "fireflies-key" }),
+        delete: mockSecretDelete,
       },
       signOut: vi.fn(),
     },
@@ -210,13 +212,25 @@ async function renderAndSignIn() {
   });
 }
 
+async function openUserMenu() {
+  const userName = await screen.findByText("0xabc1…c123");
+  const userButton = userName.closest("button");
+  expect(userButton).toBeTruthy();
+  fireEvent.click(userButton!);
+}
+
 // ── Tests ────────────────────────────────────────────────────────────
 
 describe("App manual sign-in processing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubGlobal("localStorage", createMockStorage());
+    vi.stubGlobal(
+      "confirm",
+      vi.fn(() => true),
+    );
     mockAuthFlow();
+    mockSecretDelete.mockResolvedValue({ ok: true });
 
     // Default: backfill returns no updates
     mockPost.mockResolvedValue({ updated: 0, still_missing: 0 });
@@ -448,6 +462,27 @@ describe("App manual sign-in processing", () => {
       expect(mockGet).toHaveBeenCalledWith("/api/config/google-meet/connected");
     });
   });
+
+  it("does not disconnect Fireflies when confirmation is cancelled", async () => {
+    vi.mocked(window.confirm).mockReturnValue(false);
+
+    await renderAndSignIn();
+    await openUserMenu();
+    fireEvent.click(screen.getByRole("button", { name: /disconnect fireflies/i }));
+
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringMatching(/disconnect fireflies/i));
+    expect(mockSecretDelete).not.toHaveBeenCalled();
+  });
+
+  it("disconnects Fireflies after confirmation", async () => {
+    await renderAndSignIn();
+    await openUserMenu();
+    fireEvent.click(screen.getByRole("button", { name: /disconnect fireflies/i }));
+
+    await waitFor(() => {
+      expect(mockSecretDelete).toHaveBeenCalledWith("FIREFLIES_API_KEY");
+    });
+  });
 });
 
 // ── Google Meet Webhook Tests ─────────────────────────────────────────
@@ -489,6 +524,10 @@ describe("Google Meet webhook check", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubGlobal("localStorage", createMockStorage());
+    vi.stubGlobal(
+      "confirm",
+      vi.fn(() => true),
+    );
     mockAuthFlow();
     mockPost.mockResolvedValue({ updated: 0, still_missing: 0 });
   });
@@ -594,6 +633,30 @@ describe("Google Meet webhook check", () => {
       expect(
         screen.getByText(/processed 2 google meet transcripts from webhooks/i),
       ).toBeInTheDocument();
+    });
+  });
+
+  it("does not disconnect Google Meet when confirmation is cancelled", async () => {
+    vi.mocked(window.confirm).mockReturnValue(false);
+    mockGet.mockImplementation(gmMockGet());
+
+    await renderAndSignIn();
+    await openUserMenu();
+    fireEvent.click(screen.getByRole("button", { name: /disconnect google meet/i }));
+
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringMatching(/disconnect google meet/i));
+    expect(mockDel).not.toHaveBeenCalledWith("/api/config/google-meet");
+  });
+
+  it("disconnects Google Meet after confirmation", async () => {
+    mockGet.mockImplementation(gmMockGet());
+
+    await renderAndSignIn();
+    await openUserMenu();
+    fireEvent.click(screen.getByRole("button", { name: /disconnect google meet/i }));
+
+    await waitFor(() => {
+      expect(mockDel).toHaveBeenCalledWith("/api/config/google-meet");
     });
   });
 });
