@@ -121,6 +121,8 @@ Configuration still needed outside the repo:
 - OpenKey OAuth redirect/origin allowlist entries for production and local URLs.
 - Production `.env` values for `BACKEND_PRIVATE_KEY`, `FRONTEND_URL`, and optional Google credentials.
 
+Pull request previews for same-repository branches deploy a PR-tagged Phala backend and a Cloudflare Pages preview frontend. See [docs/pr-preview-deployments.md](docs/pr-preview-deployments.md) for required GitHub secrets/vars, production-data caveats, and cleanup behavior.
+
 ## Checks
 
 ```bash

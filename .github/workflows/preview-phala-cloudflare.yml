@@ -1,0 +1,192 @@
+name: PR Preview
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: listen-preview-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  DOCKER_IMAGE: ${{ vars.LISTEN_BACKEND_IMAGE || 'skgbafa/listen-backend' }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || '9959301f03d2db1a5fcf5e004278d467' }}
+  CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'listen' }}
+  PHALA_PREVIEW_DOMAIN_SUFFIX: ${{ vars.PHALA_PREVIEW_DOMAIN_SUFFIX }}
+  PHALA_PREVIEW_INSTANCE_TYPE: ${{ vars.PHALA_PREVIEW_INSTANCE_TYPE || 'tdx.small' }}
+  VITE_OPENKEY_HOST: ${{ vars.VITE_OPENKEY_HOST || 'https://openkey.so' }}
+  OPENKEY_ISSUER_URL: ${{ vars.OPENKEY_ISSUER_URL || 'https://openkey.so' }}
+
+jobs:
+  deploy:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Derive preview names
+        id: preview
+        run: |
+          if [ -z "$PHALA_PREVIEW_DOMAIN_SUFFIX" ]; then
+            echo "PHALA_PREVIEW_DOMAIN_SUFFIX must be set as a GitHub Actions variable." >&2
+            exit 1
+          fi
+
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          BRANCH_ALIAS="pr-${PR_NUMBER}"
+          CVM_NAME="listen-pr-${PR_NUMBER}"
+          BACKEND_DOMAIN="api-listen-pr-${PR_NUMBER}.${PHALA_PREVIEW_DOMAIN_SUFFIX}"
+          FRONTEND_URL="https://${BRANCH_ALIAS}.${CLOUDFLARE_PAGES_PROJECT}.pages.dev"
+          BACKEND_URL="https://${BACKEND_DOMAIN}"
+          IMAGE_TAG="${DOCKER_IMAGE}:pr-${PR_NUMBER}-${GITHUB_SHA}"
+
+          {
+            echo "branch_alias=${BRANCH_ALIAS}"
+            echo "cvm_name=${CVM_NAME}"
+            echo "backend_domain=${BACKEND_DOMAIN}"
+            echo "frontend_url=${FRONTEND_URL}"
+            echo "backend_url=${BACKEND_URL}"
+            echo "image_tag=${IMAGE_TAG}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_REGISTRY_USERNAME }}
+          password: ${{ secrets.DOCKER_REGISTRY_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push preview backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: backend/Dockerfile
+          platforms: linux/amd64
+          push: true
+          no-cache: true
+          tags: ${{ steps.preview.outputs.image_tag }}
+
+      - name: Install Phala CLI
+        run: npm install -g phala
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build preview frontend
+        env:
+          VITE_BACKEND_URL: ${{ steps.preview.outputs.backend_url }}
+          VITE_OPENKEY_HOST: ${{ env.VITE_OPENKEY_HOST }}
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.LISTEN_PREVIEW_GOOGLE_CLIENT_ID }}
+          VITE_ENABLE_TINYCLOUD_HOOKS: ${{ vars.VITE_ENABLE_TINYCLOUD_HOOKS || 'false' }}
+          VITE_ENABLE_AGENT: ${{ vars.VITE_ENABLE_AGENT || 'false' }}
+        run: bun run build --filter=listen-frontend
+
+      - name: Deploy preview backend to Phala
+        env:
+          PHALA_CLOUD_API_KEY: ${{ secrets.PHALA_CLOUD_API_KEY }}
+          BACKEND_PRIVATE_KEY: ${{ secrets.LISTEN_PREVIEW_BACKEND_PRIVATE_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CERTBOT_EMAIL: ${{ secrets.CERTBOT_EMAIL }}
+          TINYCLOUD_HOST: ${{ vars.TINYCLOUD_HOST || 'https://node.tinycloud.xyz' }}
+          GOOGLE_CLIENT_ID: ${{ secrets.LISTEN_PREVIEW_GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.LISTEN_PREVIEW_GOOGLE_CLIENT_SECRET }}
+          GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.LISTEN_PREVIEW_GOOGLE_SERVICE_ACCOUNT_KEY }}
+        run: |
+          if [ -z "$BACKEND_PRIVATE_KEY" ]; then
+            echo "LISTEN_PREVIEW_BACKEND_PRIVATE_KEY must be set as a GitHub Actions secret." >&2
+            exit 1
+          fi
+
+          CVM_APP_ID=$(phala cvms list --json | jq -r '.items[] | select(.cvmName == "${{ steps.preview.outputs.cvm_name }}") | .appId' | head -n 1)
+          if [ -n "$CVM_APP_ID" ]; then
+            CVM_TARGET=(--cvm-id "app_${CVM_APP_ID}")
+          else
+            CVM_TARGET=(--name "${{ steps.preview.outputs.cvm_name }}")
+          fi
+
+          phala deploy \
+            "${CVM_TARGET[@]}" \
+            --instance-type "$PHALA_PREVIEW_INSTANCE_TYPE" \
+            --compose docker-compose.phala.yml \
+            --no-public-logs \
+            --public-sysinfo \
+            --wait \
+            -e "LISTEN_BACKEND_IMAGE=${{ steps.preview.outputs.image_tag }}" \
+            -e "PHALA_INGRESS_DOMAIN=${{ steps.preview.outputs.backend_domain }}" \
+            -e "PORT=3001" \
+            -e "BACKEND_PRIVATE_KEY=${BACKEND_PRIVATE_KEY}" \
+            -e "TINYCLOUD_HOST=${TINYCLOUD_HOST}" \
+            -e "FRONTEND_URL=${{ steps.preview.outputs.frontend_url }}" \
+            -e "OPENKEY_ISSUER_URL=${OPENKEY_ISSUER_URL}" \
+            -e "GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}" \
+            -e "GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}" \
+            -e "GOOGLE_SERVICE_ACCOUNT_KEY=${GOOGLE_SERVICE_ACCOUNT_KEY}" \
+            -e "GOOGLE_PUBSUB_PUSH_URL=${{ steps.preview.outputs.backend_url }}/api/webhooks/google-meet" \
+            -e "CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}" \
+            -e "CERTBOT_EMAIL=${CERTBOT_EMAIL}"
+
+      - name: Deploy preview frontend to Cloudflare Pages
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          bunx wrangler pages deploy frontend/dist \
+            --project-name "$CLOUDFLARE_PAGES_PROJECT" \
+            --branch "${{ steps.preview.outputs.branch_alias }}" \
+            --commit-hash "${{ github.event.pull_request.head.sha }}" \
+            --commit-message "TC-1367 PR #${{ github.event.pull_request.number }} preview"
+
+      - name: Comment preview URLs
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- listen-pr-preview -->';
+            const body = `${marker}
+            TC-1367 preview is deployed.
+
+            Frontend: ${{ steps.preview.outputs.frontend_url }}
+            Backend: ${{ steps.preview.outputs.backend_url }}
+            Phala CVM: \`${{ steps.preview.outputs.cvm_name }}\``;
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+            });
+            const existing = comments.find((comment) => comment.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+  skipped-fork:
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Comment skipped preview
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: 'TC-1367 preview was skipped because this PR comes from a fork and preview deployment requires repository secrets.',
+            });

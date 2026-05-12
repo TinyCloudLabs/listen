@@ -24,7 +24,7 @@ services:
     depends_on:
       - listen-backend
     environment:
-      DOMAIN: api.listen.tinycloud.xyz
+      DOMAIN: ${PHALA_INGRESS_DOMAIN:-api.listen.tinycloud.xyz}
       TARGET_ENDPOINT: http://listen-backend:3001
       CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
       GATEWAY_DOMAIN: _.${DSTACK_GATEWAY_DOMAIN}
