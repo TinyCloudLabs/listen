@@ -41,8 +41,8 @@ App delivers those delegations out of band
 ```jsonc
 {
   "manifest_version": 1,
-  "app_id": "com.tinycloud.conversation-sync",
-  "name": "Conversation Sync",
+  "app_id": "xyz.tinycloud.listen",
+  "name": "Listen",
   "description": "Sync meeting transcripts into TinyCloud.",
   "icon": "/icon.png",
   "appVersion": "0.1.0",
@@ -54,7 +54,7 @@ App delivers those delegations out of band
   "space": "applications",
 
   // Optional. Missing means app_id.
-  "prefix": "com.tinycloud.conversation-sync",
+  "prefix": "xyz.tinycloud.listen",
 
   // Optional. Missing means true.
   "defaults": true,
@@ -65,7 +65,7 @@ App delivers those delegations out of band
   "permissions": [
     {
       "service": "tinycloud.hooks",
-      "path": "sql/com.tinycloud.conversation-sync/conversations/conversation",
+      "path": "sql/xyz.tinycloud.listen/conversations/conversation",
       "actions": ["subscribe"],
       "skipPrefix": true,
       "description": "Subscribe to conversation row write events for live updates."
@@ -212,7 +212,7 @@ These helpers only create delegations that were declared by manifests with `did`
 Listen has one app manifest at:
 
 ```text
-examples/conversation-sync/manifest.json
+./manifest.json
 ```
 
 The backend exposes an app-defined `/api/server-info` response with its DID and the permissions it needs. The frontend converts that response into a backend delegate manifest with the same `app_id`, composes it with the app manifest, signs one request, and then materializes the backend delegation:

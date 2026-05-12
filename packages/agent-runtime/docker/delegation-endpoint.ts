@@ -55,7 +55,7 @@ const AGENT_NAME = process.env.AGENT_NAME ?? "TinyCloud Agent";
 const AGENT_DELEGATION_EXPIRY = process.env.AGENT_DELEGATION_EXPIRY ?? "7d";
 
 // What the agent advertises in GET /info. Matches the ServerInfoPermission
-// shape from @tinyboilerplate/core so the frontend can splice these into the
+// shape from @listen/core so the frontend can splice these into the
 // manifest at sign-in time and cover them in the SIWE recap (single wallet
 // prompt). Path "/" mirrors the backend convention for full-space access.
 const AGENT_PERMISSIONS = [

@@ -55,9 +55,7 @@ describe("createApiClient", () => {
     expect((capturedInit?.headers as Record<string, string>)["Authorization"]).toBe(
       "Bearer test-token",
     );
-    expect((capturedInit?.headers as Record<string, string>)["X-Requested-With"]).toBe(
-      "TinyBoilerplate",
-    );
+    expect((capturedInit?.headers as Record<string, string>)["X-Requested-With"]).toBe("Listen");
   });
 
   // ── POST ───────────────────────────────────────────────────────────
@@ -85,9 +83,7 @@ describe("createApiClient", () => {
     expect((capturedInit?.headers as Record<string, string>)["Authorization"]).toBe(
       "Bearer test-token",
     );
-    expect((capturedInit?.headers as Record<string, string>)["X-Requested-With"]).toBe(
-      "TinyBoilerplate",
-    );
+    expect((capturedInit?.headers as Record<string, string>)["X-Requested-With"]).toBe("Listen");
     expect(capturedInit?.body).toBe(JSON.stringify({ name: "Alice" }));
   });
 
@@ -113,9 +109,7 @@ describe("createApiClient", () => {
     expect((capturedInit?.headers as Record<string, string>)["Content-Type"]).toBe(
       "application/json",
     );
-    expect((capturedInit?.headers as Record<string, string>)["X-Requested-With"]).toBe(
-      "TinyBoilerplate",
-    );
+    expect((capturedInit?.headers as Record<string, string>)["X-Requested-With"]).toBe("Listen");
     expect(capturedInit?.body).toBe(JSON.stringify({ name: "Bob" }));
   });
 
@@ -138,9 +132,7 @@ describe("createApiClient", () => {
     expect((capturedInit?.headers as Record<string, string>)["Authorization"]).toBe(
       "Bearer test-token",
     );
-    expect((capturedInit?.headers as Record<string, string>)["X-Requested-With"]).toBe(
-      "TinyBoilerplate",
-    );
+    expect((capturedInit?.headers as Record<string, string>)["X-Requested-With"]).toBe("Listen");
   });
 
   // ── Parsed JSON response ──────────────────────────────────────────

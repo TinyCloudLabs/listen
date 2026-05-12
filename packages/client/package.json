@@ -1,5 +1,5 @@
 {
-  "name": "@tinyboilerplate/client",
+  "name": "@listen/client",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -16,7 +16,7 @@
     "test": "bun test src/__tests__"
   },
   "dependencies": {
-    "@tinyboilerplate/core": "workspace:*",
+    "@listen/core": "workspace:*",
     "@tinycloud/sdk-core": "2.2.0-beta.10"
   },
   "peerDependencies": {

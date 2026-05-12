@@ -1,4 +1,4 @@
-import { DELEGATION_CACHE_TTL_MS } from "@tinyboilerplate/core";
+import { DELEGATION_CACHE_TTL_MS } from "@listen/core";
 import type { DelegatedAccess } from "@tinycloud/node-sdk";
 
 // ── Types ────────────────────────────────────────────────────────────

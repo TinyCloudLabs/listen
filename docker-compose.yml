@@ -1,0 +1,46 @@
+# Launches the optional listen-agent container alongside local Listen dev.
+#
+# The frontend/backend still run via `bun run dev` in their own processes — this
+# compose file only brings up the agent container (TC-1344).
+#
+# The image is built from the generic base Dockerfile in
+# packages/agent-runtime/docker/; this example injects listen's schema doc by
+# bind-mounting agent/CLAUDE.md into /workspace/ so the agent knows about the
+# conversation/participant tables.
+#
+# Usage:
+#   cp .env.example .env
+#   docker compose up --build
+
+services:
+  listen-agent:
+    build:
+      context: .
+      dockerfile: packages/agent-runtime/docker/Dockerfile
+    image: listen-agent:latest
+    container_name: listen-agent
+    ports:
+      - "127.0.0.1:4096:4096" # OpenCode web UI
+      - "127.0.0.1:4097:4097" # delegation endpoint
+    volumes:
+      # Sidecar state (agent wallet key + last serialized delegation).
+      # Previously mounted at /root/.tc-agent with the same file layout —
+      # remounted here so a pre-existing named volume migrates transparently
+      # (agent-key.json sits at the volume root in both layouts; the sidecar
+      # also reads a legacy delegation.txt from this dir if delegation.json
+      # is missing).
+      - listen-agent-state:/var/lib/delegation-endpoint
+      # tc's own profile directory. Derived state — the sidecar rewrites
+      # session.json on each refresh. Named so a container restart doesn't
+      # force a fresh activation round-trip.
+      - listen-tc-profile:/root/.tinycloud
+      - ./agent/CLAUDE.md:/workspace/CLAUDE.md:ro
+    environment:
+      OPENCODE_ZEN_API_KEY: ${OPENCODE_ZEN_API_KEY:-}
+      TINYCLOUD_HOST: ${TINYCLOUD_HOST:-https://node.tinycloud.xyz}
+      TC_AGENT_PREFIX: ${TC_AGENT_PREFIX:-listen-agent}
+    restart: unless-stopped
+
+volumes:
+  listen-agent-state:
+  listen-tc-profile:

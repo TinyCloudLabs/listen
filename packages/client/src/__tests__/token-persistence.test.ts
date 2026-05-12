@@ -36,7 +36,7 @@ describe("SessionStore — localStorage persistence", () => {
     const store = new SessionStore();
     store.setSession("token-1", 3600, "0xABC");
 
-    const raw = mockStorage.getItem("tinyboilerplate:session");
+    const raw = mockStorage.getItem("listen:session");
     expect(raw).not.toBeNull();
 
     const parsed = JSON.parse(raw!);
@@ -84,7 +84,7 @@ describe("SessionStore — localStorage persistence", () => {
   test("constructor discards expired session from localStorage", () => {
     // Manually write expired session
     mockStorage.setItem(
-      "tinyboilerplate:session",
+      "listen:session",
       JSON.stringify({
         token: "expired",
         expiresAt: Date.now() - 1000, // already expired
@@ -96,7 +96,7 @@ describe("SessionStore — localStorage persistence", () => {
     expect(store.hasSession()).toBe(false);
     expect(store.getToken()).toBeNull();
     // Should also clean up localStorage
-    expect(mockStorage.getItem("tinyboilerplate:session")).toBeNull();
+    expect(mockStorage.getItem("listen:session")).toBeNull();
   });
 
   // ── clear removes from localStorage ─────────────────────────────────
@@ -104,10 +104,10 @@ describe("SessionStore — localStorage persistence", () => {
   test("clear removes session from localStorage", () => {
     const store = new SessionStore();
     store.setSession("t", 3600, "0xABC");
-    expect(mockStorage.getItem("tinyboilerplate:session")).not.toBeNull();
+    expect(mockStorage.getItem("listen:session")).not.toBeNull();
 
     store.clear();
-    expect(mockStorage.getItem("tinyboilerplate:session")).toBeNull();
+    expect(mockStorage.getItem("listen:session")).toBeNull();
     expect(store.hasSession()).toBe(false);
   });
 
@@ -131,7 +131,7 @@ describe("SessionStore — localStorage persistence", () => {
   // ── corrupted localStorage ──────────────────────────────────────────
 
   test("handles corrupted localStorage gracefully", () => {
-    mockStorage.setItem("tinyboilerplate:session", "not-valid-json{{{");
+    mockStorage.setItem("listen:session", "not-valid-json{{{");
 
     const store = new SessionStore();
     expect(store.hasSession()).toBe(false);

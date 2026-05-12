@@ -3,7 +3,7 @@ import { mock } from "bun:test";
 // Mock external dependencies that aren't installed in the test environment.
 // These mocks must be registered before any source module tries to import them.
 
-mock.module("@tinyboilerplate/core", () => ({
+mock.module("@listen/core", () => ({
   DELEGATION_CACHE_TTL_MS: 50 * 60 * 1000,
 }));
 

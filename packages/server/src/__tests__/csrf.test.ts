@@ -93,7 +93,7 @@ describe("createCsrfMiddleware", () => {
   test("POST with correct header passes", async () => {
     const app = createTestApp();
     const { status, body } = await req(app, "POST", {
-      "X-Requested-With": "TinyBoilerplate",
+      "X-Requested-With": "Listen",
     });
     expect(status).toBe(200);
     expect(body).toEqual({ ok: true });
@@ -102,7 +102,7 @@ describe("createCsrfMiddleware", () => {
   test("DELETE with correct header passes", async () => {
     const app = createTestApp();
     const { status, body } = await req(app, "DELETE", {
-      "X-Requested-With": "TinyBoilerplate",
+      "X-Requested-With": "Listen",
     });
     expect(status).toBe(200);
     expect(body).toEqual({ ok: true });
@@ -133,7 +133,7 @@ describe("createCsrfMiddleware", () => {
   test("custom headerValue rejects default value", async () => {
     const app = createTestApp({ headerValue: "MyApp" });
     const { status, body } = await req(app, "POST", {
-      "X-Requested-With": "TinyBoilerplate",
+      "X-Requested-With": "Listen",
     });
     expect(status).toBe(403);
     expect(body.error).toBe("csrf_rejected");
@@ -142,7 +142,7 @@ describe("createCsrfMiddleware", () => {
   test("custom headerName checks the correct header", async () => {
     const app = createTestApp({ headerName: "x-custom-csrf" });
     const { status, body } = await req(app, "POST", {
-      "X-Custom-CSRF": "TinyBoilerplate",
+      "X-Custom-CSRF": "Listen",
     });
     expect(status).toBe(200);
     expect(body).toEqual({ ok: true });

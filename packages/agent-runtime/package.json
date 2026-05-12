@@ -1,5 +1,5 @@
 {
-  "name": "@tinyboilerplate/agent-runtime",
+  "name": "@listen/agent-runtime",
   "version": "0.2.0",
   "private": true,
   "type": "module",

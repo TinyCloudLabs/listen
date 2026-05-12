@@ -38,7 +38,7 @@ export async function verifySession(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Requested-With": "TinyBoilerplate",
+      "X-Requested-With": "Listen",
     },
     body: JSON.stringify({ message: siwe, signature }),
   });

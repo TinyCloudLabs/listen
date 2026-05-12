@@ -1,0 +1,9 @@
+name = "listen"
+pages_build_output_dir = "frontend/dist"
+compatibility_date = "2026-05-12"
+
+[vars]
+VITE_OPENKEY_HOST = "https://openkey.so"
+VITE_BACKEND_URL = "https://api.listen.tinycloud.xyz"
+VITE_ENABLE_TINYCLOUD_HOOKS = "false"
+VITE_ENABLE_AGENT = "false"

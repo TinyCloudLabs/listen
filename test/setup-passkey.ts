@@ -39,7 +39,7 @@ console.log("In the open browser:");
 console.log(`  1. Sign up for OpenKey at ${OPENKEY_HOST} with email: ${TEST_EMAIL}`);
 console.log("  2. When OpenKey prompts to register a passkey, the virtual");
 console.log("     authenticator handles it (no Touch ID needed).");
-console.log(`  3. Then go to ${APP_URL}, click Sign In, complete the flow once`);
+console.log(`  3. Then go to ${APP_URL}, click Open app, complete the flow once`);
 console.log("     so the credential gets exercised end-to-end.");
 console.log("  4. Return here and press Enter to capture the credential.");
 console.log("");

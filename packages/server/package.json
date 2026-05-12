@@ -1,5 +1,5 @@
 {
-  "name": "@tinyboilerplate/server",
+  "name": "@listen/server",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -18,7 +18,7 @@
     "postinstall": "node scripts/fix-wasm-esm.mjs"
   },
   "dependencies": {
-    "@tinyboilerplate/core": "workspace:*",
+    "@listen/core": "workspace:*",
     "@tinycloud/node-sdk": "2.2.0-beta.10",
     "jose": "^5.0.0",
     "siwe": "^2.3.2"

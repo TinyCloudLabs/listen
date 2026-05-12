@@ -1,13 +1,11 @@
 {
-  "name": "tinyboilerplate",
+  "name": "listen",
   "private": true,
   "packageManager": "bun@1.3.9",
   "workspaces": [
     "packages/*",
-    "examples/react-express/frontend",
-    "examples/react-express/backend",
-    "examples/conversation-sync/frontend",
-    "examples/conversation-sync/backend"
+    "frontend",
+    "backend"
   ],
   "overrides": {
     "@tinycloud/sdk-core": "2.2.0-beta.10",
@@ -21,15 +19,22 @@
   "scripts": {
     "build": "turbo run build",
     "predev": "lsof -ti:3001,5173 | xargs kill -9 2>/dev/null; pkill -9 -f 'bun --watch src/index.ts' 2>/dev/null; true",
-    "dev": "turbo run dev --filter=@tinyboilerplate/example-frontend --filter=@tinyboilerplate/example-backend",
-    "dev:conversation-sync": "turbo run dev --filter=conversation-sync-frontend --filter=conversation-sync-backend",
-    "dev:conversation-sync:portless": "cd examples/conversation-sync && bun run dev:portless",
+    "dev": "bun run dev:backend & bun run dev:frontend",
+    "dev:frontend": "cd frontend && bun run dev",
+    "dev:backend": "cd backend && bun --env-file=../.env run dev",
+    "dev:portless": "bun run dev:portless:backend & bun run dev:portless:frontend",
+    "dev:portless:frontend": "cd frontend && VITE_BACKEND_URL=https://api.listen.localhost bun run dev:portless",
+    "dev:portless:backend": "cd backend && FRONTEND_URL=https://listen.localhost bun --env-file=../.env run dev:portless",
     "generate-key": "cd packages/server && bun run generate-key",
     "test": "turbo run test",
     "lint": "turbo run lint",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "docker:backend:build": "docker buildx build --platform linux/amd64 -f backend/Dockerfile -t ghcr.io/tinycloudlabs/listen-backend:latest .",
+    "docker:backend:push": "docker buildx build --platform linux/amd64 -f backend/Dockerfile -t ghcr.io/tinycloudlabs/listen-backend:latest --push .",
+    "deploy:frontend": "bun run build --filter=listen-frontend && CLOUDFLARE_ACCOUNT_ID=9959301f03d2db1a5fcf5e004278d467 bunx wrangler pages deploy",
+    "deploy:backend:phala": "phala deploy -c docker-compose.phala.yml -n listen-backend --instance-type tdx.small -e .env -e LISTEN_BACKEND_IMAGE=${LISTEN_BACKEND_IMAGE:-ghcr.io/tinycloudlabs/listen-backend:latest} -e FRONTEND_URL=https://listen.tinycloud.xyz -e PORT=3001 --wait",
     "prepare": "husky"
   },
   "devDependencies": {

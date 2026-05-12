@@ -1,4 +1,4 @@
-# @tinyboilerplate/agent-runtime
+# @listen/agent-runtime
 
 Docker image + activation sidecar that lets an agent environment (e.g. OpenCode in a container) operate on a user's TinyCloud space as a delegatee — using the official `@tinycloud/cli` (binary `tc`), not a custom wrapper.
 
@@ -65,7 +65,7 @@ agent (OpenCode) ──▶ bash: tc kv / tc sql ──▶ /root/.tinycloud/profi
 2. In your compose file, bind-mount your app-specific `CLAUDE.md` at `/workspace/CLAUDE.md:ro` — that's what teaches the agent about your SQL schema and KV key layout.
 3. Wire the frontend's Connect Agent dialog to POST `{ serialized }` to `http://localhost:4097/delegation`.
 
-See `examples/conversation-sync/` for the listen wiring.
+See `./` for the listen wiring.
 
 ## Troubleshooting
 

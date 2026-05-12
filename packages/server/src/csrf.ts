@@ -15,7 +15,7 @@ interface OutgoingResponse {
 export interface CsrfConfig {
   /** Header name to check (case-insensitive). Default: "x-requested-with" */
   headerName?: string;
-  /** Expected header value (exact match). Default: "TinyBoilerplate" */
+  /** Expected header value (exact match). Default: "Listen" */
   headerValue?: string;
   /** HTTP methods exempt from the check. Default: ["GET", "HEAD", "OPTIONS"] */
   safeMethods?: string[];
@@ -24,7 +24,7 @@ export interface CsrfConfig {
 // ── Middleware ────────────────────────────────────────────────────────
 
 const DEFAULT_HEADER_NAME = "x-requested-with";
-const DEFAULT_HEADER_VALUE = "TinyBoilerplate";
+const DEFAULT_HEADER_VALUE = "Listen";
 const DEFAULT_SAFE_METHODS = ["GET", "HEAD", "OPTIONS"];
 
 /**

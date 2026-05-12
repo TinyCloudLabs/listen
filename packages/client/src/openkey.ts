@@ -76,7 +76,7 @@ function hexToString(hex: string): string {
 export async function connectWallet(config?: ConnectWalletConfig): Promise<ConnectWalletResult> {
   const openkey = new OpenKey({
     host: config?.host ?? "https://openkey.so",
-    appName: config?.appName ?? "TinyBoilerplate",
+    appName: config?.appName ?? "Listen",
   });
 
   // Passkey authentication via iframe — user authenticates, we get signing capability
