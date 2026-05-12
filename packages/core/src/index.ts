@@ -80,6 +80,12 @@ export interface ServerInfo {
    * (or empty array) for backends that operate without delegation.
    */
   permissions?: ServerInfoPermission[];
+  features?: {
+    googleMeet?: {
+      available: boolean;
+      reason?: string;
+    };
+  };
 }
 
 // ── API Responses ────────────────────────────────────────────────────

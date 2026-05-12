@@ -30,6 +30,14 @@ export function createServerInfoRouter(did: string) {
         skipPrefix: permission.skipPrefix,
         description: permission.description,
       })),
+      features: {
+        googleMeet: process.env.GOOGLE_CLIENT_ID
+          ? { available: true }
+          : {
+              available: false,
+              reason: "google_client_not_configured",
+            },
+      },
     };
 
     res.json(info);

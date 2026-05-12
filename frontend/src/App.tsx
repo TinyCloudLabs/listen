@@ -37,6 +37,7 @@ const OPENKEY_HOST = import.meta.env.VITE_OPENKEY_HOST || "https://openkey.so";
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
 const AGENT_ENDPOINT = import.meta.env.VITE_AGENT_ENDPOINT || "http://localhost:4097";
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+const HAS_FRONTEND_GOOGLE_CLIENT_ID = Boolean(GOOGLE_CLIENT_ID);
 const ENABLE_AGENT = import.meta.env.VITE_ENABLE_AGENT === "true";
 const ENABLE_TINYCLOUD_HOOKS = import.meta.env.VITE_ENABLE_TINYCLOUD_HOOKS === "true";
 const FIREFLIES_SECRET_NAME = "FIREFLIES_API_KEY";
@@ -540,6 +541,7 @@ export function App() {
   const [agentInfo, setAgentInfo] = useState<ServerInfo | null>(null);
   const [backendDid, setBackendDid] = useState<string | null>(null);
   const [capabilityRequest, setCapabilityRequest] = useState<ComposedManifestRequest | null>(null);
+  const [serverGoogleMeetAvailable, setServerGoogleMeetAvailable] = useState<boolean | null>(null);
 
   const sessionStoreRef = useRef(new SessionStore());
   const isMobile = useIsMobile();
@@ -820,6 +822,7 @@ export function App() {
       setAgentInfo(agent);
       setBackendDid(info.did);
       setCapabilityRequest(composedRequest);
+      setServerGoogleMeetAvailable(info.features?.googleMeet?.available ?? null);
       setHasBackendDelegation(backendDelegationActive);
       setLiveWritePathPrefix(conversationEventPathPrefix);
       setLiveWriteHost(tcwInstance.hosts[0] ?? null);
@@ -842,6 +845,7 @@ export function App() {
     setAgentInfo(null);
     setBackendDid(null);
     setCapabilityRequest(null);
+    setServerGoogleMeetAvailable(null);
     setLiveWritePathPrefix(null);
     setLiveWriteHost(null);
     setAuthError(null);
@@ -936,6 +940,7 @@ export function App() {
     granolaConnected,
     hasGoogleMeet === true,
   ].filter(Boolean).length;
+  const googleMeetAvailable = HAS_FRONTEND_GOOGLE_CLIENT_ID || serverGoogleMeetAvailable === true;
   const hasUsableInbox = connectedSourceCount > 0 || hasExistingConversations === true;
   const backendStatusReady = hasBackendDelegation !== null;
   const firefliesKeyReady = hasKey !== null;
@@ -1038,10 +1043,8 @@ export function App() {
   const sourceItems: ShellSourceConfig[] = [
     { key: "fireflies", name: "Fireflies", count: null },
     { key: "granola", name: "Granola", count: null },
+    { key: "gmeet", name: "Google Meet", count: null },
   ];
-  if (GOOGLE_CLIENT_ID) {
-    sourceItems.push({ key: "gmeet", name: "Google Meet", count: null });
-  }
 
   const userInitials = address ? `${address.slice(2, 3)}${address.slice(-1)}`.toUpperCase() : "??";
   const userName = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "Signed in";
@@ -1194,7 +1197,7 @@ export function App() {
         hasFireflies={firefliesConnected}
         hasGoogleMeet={hasGoogleMeet === true}
         hasFirefliesBackendAccess={hasFirefliesBackendAccess === true}
-        showGoogleMeet={!!GOOGLE_CLIENT_ID}
+        googleMeetAvailable={googleMeetAvailable}
         onRouteChange={setActivePage}
         onSelectConversation={setSelectedConversationId}
         onAddSource={() => openSourcesSetup()}
@@ -1295,7 +1298,7 @@ export function App() {
             setActivePage("inbox");
           }}
           backendUrl={BACKEND_URL}
-          showGoogleMeet={!!GOOGLE_CLIENT_ID}
+          googleMeetAvailable={googleMeetAvailable}
         />
       )}
 
@@ -1337,7 +1340,7 @@ export function App() {
             setActivePage("inbox");
           }}
           backendUrl={BACKEND_URL}
-          showGoogleMeet={!!GOOGLE_CLIENT_ID}
+          googleMeetAvailable={googleMeetAvailable}
         />
       )}
 
@@ -1427,7 +1430,7 @@ export function App() {
           hasFireflies={firefliesConnected}
           hasGoogleMeet={hasGoogleMeet === true}
           hasFirefliesBackendAccess={hasFirefliesBackendAccess === true}
-          showGoogleMeet={!!GOOGLE_CLIENT_ID}
+          googleMeetAvailable={googleMeetAvailable}
           onAddSource={() => openSourcesSetup()}
           onAddTranscript={() => openSourcesSetup("transcript-import")}
           onRefresh={() => setRefreshKey((k) => k + 1)}

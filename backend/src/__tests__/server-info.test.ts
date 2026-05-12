@@ -33,12 +33,19 @@ function closeServer(server: Server): Promise<void> {
 describe("GET /api/server-info", () => {
   let server: Server;
   let baseUrl: string;
+  const originalGoogleClientId = process.env.GOOGLE_CLIENT_ID;
 
   afterEach(async () => {
     if (server) await closeServer(server);
+    if (originalGoogleClientId == null) {
+      delete process.env.GOOGLE_CLIENT_ID;
+    } else {
+      process.env.GOOGLE_CLIENT_ID = originalGoogleClientId;
+    }
   });
 
   it("returns 200 with did, status, and backend TinyCloud permissions", async () => {
+    delete process.env.GOOGLE_CLIENT_ID;
     const app = createApp();
     const result = await startServer(app);
     server = result.server;
@@ -65,6 +72,10 @@ describe("GET /api/server-info", () => {
     ).find((p) => p.service === "tinycloud.sql");
     expect(sqlPermission?.path).toBe("conversations");
     expect(sqlPermission?.description).toContain("conversation records");
+    expect(body.features.googleMeet).toEqual({
+      available: false,
+      reason: "google_client_not_configured",
+    });
   });
 
   it("does not require authentication", async () => {

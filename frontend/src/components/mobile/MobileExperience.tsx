@@ -41,7 +41,7 @@ interface MobileExperienceProps {
   hasFireflies: boolean;
   hasGoogleMeet: boolean;
   hasFirefliesBackendAccess: boolean;
-  showGoogleMeet: boolean;
+  googleMeetAvailable: boolean;
   onRouteChange: (route: ShellRoute) => void;
   onSelectConversation: (id: string | null) => void;
   onAddSource: () => void;
@@ -178,7 +178,7 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
   hasFireflies,
   hasGoogleMeet,
   hasFirefliesBackendAccess,
-  showGoogleMeet,
+  googleMeetAvailable,
   onRouteChange,
   onSelectConversation,
   onAddSource,
@@ -401,7 +401,7 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
         hasFireflies={hasFireflies}
         hasGoogleMeet={hasGoogleMeet}
         hasFirefliesBackendAccess={hasFirefliesBackendAccess}
-        showGoogleMeet={showGoogleMeet}
+        googleMeetAvailable={googleMeetAvailable}
         onAddSource={onAddSource}
         onRefresh={onRefresh}
       />
