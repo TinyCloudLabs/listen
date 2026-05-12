@@ -40,7 +40,9 @@ export async function persistFullTranscript(
         const audio = await options.downloadAudio(transcript.audio_url);
         Object.assign(
           normalized.conversation.metadata,
-          await storeAudio(access, normalized.conversation.id, audio),
+          await storeAudio(access, normalized.conversation.id, audio, {
+            sourceUrl: transcript.audio_url,
+          }),
         );
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

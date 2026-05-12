@@ -10,10 +10,16 @@ export interface DownloadedAudio {
 }
 
 export interface StoredAudioMetadata {
-  audio_kv_key: string;
+  audio_data_kv_key: string;
+  audio_metadata_kv_key: string;
   audio_content_type: string;
   audio_size_bytes: number;
   audio_stored_at: string;
+  audio_storage_encoding: "base64-string-kv";
+}
+
+export interface StoreAudioOptions {
+  sourceUrl?: string;
 }
 
 export async function downloadAudio(
@@ -58,20 +64,40 @@ export async function storeAudio(
   access: DelegatedAccess,
   conversationId: string,
   audio: DownloadedAudio,
+  options: StoreAudioOptions = {},
 ): Promise<StoredAudioMetadata> {
-  const kvKey = `audio/${conversationId}`;
-  const payload = JSON.stringify({
-    contentType: audio.contentType,
-    sizeBytes: audio.sizeBytes,
-    base64: Buffer.from(audio.bytes).toString("base64"),
-  });
+  const dataKey = `audio/${conversationId}/recording.base64`;
+  const metadataKey = `audio/${conversationId}/recording.json`;
+  const storedAt = new Date().toISOString();
 
-  await access.kv.put(kvKey, payload);
+  // TC-1366 fallback: current TinyCloud KV serializes non-string values as JSON,
+  // so raw object storage must wait for TC-1368 signed URL/raw object support.
+  await access.kv.put(dataKey, Buffer.from(audio.bytes).toString("base64"));
+  await access.kv.put(
+    metadataKey,
+    JSON.stringify({
+      dataKey,
+      contentType: audio.contentType,
+      sizeBytes: audio.sizeBytes,
+      storedAt,
+      storage: {
+        type: "string-kv",
+        encoding: "base64",
+        interimUntil: "TC-1368",
+      },
+      source: {
+        provider: "fireflies",
+        audioUrl: options.sourceUrl ?? null,
+      },
+    }),
+  );
 
   return {
-    audio_kv_key: kvKey,
+    audio_data_kv_key: dataKey,
+    audio_metadata_kv_key: metadataKey,
     audio_content_type: audio.contentType,
     audio_size_bytes: audio.sizeBytes,
-    audio_stored_at: new Date().toISOString(),
+    audio_stored_at: storedAt,
+    audio_storage_encoding: "base64-string-kv",
   };
 }

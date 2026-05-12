@@ -485,7 +485,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         metadata = {};
       }
 
-      if (metadata.audio_kv_key) {
+      if (metadata.audio_data_kv_key) {
         metadata.audio_playback_url = `/api/conversations/${id}/audio`;
       }
 
@@ -559,7 +559,8 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         metadata = {};
       }
 
-      const audioKey = typeof metadata.audio_kv_key === "string" ? metadata.audio_kv_key : null;
+      const audioKey =
+        typeof metadata.audio_data_kv_key === "string" ? metadata.audio_data_kv_key : null;
       if (!audioKey) {
         res.status(404).json({ error: "audio_not_found", message: "No audio is available" });
         return;
@@ -571,20 +572,25 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         return;
       }
 
-      const rawAudio = kvResult.data.data;
-      const payload =
-        typeof rawAudio === "string" ? JSON.parse(rawAudio) : (rawAudio as Record<string, unknown>);
-      const base64 = typeof payload.base64 === "string" ? payload.base64 : null;
-      if (!base64) {
+      const base64Audio = typeof kvResult.data.data === "string" ? kvResult.data.data : null;
+      if (!base64Audio) {
         res.status(404).json({ error: "audio_not_found", message: "Stored audio is invalid" });
         return;
       }
 
       const contentType =
-        typeof payload.contentType === "string" ? payload.contentType : "audio/mpeg";
-      const buffer = Buffer.from(base64, "base64");
+        typeof metadata.audio_content_type === "string"
+          ? metadata.audio_content_type
+          : "audio/mpeg";
+      const buffer = Buffer.from(base64Audio, "base64");
+      const contentLength =
+        typeof metadata.audio_size_bytes === "number" &&
+        Number.isFinite(metadata.audio_size_bytes) &&
+        metadata.audio_size_bytes >= 0
+          ? metadata.audio_size_bytes
+          : buffer.byteLength;
       res.setHeader("Content-Type", contentType);
-      res.setHeader("Content-Length", String(buffer.byteLength));
+      res.setHeader("Content-Length", String(contentLength));
       res.setHeader("Cache-Control", "private, max-age=3600");
       res.send(buffer);
     } catch (err) {

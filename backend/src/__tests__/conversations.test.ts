@@ -408,7 +408,7 @@ describe("Conversations Routes — GET /api/conversations/:id", () => {
         ended_at: null,
         duration_secs: null,
         summary: null,
-        metadata: JSON.stringify({ audio_kv_key: "audio/conv-1" }),
+        metadata: JSON.stringify({ audio_data_kv_key: "audio/conv-1/recording.base64" }),
         created_at: "2026-03-20T12:00:00Z",
         updated_at: "2026-03-20T12:00:00Z",
       },
@@ -426,14 +426,7 @@ describe("Conversations Routes — GET /api/conversations/:id", () => {
 
   it("serves stored Fireflies audio from KV", async () => {
     mockKV = createMockKV();
-    mockKV._data.set(
-      "audio/conv-1",
-      JSON.stringify({
-        contentType: "audio/mpeg",
-        sizeBytes: 8,
-        base64: Buffer.from("fake mp3").toString("base64"),
-      }),
-    );
+    mockKV._data.set("audio/conv-1/recording.base64", Buffer.from("fake mp3").toString("base64"));
 
     mockSQL = createMockSQL({
       detailRow: {
@@ -446,7 +439,12 @@ describe("Conversations Routes — GET /api/conversations/:id", () => {
         ended_at: null,
         duration_secs: null,
         summary: null,
-        metadata: JSON.stringify({ audio_kv_key: "audio/conv-1" }),
+        metadata: JSON.stringify({
+          audio_data_kv_key: "audio/conv-1/recording.base64",
+          audio_metadata_kv_key: "audio/conv-1/recording.json",
+          audio_content_type: "audio/mpeg",
+          audio_size_bytes: 8,
+        }),
         created_at: "2026-03-20T12:00:00Z",
         updated_at: "2026-03-20T12:00:00Z",
       },

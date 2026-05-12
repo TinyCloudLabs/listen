@@ -1,5 +1,6 @@
 import { describe, it, expect, mock, beforeEach, afterEach } from "bun:test";
-import { downloadAudio } from "../services/fireflies-audio.js";
+import { Buffer } from "node:buffer";
+import { downloadAudio, storeAudio } from "../services/fireflies-audio.js";
 
 const originalFetch = globalThis.fetch;
 const mockFetch = mock<typeof globalThis.fetch>(() => Promise.resolve(new Response()));
@@ -53,5 +54,43 @@ describe("fireflies audio", () => {
     await expect(
       downloadAudio("https://audio.example.com/meeting.mp3", "secret-key", 8),
     ).rejects.toThrow(/too large/);
+  });
+
+  it("stores audio data separately from metadata using the string-KV fallback", async () => {
+    const data = new Map<string, string>();
+    const access = {
+      kv: {
+        put: async (key: string, value: string) => {
+          data.set(key, value);
+          return { ok: true };
+        },
+      },
+    } as any;
+
+    const stored = await storeAudio(
+      access,
+      "conv-1",
+      {
+        bytes: new TextEncoder().encode("fake mp3").buffer,
+        contentType: "audio/webm",
+        sizeBytes: 8,
+      },
+      { sourceUrl: "https://audio.example.com/meeting.webm" },
+    );
+
+    expect(stored.audio_data_kv_key).toBe("audio/conv-1/recording.base64");
+    expect(stored.audio_metadata_kv_key).toBe("audio/conv-1/recording.json");
+    expect(stored.audio_storage_encoding).toBe("base64-string-kv");
+    expect(data.get(stored.audio_data_kv_key)).toBe(Buffer.from("fake mp3").toString("base64"));
+
+    const sidecar = JSON.parse(data.get(stored.audio_metadata_kv_key)!);
+    expect(sidecar.contentType).toBe("audio/webm");
+    expect(sidecar.sizeBytes).toBe(8);
+    expect(sidecar.storage).toEqual({
+      type: "string-kv",
+      encoding: "base64",
+      interimUntil: "TC-1368",
+    });
+    expect(sidecar.source.audioUrl).toBe("https://audio.example.com/meeting.webm");
   });
 });

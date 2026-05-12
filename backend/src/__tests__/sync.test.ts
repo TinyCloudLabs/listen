@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import express from "express";
 import type { Server } from "http";
 import type { Request, Response, NextFunction } from "express";
+import { Buffer } from "node:buffer";
 import { createSyncRouter } from "../routes/sync.js";
 import type {
   FullTranscript,
@@ -621,7 +622,7 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
     expect(parsed[0].text).toBe("Hello everyone");
   });
 
-  it("stores Fireflies audio in KV when audio_url exists", async () => {
+  it("stores Fireflies audio data and metadata separately in KV when audio_url exists", async () => {
     mockKV._data.set(KV_KEY, "test-api-key");
 
     const summaries = [createMockFullTranscript({ id: "ff-1" })];
@@ -638,11 +639,14 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     const conversationId = body.conversations[0].id;
-    const storedAudio = mockKV._data.get(`audio/${conversationId}`);
+    const storedAudio = mockKV._data.get(`audio/${conversationId}/recording.base64`);
+    const storedMetadata = mockKV._data.get(`audio/${conversationId}/recording.json`);
 
     expect(storedAudio).toBeDefined();
+    expect(storedAudio).toBe(Buffer.from("fake mp3").toString("base64"));
+    expect(storedMetadata).toBeDefined();
     expect(clientFactory.getAudioCalls()).toEqual(["https://audio.example.com/ff-1.mp3"]);
-    expect(JSON.parse(storedAudio!).contentType).toBe("audio/mpeg");
+    expect(JSON.parse(storedMetadata!).contentType).toBe("audio/mpeg");
   });
 
   // ── SQL insert verification ────────────────────────────────────
@@ -714,7 +718,9 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
     // Should be valid JSON
     const parsed = JSON.parse(metadataParam!);
     expect(parsed).toHaveProperty("audio_url");
-    expect(parsed).toHaveProperty("audio_kv_key");
+    expect(parsed).toHaveProperty("audio_data_kv_key");
+    expect(parsed).toHaveProperty("audio_metadata_kv_key");
+    expect(parsed).toHaveProperty("audio_storage_encoding", "base64-string-kv");
     expect(parsed).toHaveProperty("organizer_email");
   });
 
