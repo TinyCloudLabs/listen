@@ -203,7 +203,7 @@ function mockAuthFlow() {
 
 async function renderAndSignIn() {
   render(<App />);
-  fireEvent.click(screen.getByRole("button", { name: /open app/i }));
+  fireEvent.click(screen.getAllByRole("button", { name: /open app/i })[0]);
 
   await waitFor(() => {
     expect(createAndSignIn).toHaveBeenCalled();
@@ -256,10 +256,25 @@ describe("App manual sign-in processing", () => {
   it("does not auto-login from a stored session on the landing page", () => {
     render(<App />);
 
-    expect(screen.getByRole("button", { name: /open app/i })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /open app/i })).toHaveLength(2);
     expect(connectWallet).not.toHaveBeenCalled();
     expect(createAndSignIn).not.toHaveBeenCalled();
     expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it("renders updated landing page copy and links", () => {
+    render(<App />);
+
+    expect(screen.queryByText(/watch demo/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/made in monochrome/i)).not.toBeInTheDocument();
+    expect(screen.getByText("© 2026 TinyCloud, Inc.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /interoperable apps/i })).toHaveAttribute(
+      "href",
+      "https://tinycloud.xyz/interoperable-apps",
+    );
+    expect(
+      screen.getByText(/I recorded everything, but I had no idea where it lived/i),
+    ).toBeInTheDocument();
   });
 
   it("calls pending endpoint after manual sign-in with active delegation", async () => {

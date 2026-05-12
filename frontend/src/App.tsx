@@ -289,9 +289,9 @@ function LandingPage({
                 <span>transcripts indexed in TinyCloud</span>
               </div>
               <div className="landing-hero-actions">
-                <a className="landing-btn" href="#preview">
-                  Watch demo
-                </a>
+                <button className="landing-btn" onClick={onSignIn} disabled={loading}>
+                  {signInLabel}
+                </button>
               </div>
               {error && (
                 <div className="landing-error" role="alert">
@@ -371,8 +371,8 @@ function LandingPage({
 
           <section className="landing-quote-section">
             <p>
-              "I stopped taking meeting notes. Listen reads them all back to me on Monday morning,
-              and tells me what I owe people."
+              "I recorded everything, but I had no idea where it lived. Listen helps me see it all
+              and bring my data together in one place."
             </p>
             <span className="landing-mono landing-muted">- Priya R - Head of Product</span>
           </section>
@@ -399,8 +399,13 @@ function LandingPage({
               </div>
             </div>
             <div className="landing-footer-bottom">
-              <span className="landing-mono landing-muted">© 2026 listen, inc.</span>
-              <span className="landing-mono landing-muted">made in monochrome</span>
+              <span className="landing-mono landing-muted">© 2026 TinyCloud, Inc.</span>
+              <a
+                className="landing-mono landing-muted"
+                href="https://tinycloud.xyz/interoperable-apps"
+              >
+                Interoperable apps
+              </a>
             </div>
           </footer>
         </div>
