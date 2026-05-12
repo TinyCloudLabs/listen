@@ -114,38 +114,6 @@ const LIST_TRANSCRIPTS_QUERY = `query ListTranscripts($limit: Int, $skip: Int) {
     duration
     organizer_email
     transcript_url
-    speakers {
-      id
-      name
-    }
-    meeting_attendees {
-      displayName
-      email
-    }
-    sentences {
-      index
-      speaker_id
-      speaker_name
-      text
-      raw_text
-      start_time
-      end_time
-      ai_filters {
-        task
-        pricing
-        metric
-        question
-        date_and_time
-        sentiment
-      }
-    }
-    summary {
-      keywords
-      action_items
-      overview
-      shorthand_bullet
-      meeting_type
-    }
     audio_url
   }
 }`;
@@ -257,6 +225,12 @@ export class FirefliesClient {
     return this.request<{ transcript: FullTranscript }>(GET_TRANSCRIPT_QUERY, { id }).then(
       (data) => data.transcript,
     );
+  }
+
+  /** Download transcript audio using the same Fireflies API key. */
+  async downloadAudio(audioUrl: string) {
+    const { downloadAudio } = await import("./fireflies-audio.js");
+    return downloadAudio(audioUrl, this.apiKey);
   }
 
   /**

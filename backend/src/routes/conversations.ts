@@ -1,5 +1,6 @@
 import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
+import { Buffer } from "node:buffer";
 import type { NormalizedConversation } from "../adapters/types.js";
 import { conversationSql, ensureSchema } from "../schema.js";
 import { persistConversation } from "../services/persist-conversation.js";
@@ -484,6 +485,10 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         metadata = {};
       }
 
+      if (metadata.audio_kv_key) {
+        metadata.audio_playback_url = `/api/conversations/${id}/audio`;
+      }
+
       const conversation = { ...row, metadata };
 
       // Fetch participants
@@ -525,6 +530,67 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
       console.error("[conversations] detail failed:", err);
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: "detail_failed", message });
+    }
+  });
+
+  // ── GET /:id/audio — stream stored Fireflies audio from KV ──
+  router.get("/:id/audio", async (req: Request, res: Response) => {
+    const access = req.delegatedAccess!;
+    const { id } = req.params;
+
+    try {
+      await ensureSchema(access);
+      const sqlDb = conversationSql(access);
+      const convoResult = await sqlDb.query(`SELECT metadata FROM conversation WHERE id = ?`, [id]);
+
+      if (!convoResult.ok || !convoResult.data.rows?.length) {
+        res.status(404).json({ error: "not_found", message: `Conversation ${id} not found` });
+        return;
+      }
+
+      const rawMetadata = Array.isArray(convoResult.data.rows[0])
+        ? convoResult.data.rows[0][0]
+        : (convoResult.data.rows[0] as any).metadata;
+
+      let metadata: Record<string, unknown> = {};
+      try {
+        metadata = rawMetadata ? JSON.parse(String(rawMetadata)) : {};
+      } catch {
+        metadata = {};
+      }
+
+      const audioKey = typeof metadata.audio_kv_key === "string" ? metadata.audio_kv_key : null;
+      if (!audioKey) {
+        res.status(404).json({ error: "audio_not_found", message: "No audio is available" });
+        return;
+      }
+
+      const kvResult = await access.kv.get(audioKey);
+      if (!kvResult.ok || !kvResult.data.data) {
+        res.status(404).json({ error: "audio_not_found", message: "Stored audio is missing" });
+        return;
+      }
+
+      const rawAudio = kvResult.data.data;
+      const payload =
+        typeof rawAudio === "string" ? JSON.parse(rawAudio) : (rawAudio as Record<string, unknown>);
+      const base64 = typeof payload.base64 === "string" ? payload.base64 : null;
+      if (!base64) {
+        res.status(404).json({ error: "audio_not_found", message: "Stored audio is invalid" });
+        return;
+      }
+
+      const contentType =
+        typeof payload.contentType === "string" ? payload.contentType : "audio/mpeg";
+      const buffer = Buffer.from(base64, "base64");
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Content-Length", String(buffer.byteLength));
+      res.setHeader("Cache-Control", "private, max-age=3600");
+      res.send(buffer);
+    } catch (err) {
+      console.error("[conversations] audio failed:", err);
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: "audio_failed", message });
     }
   });
 

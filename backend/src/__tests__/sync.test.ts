@@ -151,6 +151,8 @@ function createMockClientFactory() {
   let listBatches: FullTranscript[][] | null = null;
   let listCallIndex = 0;
   const getResults = new Map<string, FullTranscript | Error>();
+  const getCalls: string[] = [];
+  const audioCalls: string[] = [];
   let lastApiKey: string | null = null;
 
   return {
@@ -168,6 +170,12 @@ function createMockClientFactory() {
     },
     getLastApiKey() {
       return lastApiKey;
+    },
+    getGetCalls() {
+      return getCalls;
+    },
+    getAudioCalls() {
+      return audioCalls;
     },
     factory(apiKey: string) {
       lastApiKey = apiKey;
@@ -214,10 +222,19 @@ function createMockClientFactory() {
           return { transcripts: listResult, batchCount: 1, earlyExit: false };
         },
         getTranscript: async (id: string) => {
+          getCalls.push(id);
           const result = getResults.get(id);
           if (result instanceof Error) throw result;
           if (!result) throw new Error(`No mock transcript for id=${id}`);
           return result;
+        },
+        downloadAudio: async (audioUrl: string) => {
+          audioCalls.push(audioUrl);
+          return {
+            bytes: new TextEncoder().encode("fake mp3").buffer,
+            contentType: "audio/mpeg",
+            sizeBytes: 8,
+          };
         },
       };
     },
@@ -416,6 +433,7 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
     expect(body.failed).toBe(0);
     expect(body.errors).toEqual([]);
     expect(body.conversations).toHaveLength(2);
+    expect(clientFactory.getGetCalls()).toEqual(["ff-2", "ff-3"]);
   });
 
   // ── All skipped ─────────────────────────────────────────────────
@@ -462,6 +480,18 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
 
     // Simulate a persist failure on ff-2 by making SQL INSERT throw for that source_id
     mockSQL._failOnSourceId("ff-2");
+    clientFactory.setGetResult(
+      "ff-1",
+      createMockFullTranscript({ id: "ff-1", title: "Meeting 1" }),
+    );
+    clientFactory.setGetResult(
+      "ff-2",
+      createMockFullTranscript({ id: "ff-2", title: "Meeting 2" }),
+    );
+    clientFactory.setGetResult(
+      "ff-3",
+      createMockFullTranscript({ id: "ff-3", title: "Meeting 3" }),
+    );
 
     mockSQL._setDedupRows([]);
 
@@ -591,6 +621,30 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
     expect(parsed[0].text).toBe("Hello everyone");
   });
 
+  it("stores Fireflies audio in KV when audio_url exists", async () => {
+    mockKV._data.set(KV_KEY, "test-api-key");
+
+    const summaries = [createMockFullTranscript({ id: "ff-1" })];
+    clientFactory.setListResult(summaries);
+    clientFactory.setGetResult("ff-1", createMockFullTranscript({ id: "ff-1" }));
+    mockSQL._setDedupRows([]);
+
+    const res = await fetch(`http://localhost:${port}/api/sync/fireflies`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const conversationId = body.conversations[0].id;
+    const storedAudio = mockKV._data.get(`audio/${conversationId}`);
+
+    expect(storedAudio).toBeDefined();
+    expect(clientFactory.getAudioCalls()).toEqual(["https://audio.example.com/ff-1.mp3"]);
+    expect(JSON.parse(storedAudio!).contentType).toBe("audio/mpeg");
+  });
+
   // ── SQL insert verification ────────────────────────────────────
 
   it("inserts conversation and participants into SQL", async () => {
@@ -660,6 +714,7 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
     // Should be valid JSON
     const parsed = JSON.parse(metadataParam!);
     expect(parsed).toHaveProperty("audio_url");
+    expect(parsed).toHaveProperty("audio_kv_key");
     expect(parsed).toHaveProperty("organizer_email");
   });
 
@@ -905,6 +960,14 @@ describe("Sync Routes — GET /api/sync/fireflies/stream", () => {
 
     // Simulate persist failure on ff-2
     mockSQL._failOnSourceId("ff-2");
+    clientFactory.setGetResult(
+      "ff-1",
+      createMockFullTranscript({ id: "ff-1", title: "Meeting 1" }),
+    );
+    clientFactory.setGetResult(
+      "ff-2",
+      createMockFullTranscript({ id: "ff-2", title: "Meeting 2" }),
+    );
 
     mockSQL._setDedupRows([]);
 
@@ -1110,12 +1173,13 @@ describe("Sync Routes — SSE pagination integration (75 meetings)", () => {
     mockKV._data.set(KV_KEY, "test-api-key");
     mockSQL._setDedupRows([]);
 
-    const { summaries } = generateMeetings(10);
+    const { summaries, fullTranscripts } = generateMeetings(10);
 
     clientFactory.setListBatches([summaries]);
 
     // Make every 3rd transcript fail at persist time (indices 2, 5, 8)
     for (let i = 0; i < 10; i++) {
+      clientFactory.setGetResult(summaries[i].id, fullTranscripts.get(summaries[i].id)!);
       if (i % 3 === 2) {
         mockSQL._failOnSourceId(summaries[i].id);
       }
