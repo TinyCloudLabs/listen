@@ -1,5 +1,11 @@
-import { useEffect, useMemo, useState, type FC } from "react";
+import { useCallback, useEffect, useMemo, useState, type FC } from "react";
 import type { ApiClient } from "@listen/client";
+import {
+  readConversationDetailCache,
+  readConversationPageCache,
+  writeConversationDetailCache,
+  writeConversationPageCache,
+} from "../conversationPageCache";
 
 interface ConversationSummary {
   id: string;
@@ -64,6 +70,8 @@ const STOPWORDS = new Set([
   "where",
   "with",
 ]);
+
+const CHAT_CONVERSATIONS_PATH = "/api/conversations?limit=100&offset=0";
 
 function tokenize(input: string): string[] {
   return input
@@ -132,16 +140,56 @@ export const ChatScreen: FC<ChatScreenProps> = ({ api, refreshKey, onOpenConvers
   ]);
 
   useEffect(() => {
-    setLoading(true);
+    const cached = readConversationPageCache<ConversationSummary>(CHAT_CONVERSATIONS_PATH);
+    let cancelled = false;
+
+    if (cached) {
+      setConversations(cached.conversations);
+      setLoading(false);
+      setError(null);
+    } else {
+      setLoading(true);
+    }
+
     api
-      .get<ConversationsResponse>("/api/conversations?limit=100&offset=0")
+      .get<ConversationsResponse>(CHAT_CONVERSATIONS_PATH)
       .then((res) => {
+        if (cancelled) return;
         setConversations(res.conversations);
+        writeConversationPageCache(CHAT_CONVERSATIONS_PATH, res);
         setError(null);
       })
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (!cancelled && !cached) setError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [api, refreshKey]);
+
+  const getConversationDetail = useCallback(
+    async (conversation: ConversationSummary): Promise<DetailResponse> => {
+      const cached = readConversationDetailCache<DetailResponse>(conversation.id);
+      const path = `/api/conversations/${conversation.id}`;
+
+      if (cached) {
+        void api
+          .get<DetailResponse>(path)
+          .then((fresh) => writeConversationDetailCache(conversation.id, fresh))
+          .catch(() => {});
+        return cached.data;
+      }
+
+      const detail = await api.get<DetailResponse>(path);
+      writeConversationDetailCache(conversation.id, detail);
+      return detail;
+    },
+    [api],
+  );
 
   const suggestions = useMemo(() => {
     const sources = Array.from(new Set(conversations.map((c) => sourceLabel(c.source)))).slice(
@@ -179,9 +227,7 @@ export const ChatScreen: FC<ChatScreenProps> = ({ api, refreshKey, onOpenConvers
 
       const details = await Promise.all(
         ranked.map(({ conversation }) =>
-          api
-            .get<DetailResponse>(`/api/conversations/${conversation.id}`)
-            .catch(() => ({ conversation, transcript: null })),
+          getConversationDetail(conversation).catch(() => ({ conversation, transcript: null })),
         ),
       );
 

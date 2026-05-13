@@ -2,6 +2,10 @@ import { useState, useEffect, type FC } from "react";
 import type { ApiClient } from "@listen/client";
 import { TranscriptPane, type TranscriptSentence } from "./TranscriptPane";
 import { NotesPane } from "./NotesPane";
+import {
+  readConversationDetailCache,
+  writeConversationDetailCache,
+} from "../conversationPageCache";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -171,13 +175,41 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
-    setLoading(true);
+    const cached = readConversationDetailCache<DetailResponse>(conversationId);
+    let cancelled = false;
+
     setError(null);
+    setNotice(null);
+    if (cached) {
+      setData(cached.data);
+      setLoading(false);
+    } else {
+      setData(null);
+      setLoading(true);
+    }
+
     api
       .get<DetailResponse>(`/api/conversations/${conversationId}`)
-      .then((res) => setData(res))
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-      .finally(() => setLoading(false));
+      .then((res) => {
+        if (cancelled) return;
+        setData(res);
+        writeConversationDetailCache(conversationId, res);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        if (cached) {
+          setNotice("Could not refresh cached conversation");
+        } else {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [api, conversationId]);
 
   useEffect(() => {

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import { ConversationDetail } from "../components/ConversationDetail";
+import { conversationDetailCacheKey } from "../conversationPageCache";
 import type { ApiClient } from "@listen/client";
 
 function mockApi(overrides: Partial<ApiClient> = {}): ApiClient {
@@ -83,10 +84,12 @@ describe("ConversationDetail", () => {
   beforeEach(() => {
     api = mockApi();
     onBack = vi.fn();
+    localStorage.clear();
   });
 
   afterEach(() => {
     cleanup();
+    localStorage.clear();
   });
 
   it("fetches conversation detail on mount", async () => {
@@ -119,6 +122,44 @@ describe("ConversationDetail", () => {
     await waitFor(() => {
       expect(screen.queryByText("Loading conversation")).not.toBeInTheDocument();
     });
+  });
+
+  it("renders cached detail immediately and refreshes it from the server", async () => {
+    localStorage.setItem(
+      conversationDetailCacheKey("01ABC"),
+      JSON.stringify({
+        data: {
+          ...DETAIL_RESPONSE,
+          conversation: { ...DETAIL_RESPONSE.conversation, title: "Cached Planning" },
+        },
+        cachedAt: "2026-03-20T15:00:00Z",
+      }),
+    );
+
+    let resolveGet!: (value: typeof DETAIL_RESPONSE) => void;
+    const getMock = vi.fn().mockReturnValue(
+      new Promise<typeof DETAIL_RESPONSE>((resolve) => {
+        resolveGet = resolve;
+      }),
+    );
+    api = mockApi({ get: getMock });
+
+    render(<ConversationDetail api={api} conversationId="01ABC" onBack={onBack} />);
+
+    expect(await screen.findByText("Cached Planning")).toBeInTheDocument();
+    expect(screen.queryByText("Loading conversation")).not.toBeInTheDocument();
+
+    resolveGet({
+      ...DETAIL_RESPONSE,
+      conversation: { ...DETAIL_RESPONSE.conversation, title: "Fresh Planning" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Fresh Planning")).toBeInTheDocument();
+    });
+
+    const cached = JSON.parse(localStorage.getItem(conversationDetailCacheKey("01ABC"))!);
+    expect(cached.data.conversation.title).toBe("Fresh Planning");
   });
 
   it("renders conversation header with title, date, and duration", async () => {
