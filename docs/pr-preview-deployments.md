@@ -51,7 +51,7 @@ Repository secrets:
 
 | Name | Required | Notes |
 | --- | --- | --- |
-| `RAILWAY_TOKEN` | Yes | Railway project/account token that can create environments, set service variables, deploy, and delete PR environments. |
+| `RAILWAY_API_TOKEN` | Yes | Railway workspace/account token that can create environments, set service variables, deploy, and delete PR environments. |
 | `CLOUDFLARE_API_TOKEN` | No | Cloudflare token for Pages uploads. If missing or under-scoped, the Railway backend preview still deploys and the PR comment marks the frontend as not deployed. |
 | `LISTEN_PREVIEW_BACKEND_PRIVATE_KEY` | Yes | Backend wallet private key for preview backend instances. |
 | `LISTEN_PREVIEW_GOOGLE_CLIENT_ID` | No | Enables Google UI and backend OAuth in previews. |

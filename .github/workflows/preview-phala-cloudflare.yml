@@ -52,14 +52,14 @@ jobs:
       - name: Check preview deploy configuration
         id: deploy_config
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
           BACKEND_PRIVATE_KEY: ${{ secrets.LISTEN_PREVIEW_BACKEND_PRIVATE_KEY }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           missing=()
           for item in \
             "RAILWAY_PROJECT_ID:RAILWAY_PROJECT_ID" \
-            "RAILWAY_TOKEN:RAILWAY_TOKEN" \
+            "RAILWAY_API_TOKEN:RAILWAY_API_TOKEN" \
             "BACKEND_PRIVATE_KEY:LISTEN_PREVIEW_BACKEND_PRIVATE_KEY"; do
             env_name="${item%%:*}"
             config_name="${item##*:}"
@@ -109,7 +109,7 @@ jobs:
         if: steps.deploy_config.outputs.can_deploy == 'true'
         id: railway
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
           BACKEND_PRIVATE_KEY: ${{ secrets.LISTEN_PREVIEW_BACKEND_PRIVATE_KEY }}
           TINYCLOUD_HOST: ${{ vars.TINYCLOUD_HOST || 'https://node.tinycloud.xyz' }}
           GOOGLE_CLIENT_ID: ${{ secrets.LISTEN_PREVIEW_GOOGLE_CLIENT_ID }}

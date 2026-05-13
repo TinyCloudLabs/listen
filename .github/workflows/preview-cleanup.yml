@@ -22,9 +22,9 @@ jobs:
         id: cleanup_config
         env:
           RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
         run: |
-          if [ -n "$RAILWAY_PROJECT_ID" ] && [ -n "$RAILWAY_TOKEN" ]; then
+          if [ -n "$RAILWAY_PROJECT_ID" ] && [ -n "$RAILWAY_API_TOKEN" ]; then
             echo "can_cleanup=true" >> "$GITHUB_OUTPUT"
           else
             echo "can_cleanup=false" >> "$GITHUB_OUTPUT"
@@ -37,7 +37,7 @@ jobs:
       - name: Delete preview backend environment
         if: steps.cleanup_config.outputs.can_cleanup == 'true'
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
           RAILWAY_BASE_ENVIRONMENT: ${{ vars.RAILWAY_BASE_ENVIRONMENT || 'production' }}
           RAILWAY_SERVICE: ${{ vars.RAILWAY_SERVICE || 'listen-backend' }}
