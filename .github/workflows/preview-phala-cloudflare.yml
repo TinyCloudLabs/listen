@@ -205,6 +205,11 @@ jobs:
           VITE_ENABLE_AGENT: ${{ vars.VITE_ENABLE_AGENT || 'false' }}
         run: bun run build --filter=listen-frontend
 
+      - uses: actions/setup-node@v4
+        if: steps.deploy_config.outputs.can_deploy == 'true' && steps.deploy_config.outputs.has_cloudflare == 'true'
+        with:
+          node-version: 22
+
       - name: Deploy preview frontend to Cloudflare Pages
         if: steps.deploy_config.outputs.can_deploy == 'true' && steps.deploy_config.outputs.has_cloudflare == 'true'
         id: cloudflare
