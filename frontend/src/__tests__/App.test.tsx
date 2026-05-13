@@ -6,6 +6,8 @@ import {
   connectWallet,
   createAndSignIn,
   createManifestDelegation,
+  clearPersistedSession,
+  loadPersistedSession,
   requestNonce,
   sendDelegation,
   verifySession,
@@ -31,20 +33,49 @@ const mockApiClient = { get: mockGet, post: mockPost, put: mockPut, del: mockDel
 
 vi.mock("@listen/client", () => {
   class MockSessionStore {
+    private storageKey: string;
+
+    constructor(storageKey = "listen:session") {
+      this.storageKey = storageKey;
+    }
+
+    private read() {
+      const raw = localStorage.getItem(this.storageKey);
+      return raw ? JSON.parse(raw) : null;
+    }
+
     hasSession() {
-      return true;
+      return this.read() !== null;
     }
+
     isExpired() {
-      return false;
+      const session = this.read();
+      if (!session) return true;
+      return Date.now() >= session.expiresAt - 30_000;
     }
+
     getAddress() {
-      return "0xabc123";
+      return this.read()?.address ?? null;
     }
+
     getToken() {
-      return "mock-token";
+      return this.read()?.token ?? null;
     }
-    setSession() {}
-    clear() {}
+
+    setSession(token: string, expiresIn: number, address?: string) {
+      localStorage.setItem(
+        this.storageKey,
+        JSON.stringify({
+          token,
+          expiresAt: Date.now() + expiresIn * 1000,
+          address,
+        }),
+      );
+    }
+
+    clear() {
+      localStorage.removeItem(this.storageKey);
+    }
   }
   return {
     connectWallet: vi.fn(),
@@ -53,6 +84,8 @@ vi.mock("@listen/client", () => {
     createAndSignIn: vi.fn(),
     createApiClient: vi.fn(() => mockApiClient),
     createManifestDelegation: vi.fn(),
+    clearPersistedSession: vi.fn(),
+    loadPersistedSession: vi.fn(() => null),
     sendDelegation: vi.fn(),
     checkDelegationStatus: vi.fn().mockResolvedValue({ status: "active" }),
     revokeDelegation: vi.fn(),
@@ -203,6 +236,17 @@ function mockAuthFlow() {
   );
 }
 
+function storeBackendSession(address = "0xabc123") {
+  localStorage.setItem(
+    "listen:session",
+    JSON.stringify({
+      token: "persisted-token",
+      expiresAt: Date.now() + 3600_000,
+      address,
+    }),
+  );
+}
+
 async function renderAndSignIn() {
   render(<App />);
   fireEvent.click(screen.getAllByRole("button", { name: /open app/i })[0]);
@@ -230,6 +274,7 @@ describe("App manual sign-in processing", () => {
       vi.fn(() => true),
     );
     mockAuthFlow();
+    vi.mocked(loadPersistedSession).mockReturnValue(null);
     mockSecretDelete.mockResolvedValue({ ok: true });
 
     // Default: backfill returns no updates
@@ -267,13 +312,37 @@ describe("App manual sign-in processing", () => {
     vi.unstubAllGlobals();
   });
 
-  it("does not auto-login from a stored session on the landing page", () => {
+  it("stays on the landing page when no stored session exists", () => {
     render(<App />);
 
     expect(screen.getAllByRole("button", { name: /open app/i })).toHaveLength(2);
     expect(connectWallet).not.toHaveBeenCalled();
     expect(createAndSignIn).not.toHaveBeenCalled();
     expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it("restores a valid stored backend session on load without a fresh SIWE flow", async () => {
+    storeBackendSession();
+    vi.mocked(loadPersistedSession).mockReturnValue({
+      address: "0xabc123",
+      chainId: 1,
+      did: "did:pkh:eip155:1:0xabc123",
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("0xabc1…c123")).toBeInTheDocument();
+    expect(connectWallet).not.toHaveBeenCalled();
+    expect(requestNonce).not.toHaveBeenCalled();
+    expect(createAndSignIn).not.toHaveBeenCalled();
+    expect(verifySession).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(checkDelegationStatus).toHaveBeenCalledWith(
+        "http://localhost:3001",
+        "persisted-token",
+      );
+    });
   });
 
   it("renders updated landing page copy and links", () => {
@@ -297,6 +366,14 @@ describe("App manual sign-in processing", () => {
     await waitFor(() => {
       expect(mockGet).toHaveBeenCalledWith("/api/webhooks/fireflies/pending");
     });
+  });
+
+  it("clears persisted TinyCloud session before starting a fresh SIWE sign-in", async () => {
+    await renderAndSignIn();
+
+    expect(clearPersistedSession).toHaveBeenCalledWith("0xabc123");
+    expect(requestNonce).toHaveBeenCalledWith("http://localhost:3001", "0xabc123");
+    expect(createAndSignIn).toHaveBeenCalled();
   });
 
   it("posts backend delegation during manual sign-in when none is stored", async () => {
