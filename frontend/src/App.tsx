@@ -1063,7 +1063,7 @@ export function App() {
                       ? `inbox · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`
                       : "onboarding / sources";
   const pageTitle = !isSignedIn
-    ? "Capture thoughts. Bring your own data."
+    ? "Capture thoughts. Transform them into insights."
     : selectedConversationId
       ? "Transcript detail"
       : showWorkspaceLoading
