@@ -21,6 +21,9 @@ RAILWAY_DOCKERFILE_PATH=backend/Dockerfile
 PORT=3001
 ```
 
+If Railway falls back to Railpack for the repo-root monorepo context, `railpack.json`
+sets the backend start command to `bun run --cwd backend start`.
+
 The Railway CLI was used to create the initial `listen-backend` service in project `d0603e71-78b2-45ca-91ed-15d6fb253c1b`.
 
 ## Required GitHub Configuration
