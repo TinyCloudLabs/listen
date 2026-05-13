@@ -422,6 +422,146 @@ describe("Conversations Routes — GET /api/conversations/:id", () => {
 
     const body = await res.json();
     expect(body.conversation.metadata.audio_playback_url).toBe("/api/conversations/conv-1/audio");
+    expect(body.conversation.metadata.audio_playback_url_source).toBe("backend-kv-fallback");
+  });
+
+  it("uses a signed KV read URL for browser audio playback when supported", async () => {
+    mockKV = createMockKV();
+    const signedUrlCalls: string[] = [];
+    (mockKV as any).createSignedReadUrl = async (key: string) => {
+      signedUrlCalls.push(key);
+      return {
+        ok: true,
+        data: {
+          url: "https://node.example.com/signed/audio",
+          relativeUrl: "/signed/kv/ticket-1",
+          ticketId: "ticket-1",
+          expiresAt: "2026-05-13T13:45:00.000Z",
+        },
+      };
+    };
+    mockSQL = createMockSQL({
+      detailRow: {
+        id: "conv-1",
+        title: "Sprint Planning",
+        source: "fireflies",
+        source_id: "ff-123",
+        source_url: null,
+        started_at: "2026-03-20T10:00:00Z",
+        ended_at: null,
+        duration_secs: null,
+        summary: null,
+        metadata: JSON.stringify({
+          audio_data_kv_key: "audio/conv-1/recording",
+          audio_metadata_kv_key: "audio/conv-1/recording.json",
+          audio_content_type: "audio/webm",
+          audio_size_bytes: 8,
+        }),
+        created_at: "2026-03-20T12:00:00Z",
+        updated_at: "2026-03-20T12:00:00Z",
+      },
+      participantRows: [],
+    });
+    const app = createApp(mockKV, mockSQL);
+    ({ server, port } = await startServer(app));
+
+    const res = await fetch(`http://localhost:${port}/api/conversations/conv-1`);
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    expect(signedUrlCalls).toEqual(["audio/conv-1/recording"]);
+    expect(body.conversation.metadata.audio_playback_url).toBe(
+      "https://node.example.com/signed/audio",
+    );
+    expect(body.conversation.metadata.audio_signed_url_expires_at).toBe("2026-05-13T13:45:00.000Z");
+    expect(body.conversation.metadata.audio_playback_url_source).toBe("tinycloud-signed-kv");
+    expect(body.conversation.metadata.audio_content_type).toBe("audio/webm");
+    expect(body.conversation.metadata.audio_size_bytes).toBe(8);
+  });
+
+  it("falls back to backend audio playback when signed KV URL creation fails", async () => {
+    mockKV = createMockKV();
+    (mockKV as any).createSignedReadUrl = async () => ({
+      ok: false,
+      error: { code: "signed_url_unavailable" },
+    });
+    mockSQL = createMockSQL({
+      detailRow: {
+        id: "conv-1",
+        title: "Sprint Planning",
+        source: "fireflies",
+        source_id: "ff-123",
+        source_url: null,
+        started_at: "2026-03-20T10:00:00Z",
+        ended_at: null,
+        duration_secs: null,
+        summary: null,
+        metadata: JSON.stringify({
+          audio_data_kv_key: "audio/conv-1/recording",
+          audio_metadata_kv_key: "audio/conv-1/recording.json",
+        }),
+        created_at: "2026-03-20T12:00:00Z",
+        updated_at: "2026-03-20T12:00:00Z",
+      },
+      participantRows: [],
+    });
+    const app = createApp(mockKV, mockSQL);
+    ({ server, port } = await startServer(app));
+
+    const res = await fetch(`http://localhost:${port}/api/conversations/conv-1`);
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    expect(body.conversation.metadata.audio_playback_url).toBe("/api/conversations/conv-1/audio");
+    expect(body.conversation.metadata.audio_playback_url_source).toBe("backend-kv-fallback");
+    expect(body.conversation.metadata.audio_signed_url_expires_at).toBeUndefined();
+  });
+
+  it("keeps base64 string-KV audio on the backend fallback even when signed URLs exist", async () => {
+    mockKV = createMockKV();
+    const signedUrlCalls: string[] = [];
+    (mockKV as any).createSignedReadUrl = async (key: string) => {
+      signedUrlCalls.push(key);
+      return {
+        ok: true,
+        data: {
+          url: "https://node.example.com/signed/audio",
+          relativeUrl: "/signed/kv/ticket-1",
+          ticketId: "ticket-1",
+          expiresAt: "2026-05-13T13:45:00.000Z",
+        },
+      };
+    };
+    mockSQL = createMockSQL({
+      detailRow: {
+        id: "conv-1",
+        title: "Sprint Planning",
+        source: "fireflies",
+        source_id: "ff-123",
+        source_url: null,
+        started_at: "2026-03-20T10:00:00Z",
+        ended_at: null,
+        duration_secs: null,
+        summary: null,
+        metadata: JSON.stringify({
+          audio_data_kv_key: "audio/conv-1/recording.base64",
+          audio_storage_encoding: "base64-string-kv",
+        }),
+        created_at: "2026-03-20T12:00:00Z",
+        updated_at: "2026-03-20T12:00:00Z",
+      },
+      participantRows: [],
+    });
+    const app = createApp(mockKV, mockSQL);
+    ({ server, port } = await startServer(app));
+
+    const res = await fetch(`http://localhost:${port}/api/conversations/conv-1`);
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    expect(signedUrlCalls).toEqual([]);
+    expect(body.conversation.metadata.audio_playback_url).toBe("/api/conversations/conv-1/audio");
+    expect(body.conversation.metadata.audio_playback_url_source).toBe("backend-kv-fallback");
   });
 
   it("serves stored Fireflies audio from KV", async () => {

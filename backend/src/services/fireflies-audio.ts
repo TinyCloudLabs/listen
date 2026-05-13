@@ -70,8 +70,8 @@ export async function storeAudio(
   const metadataKey = `audio/${conversationId}/recording.json`;
   const storedAt = new Date().toISOString();
 
-  // TC-1366 fallback: current TinyCloud KV serializes non-string values as JSON,
-  // so raw object storage must wait for TC-1368 signed URL/raw object support.
+  // TC-1366 fallback: current TinyCloud KV put() serializes non-string values as JSON,
+  // so raw object writes still need a separate SDK/node capability.
   await access.kv.put(dataKey, Buffer.from(audio.bytes).toString("base64"));
   await access.kv.put(
     metadataKey,

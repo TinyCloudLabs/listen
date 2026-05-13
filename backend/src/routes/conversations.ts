@@ -25,6 +25,7 @@ interface ConversationsRoutesConfig {
 
 const DEFAULT_LIMIT = 20;
 const DEFAULT_OFFSET = 0;
+const BASE64_AUDIO_STORAGE_ENCODING = "base64-string-kv";
 
 interface ManualTranscriptImportBody {
   title?: unknown;
@@ -86,6 +87,51 @@ function parseParticipants(value: unknown): string[] {
         .filter((entry) => entry.length > 0),
     ),
   );
+}
+
+function audioFallbackUrl(id: string): string {
+  return `/api/conversations/${encodeURIComponent(id)}/audio`;
+}
+
+async function resolveAudioPlaybackMetadata(
+  access: NonNullable<Request["delegatedAccess"]>,
+  id: string,
+  metadata: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const audioKey =
+    typeof metadata.audio_data_kv_key === "string" ? metadata.audio_data_kv_key : null;
+  if (!audioKey) return metadata;
+
+  const fallback = {
+    ...metadata,
+    audio_playback_url: audioFallbackUrl(id),
+    audio_playback_url_source: "backend-kv-fallback",
+  };
+
+  if (metadata.audio_storage_encoding === BASE64_AUDIO_STORAGE_ENCODING) {
+    return fallback;
+  }
+
+  const createSignedReadUrl = access.kv.createSignedReadUrl;
+  if (typeof createSignedReadUrl !== "function") {
+    return fallback;
+  }
+
+  try {
+    const signedResult = await createSignedReadUrl.call(access.kv, audioKey);
+    if (signedResult.ok && signedResult.data?.url) {
+      return {
+        ...metadata,
+        audio_playback_url: signedResult.data.url,
+        audio_signed_url_expires_at: signedResult.data.expiresAt,
+        audio_playback_url_source: "tinycloud-signed-kv",
+      };
+    }
+  } catch {
+    return fallback;
+  }
+
+  return fallback;
 }
 
 function parseTimestamp(value: string): number | null {
@@ -485,9 +531,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         metadata = {};
       }
 
-      if (metadata.audio_data_kv_key) {
-        metadata.audio_playback_url = `/api/conversations/${id}/audio`;
-      }
+      metadata = await resolveAudioPlaybackMetadata(access, id, metadata);
 
       const conversation = { ...row, metadata };
 
