@@ -25,8 +25,8 @@ PORT=3001
 
 If Railway falls back to Railpack for the repo-root monorepo context,
 `railpack.json` and `RAILPACK_START_CMD` both set the backend start command.
-`railway.json` also pins the Dockerfile builder and a conditional start command
-for manual Railway deploys.
+`railway.json` also pins the Dockerfile builder for manual Railway deploys, so
+Dockerfile deployments use `backend/Dockerfile` and its `CMD`.
 
 The Railway CLI was used to create the initial `listen-backend` service in project `d0603e71-78b2-45ca-91ed-15d6fb253c1b`.
 

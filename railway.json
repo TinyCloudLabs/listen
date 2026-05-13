@@ -3,8 +3,5 @@
   "build": {
     "builder": "DOCKERFILE",
     "dockerfilePath": "backend/Dockerfile"
-  },
-  "deploy": {
-    "startCommand": "if [ -d backend ]; then bun run --cwd backend start; else bun run start; fi"
   }
 }
