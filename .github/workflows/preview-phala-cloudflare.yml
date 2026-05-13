@@ -154,6 +154,8 @@ jobs:
             --environment "${{ steps.preview.outputs.railway_environment }}" \
             --skip-deploys \
             --set "RAILWAY_DOCKERFILE_PATH=backend/Dockerfile" \
+            --set "RAILPACK_CONFIG_FILE=railpack.json" \
+            --set "RAILPACK_START_CMD=if [ -d backend ]; then bun run --cwd backend start; else bun run start; fi" \
             --set "NODE_ENV=production" \
             --set "PORT=3001" \
             --set "BACKEND_PRIVATE_KEY=${BACKEND_PRIVATE_KEY}" \

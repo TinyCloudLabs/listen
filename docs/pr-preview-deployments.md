@@ -18,11 +18,15 @@ The backend service uses the repo-root deployment context with:
 
 ```text
 RAILWAY_DOCKERFILE_PATH=backend/Dockerfile
+RAILPACK_CONFIG_FILE=railpack.json
+RAILPACK_START_CMD='if [ -d backend ]; then bun run --cwd backend start; else bun run start; fi'
 PORT=3001
 ```
 
-If Railway falls back to Railpack for the repo-root monorepo context, `railpack.json`
-sets the backend start command to `bun run --cwd backend start`.
+If Railway falls back to Railpack for the repo-root monorepo context,
+`railpack.json` and `RAILPACK_START_CMD` both set the backend start command.
+`railway.json` also pins the Dockerfile builder and a conditional start command
+for manual Railway deploys.
 
 The Railway CLI was used to create the initial `listen-backend` service in project `d0603e71-78b2-45ca-91ed-15d6fb253c1b`.
 
