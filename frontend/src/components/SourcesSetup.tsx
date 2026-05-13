@@ -164,17 +164,25 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   const transcriptionProviderNeedsAccess = (provider: TranscriptionProvider) =>
     transcriptionKeyStatus[provider] === true &&
     (hasBackendDelegation !== true || transcriptionBackendAccess[provider] !== true);
+  const assemblyAIReady = transcriptionProviderReady("assemblyai");
+  const deepgramReady = transcriptionProviderReady("deepgram");
   const connectedCount = [
     firefliesConnected,
     granolaConnected,
-    transcriptionProviderReady("assemblyai"),
-    transcriptionProviderReady("deepgram"),
+    assemblyAIReady,
+    deepgramReady,
     hasGoogleMeet === true,
   ].filter(Boolean).length;
 
   useEffect(() => {
     setStep(initialStep);
   }, [initialStep]);
+
+  useEffect(() => {
+    if (transcriptionProviderReady(transcriptionProvider)) return;
+    if (assemblyAIReady) setTranscriptionProvider("assemblyai");
+    else if (deepgramReady) setTranscriptionProvider("deepgram");
+  }, [assemblyAIReady, deepgramReady, transcriptionProvider]);
 
   useEffect(() => {
     if (step !== "google-connect") return;

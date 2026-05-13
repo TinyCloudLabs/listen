@@ -143,4 +143,38 @@ describe("SourcesSetup", () => {
     expect(tcw.secrets.put).not.toHaveBeenCalled();
     expect(onEnsureSecretBackendAccess).not.toHaveBeenCalled();
   });
+
+  it("defaults transcription upload to Deepgram when only Deepgram is ready", async () => {
+    const api = mockApi();
+    const tcw = mockTinyCloud();
+
+    render(
+      <SourcesSetup
+        api={api}
+        tcw={tcw}
+        hasBackendDelegation={true}
+        hasDeepgramKey={true}
+        hasDeepgramBackendAccess={true}
+        onEnsureBackendAccess={vi.fn()}
+        onEnsureFirefliesBackendAccess={vi.fn()}
+        onEnsureGranolaBackendAccess={vi.fn()}
+        onFirefliesComplete={vi.fn()}
+        onGranolaComplete={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /upload ->/i }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/^provider$/i)).toHaveValue("deepgram");
+    });
+
+    fireEvent.change(screen.getByLabelText(/media file/i), {
+      target: {
+        files: [new File(["hello audio"], "call.wav", { type: "audio/wav" })],
+      },
+    });
+
+    expect(screen.getByRole("button", { name: /transcribe with deepgram/i })).toBeEnabled();
+  });
 });
