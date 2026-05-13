@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState, type CSSProperties, type FC } from "react";
 import type { ApiClient } from "@listen/client";
+import {
+  readConversationDetailCache,
+  readConversationPageCache,
+  writeConversationDetailCache,
+  writeConversationPageCache,
+} from "../../conversationPageCache";
 import { ConnectionsScreen } from "../ConnectionsScreen";
 import type { ShellRoute } from "../AppShell";
 import { MobileChat, type MobileChatCitation, type MobileChatMessage } from "./MobileChat";
@@ -67,6 +73,8 @@ const STOPWORDS = new Set([
   "where",
   "with",
 ]);
+
+const MOBILE_CONVERSATIONS_PATH = "/api/conversations?limit=100&offset=0";
 
 function tokenize(input: string): string[] {
   return input
@@ -204,18 +212,31 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
   ]);
 
   useEffect(() => {
+    const cached = readConversationPageCache<ConversationSummary>(MOBILE_CONVERSATIONS_PATH);
     let cancelled = false;
-    setLoadingConversations(true);
+
+    if (cached) {
+      setConversations(cached.conversations);
+      setTotal(cached.total);
+      setConversationError(null);
+      setLoadingConversations(false);
+    } else {
+      setLoadingConversations(true);
+    }
+
     api
-      .get<ConversationsResponse>("/api/conversations?limit=100&offset=0")
+      .get<ConversationsResponse>(MOBILE_CONVERSATIONS_PATH)
       .then((res) => {
         if (cancelled) return;
         setConversations(res.conversations);
         setTotal(res.total);
+        writeConversationPageCache(MOBILE_CONVERSATIONS_PATH, res);
         setConversationError(null);
       })
       .catch((err) => {
-        if (!cancelled) setConversationError(err instanceof Error ? err.message : String(err));
+        if (!cancelled && !cached) {
+          setConversationError(err instanceof Error ? err.message : String(err));
+        }
       })
       .finally(() => {
         if (!cancelled) setLoadingConversations(false);
@@ -232,16 +253,29 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
       return;
     }
 
+    const cached = readConversationDetailCache<DetailResponse>(selectedConversationId);
     let cancelled = false;
-    setLoadingDetail(true);
     setDetailError(null);
+
+    if (cached) {
+      setDetail(cached.data);
+      setLoadingDetail(false);
+    } else {
+      setDetail(null);
+      setLoadingDetail(true);
+    }
+
     api
       .get<DetailResponse>(`/api/conversations/${selectedConversationId}`)
       .then((res) => {
-        if (!cancelled) setDetail(res);
+        if (cancelled) return;
+        setDetail(res);
+        writeConversationDetailCache(selectedConversationId, res);
       })
       .catch((err) => {
-        if (!cancelled) setDetailError(err instanceof Error ? err.message : String(err));
+        if (!cancelled && !cached) {
+          setDetailError(err instanceof Error ? err.message : String(err));
+        }
       })
       .finally(() => {
         if (!cancelled) setLoadingDetail(false);
@@ -284,6 +318,25 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
     onRouteChange("inbox");
   };
 
+  const getConversationDetail = async (
+    conversation: ConversationSummary,
+  ): Promise<DetailResponse> => {
+    const cached = readConversationDetailCache<DetailResponse>(conversation.id);
+    const path = `/api/conversations/${conversation.id}`;
+
+    if (cached) {
+      void api
+        .get<DetailResponse>(path)
+        .then((fresh) => writeConversationDetailCache(conversation.id, fresh))
+        .catch(() => {});
+      return cached.data;
+    }
+
+    const fresh = await api.get<DetailResponse>(path);
+    writeConversationDetailCache(conversation.id, fresh);
+    return fresh;
+  };
+
   const runSearch = async (query: string) => {
     const tokens = tokenize(query);
     if (tokens.length === 0 || chatBusy) return;
@@ -304,9 +357,7 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
 
       const details = await Promise.all(
         candidates.map(({ conversation }) =>
-          api
-            .get<DetailResponse>(`/api/conversations/${conversation.id}`)
-            .catch(() => ({ conversation, transcript: null })),
+          getConversationDetail(conversation).catch(() => ({ conversation, transcript: null })),
         ),
       );
 
