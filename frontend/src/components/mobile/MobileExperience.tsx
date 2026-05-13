@@ -45,8 +45,14 @@ interface MobileExperienceProps {
   selectedConversationId: string | null;
   refreshKey: number;
   hasFireflies: boolean;
+  hasGranola?: boolean;
   hasGoogleMeet: boolean;
   hasFirefliesBackendAccess: boolean;
+  hasGranolaBackendAccess?: boolean;
+  hasAssemblyAIKey?: boolean | null;
+  hasAssemblyAIBackendAccess?: boolean | null;
+  hasDeepgramKey?: boolean | null;
+  hasDeepgramBackendAccess?: boolean | null;
   googleMeetAvailable: boolean;
   chatEnabled: boolean;
   onRouteChange: (route: ShellRoute) => void;
@@ -185,8 +191,14 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
   selectedConversationId,
   refreshKey,
   hasFireflies,
+  hasGranola,
   hasGoogleMeet,
   hasFirefliesBackendAccess,
+  hasGranolaBackendAccess,
+  hasAssemblyAIKey,
+  hasAssemblyAIBackendAccess,
+  hasDeepgramKey,
+  hasDeepgramBackendAccess,
   googleMeetAvailable,
   chatEnabled,
   onRouteChange,
@@ -457,8 +469,14 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
       <ConnectionsScreen
         api={api}
         hasFireflies={hasFireflies}
+        hasGranola={hasGranola}
         hasGoogleMeet={hasGoogleMeet}
         hasFirefliesBackendAccess={hasFirefliesBackendAccess}
+        hasGranolaBackendAccess={hasGranolaBackendAccess}
+        hasAssemblyAIKey={hasAssemblyAIKey}
+        hasAssemblyAIBackendAccess={hasAssemblyAIBackendAccess}
+        hasDeepgramKey={hasDeepgramKey}
+        hasDeepgramBackendAccess={hasDeepgramBackendAccess}
         googleMeetAvailable={googleMeetAvailable}
         onAddSource={onAddSource}
         onRefresh={onRefresh}

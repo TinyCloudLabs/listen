@@ -49,6 +49,12 @@ function createMockKV() {
 
 const TEST_SUB = "test-sub";
 const KV_KEY = "config/fireflies-key";
+const SECRET_KV_KEYS: Record<string, string> = {
+  FIREFLIES_API_KEY: "config/fireflies-key",
+  GRANOLA_API_KEY: "config/granola-key",
+  ASSEMBLYAI_API_KEY: "config/assemblyai-key",
+  DEEPGRAM_API_KEY: "config/deepgram-key",
+};
 
 function mockAuthMiddleware(req: Request, _res: Response, next: NextFunction) {
   req.user = { sub: TEST_SUB };
@@ -60,8 +66,8 @@ function createApp(mockKV: ReturnType<typeof createMockKV>) {
     req.delegatedAccess = {
       kv: mockKV,
       secrets: {
-        get: async () => {
-          const result = await mockKV.get(KV_KEY);
+        get: async (secretName: string) => {
+          const result = await mockKV.get(SECRET_KV_KEYS[secretName] ?? secretName);
           if (result.ok) return { ok: true, data: result.data?.data };
           if (result.error?.code === "KV_NOT_FOUND") {
             return { ok: false, error: { code: "KEY_NOT_FOUND" } };
@@ -153,6 +159,31 @@ describe("Config Routes", () => {
 
       const body = await res.json();
       expect(JSON.stringify(body)).not.toContain("secret-api-key");
+    });
+  });
+
+  describe("GET /api/config transcription key existence", () => {
+    it("returns exists for AssemblyAI and Deepgram without revealing values", async () => {
+      mockKV._data.set("config/assemblyai-key", "assembly-secret");
+      mockKV._data.set("config/deepgram-key", "deepgram-secret");
+
+      const assemblyRes = await fetch(`http://localhost:${port}/api/config/assemblyai-key/exists`);
+      const deepgramRes = await fetch(`http://localhost:${port}/api/config/deepgram-key/exists`);
+
+      expect(assemblyRes.status).toBe(200);
+      expect(deepgramRes.status).toBe(200);
+      const assemblyBody = await assemblyRes.json();
+      const deepgramBody = await deepgramRes.json();
+      expect(assemblyBody).toEqual({ exists: true });
+      expect(deepgramBody).toEqual({ exists: true });
+      expect(JSON.stringify({ assemblyBody, deepgramBody })).not.toContain("secret");
+    });
+
+    it("returns exists: false when a transcription provider key is missing", async () => {
+      const res = await fetch(`http://localhost:${port}/api/config/deepgram-key/exists`);
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ exists: false });
     });
   });
 

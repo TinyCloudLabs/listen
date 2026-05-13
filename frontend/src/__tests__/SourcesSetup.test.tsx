@@ -52,7 +52,7 @@ describe("SourcesSetup", () => {
       />,
     );
 
-    await userEvent.click(screen.getAllByRole("button", { name: /connect ->/i })[1]!);
+    await userEvent.click(screen.getAllByRole("button", { name: /connect ->/i }).at(-1)!);
     await userEvent.type(screen.getByPlaceholderText(/paste your granola api key/i), "grn_test");
     await userEvent.click(screen.getByRole("button", { name: /save key and connect/i }));
 
@@ -62,10 +62,11 @@ describe("SourcesSetup", () => {
     expect(await screen.findByText(/granola connected/i)).toBeInTheDocument();
   });
 
-  it("saves the selected provider key, uploads media, and posts a transcribe request", async () => {
+  it("saves a transcription provider key through setup before upload", async () => {
     const api = mockApi();
     const tcw = mockTinyCloud();
     const onEnsureSecretBackendAccess = vi.fn().mockResolvedValue(undefined);
+    const onTranscriptionProviderComplete = vi.fn();
 
     render(
       <SourcesSetup
@@ -78,21 +79,54 @@ describe("SourcesSetup", () => {
         onEnsureSecretBackendAccess={onEnsureSecretBackendAccess}
         onFirefliesComplete={vi.fn()}
         onGranolaComplete={vi.fn()}
+        onTranscriptionProviderComplete={onTranscriptionProviderComplete}
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /transcribe ->/i }));
-    fireEvent.change(screen.getByLabelText(/^provider$/i), { target: { value: "deepgram" } });
-    fireEvent.change(screen.getByLabelText(/provider api key/i), {
-      target: { value: "deepgram-key" },
+    fireEvent.click(screen.getAllByRole("button", { name: /connect ->/i })[0]!);
+    fireEvent.change(screen.getByPlaceholderText(/paste your assemblyai api key/i), {
+      target: { value: "assembly-key" },
     });
+    fireEvent.click(screen.getByRole("button", { name: /save key and connect/i }));
+
+    await waitFor(() => {
+      expect(tcw.secrets.put).toHaveBeenCalledWith("ASSEMBLYAI_API_KEY", "assembly-key");
+    });
+    expect(onEnsureSecretBackendAccess).toHaveBeenCalledWith("ASSEMBLYAI_API_KEY");
+    expect(onTranscriptionProviderComplete).toHaveBeenCalledWith("assemblyai");
+  });
+
+  it("uploads media only with a ready provider and does not collect raw keys", async () => {
+    const api = mockApi();
+    const tcw = mockTinyCloud();
+    const onEnsureSecretBackendAccess = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <SourcesSetup
+        api={api}
+        tcw={tcw}
+        hasBackendDelegation={true}
+        hasDeepgramKey={true}
+        hasDeepgramBackendAccess={true}
+        onEnsureBackendAccess={vi.fn()}
+        onEnsureFirefliesBackendAccess={vi.fn()}
+        onEnsureGranolaBackendAccess={vi.fn()}
+        onEnsureSecretBackendAccess={onEnsureSecretBackendAccess}
+        onFirefliesComplete={vi.fn()}
+        onGranolaComplete={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /upload ->/i }));
+    fireEvent.change(screen.getByLabelText(/^provider$/i), { target: { value: "deepgram" } });
+    expect(screen.queryByLabelText(/provider api key/i)).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText(/^title$/i), { target: { value: "Uploaded call" } });
     fireEvent.change(screen.getByLabelText(/media file/i), {
       target: {
         files: [new File(["hello audio"], "call.wav", { type: "audio/wav" })],
       },
     });
-    fireEvent.click(screen.getByRole("button", { name: /upload and transcribe/i }));
+    fireEvent.click(screen.getByRole("button", { name: /transcribe with deepgram/i }));
 
     await waitFor(() => {
       expect(api.post).toHaveBeenCalledWith(
@@ -106,7 +140,7 @@ describe("SourcesSetup", () => {
         }),
       );
     });
-    expect(tcw.secrets.put).toHaveBeenCalledWith("DEEPGRAM_API_KEY", "deepgram-key");
-    expect(onEnsureSecretBackendAccess).toHaveBeenCalledWith("DEEPGRAM_API_KEY");
+    expect(tcw.secrets.put).not.toHaveBeenCalled();
+    expect(onEnsureSecretBackendAccess).not.toHaveBeenCalled();
   });
 });

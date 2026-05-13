@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ConnectionsScreen } from "../ConnectionsScreen";
 
 const api = {
@@ -44,5 +44,30 @@ describe("ConnectionsScreen", () => {
     expect(screen.getByText("Google Meet")).toBeInTheDocument();
     const connectButtons = screen.getAllByRole("button", { name: /^Connect$/ });
     expect(connectButtons.at(-1)).not.toBeDisabled();
+  });
+
+  it("shows transcription providers as available connections", () => {
+    renderConnections();
+
+    expect(screen.getByText("AssemblyAI")).toBeInTheDocument();
+    expect(screen.getByText("Deepgram")).toBeInTheDocument();
+    expect(
+      screen.getByText(/transcribes uploaded audio and video with assemblyai/i),
+    ).toBeInTheDocument();
+  });
+
+  it("runs finish setup when a transcription key exists without backend access", async () => {
+    const onFinish = vi.fn().mockResolvedValue(undefined);
+    renderConnections({
+      hasAssemblyAIKey: true,
+      hasAssemblyAIBackendAccess: false,
+      onFinishTranscriptionProviderAccess: onFinish,
+    });
+
+    fireEvent.click(screen.getAllByRole("button", { name: /finish setup/i })[0]!);
+
+    await waitFor(() => {
+      expect(onFinish).toHaveBeenCalledWith("assemblyai");
+    });
   });
 });

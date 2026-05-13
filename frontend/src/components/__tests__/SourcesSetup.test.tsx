@@ -28,7 +28,9 @@ function renderSources(overrides: Partial<Parameters<typeof SourcesSetup>[0]> = 
       googleMeetAvailable={false}
       onEnsureBackendAccess={vi.fn()}
       onEnsureFirefliesBackendAccess={vi.fn()}
+      onEnsureGranolaBackendAccess={vi.fn()}
       onFirefliesComplete={vi.fn()}
+      onGranolaComplete={vi.fn()}
       {...overrides}
     />,
   );
@@ -51,7 +53,6 @@ describe("SourcesSetup", () => {
     renderSources({ googleMeetAvailable: true });
 
     expect(screen.getByText("Google Meet")).toBeInTheDocument();
-    const connectButtons = screen.getAllByRole("button", { name: /^Connect ->$/ });
-    expect(connectButtons.at(-1)).not.toBeDisabled();
+    expect(screen.getAllByRole("button", { name: /^Connect ->$/ }).at(-1)).not.toBeDisabled();
   });
 });

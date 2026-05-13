@@ -7,6 +7,7 @@ type SetupStep =
   | "cards"
   | "transcript-import"
   | "transcription-upload"
+  | "transcription-key"
   | "transcript-success"
   | "fireflies-key"
   | "fireflies-test"
@@ -22,8 +23,12 @@ const TRANSCRIPTION_SECRET_NAMES = {
   assemblyai: "ASSEMBLYAI_API_KEY",
   deepgram: "DEEPGRAM_API_KEY",
 } as const;
-const VERIFY_RETRY_DELAYS_MS = [250, 750, 1500];
 type TranscriptionProvider = keyof typeof TRANSCRIPTION_SECRET_NAMES;
+const TRANSCRIPTION_PROVIDER_LABELS: Record<TranscriptionProvider, string> = {
+  assemblyai: "AssemblyAI",
+  deepgram: "Deepgram",
+};
+const VERIFY_RETRY_DELAYS_MS = [250, 750, 1500];
 
 interface SourcesSetupProps {
   api: ApiClient;
@@ -31,9 +36,13 @@ interface SourcesSetupProps {
   mode?: SetupMode;
   hasFirefliesKey?: boolean | null;
   hasGranolaKey?: boolean | null;
+  hasAssemblyAIKey?: boolean | null;
+  hasDeepgramKey?: boolean | null;
   hasBackendDelegation?: boolean | null;
   hasFirefliesBackendAccess?: boolean | null;
   hasGranolaBackendAccess?: boolean | null;
+  hasAssemblyAIBackendAccess?: boolean | null;
+  hasDeepgramBackendAccess?: boolean | null;
   hasGoogleMeet?: boolean | null;
   initialStep?: Extract<SetupStep, "cards" | "transcript-import">;
   onEnsureBackendAccess: () => Promise<void>;
@@ -42,6 +51,7 @@ interface SourcesSetupProps {
   onEnsureSecretBackendAccess?: (secretName: string) => Promise<void>;
   onFirefliesComplete: () => void;
   onGranolaComplete: () => void;
+  onTranscriptionProviderComplete?: (provider: TranscriptionProvider) => void;
   onTranscriptImportComplete?: (conversationId: string) => void;
   onGoogleMeetComplete?: () => void;
   onDone?: () => void;
@@ -74,9 +84,13 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   mode = "onboarding",
   hasFirefliesKey = null,
   hasGranolaKey = null,
+  hasAssemblyAIKey = null,
+  hasDeepgramKey = null,
   hasBackendDelegation = null,
   hasFirefliesBackendAccess = null,
   hasGranolaBackendAccess = null,
+  hasAssemblyAIBackendAccess = null,
+  hasDeepgramBackendAccess = null,
   hasGoogleMeet = null,
   initialStep = "cards",
   onEnsureBackendAccess,
@@ -85,6 +99,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   onEnsureSecretBackendAccess,
   onFirefliesComplete,
   onGranolaComplete,
+  onTranscriptionProviderComplete,
   onTranscriptImportComplete,
   onGoogleMeetComplete,
   onDone,
@@ -134,9 +149,28 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
     hasGranolaKey === true && hasBackendDelegation === true && hasGranolaBackendAccess === true;
   const granolaNeedsAccess =
     hasGranolaKey === true && (hasBackendDelegation !== true || hasGranolaBackendAccess !== true);
-  const connectedCount = [firefliesConnected, granolaConnected, hasGoogleMeet === true].filter(
-    Boolean,
-  ).length;
+  const transcriptionKeyStatus: Record<TranscriptionProvider, boolean | null> = {
+    assemblyai: hasAssemblyAIKey,
+    deepgram: hasDeepgramKey,
+  };
+  const transcriptionBackendAccess: Record<TranscriptionProvider, boolean | null> = {
+    assemblyai: hasAssemblyAIBackendAccess,
+    deepgram: hasDeepgramBackendAccess,
+  };
+  const transcriptionProviderReady = (provider: TranscriptionProvider) =>
+    transcriptionKeyStatus[provider] === true &&
+    hasBackendDelegation === true &&
+    transcriptionBackendAccess[provider] === true;
+  const transcriptionProviderNeedsAccess = (provider: TranscriptionProvider) =>
+    transcriptionKeyStatus[provider] === true &&
+    (hasBackendDelegation !== true || transcriptionBackendAccess[provider] !== true);
+  const connectedCount = [
+    firefliesConnected,
+    granolaConnected,
+    transcriptionProviderReady("assemblyai"),
+    transcriptionProviderReady("deepgram"),
+    hasGoogleMeet === true,
+  ].filter(Boolean).length;
 
   useEffect(() => {
     setStep(initialStep);
@@ -234,6 +268,43 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
     }
   };
 
+  const saveTranscriptionProviderKey = async () => {
+    const secretName = TRANSCRIPTION_SECRET_NAMES[transcriptionProvider];
+    setSaving(true);
+    setTranscriptionError(null);
+    try {
+      const unlockResult = await tcw.secrets.unlock();
+      if (!unlockResult.ok) throw new Error(unlockResult.error.message);
+
+      const putResult = await tcw.secrets.put(secretName, transcriptionKey.trim());
+      if (!putResult.ok) throw new Error(putResult.error.message);
+
+      await (onEnsureSecretBackendAccess ?? onEnsureBackendAccess)(secretName);
+      onTranscriptionProviderComplete?.(transcriptionProvider);
+      setTranscriptionKey("");
+      setStep("transcription-upload");
+    } catch (err) {
+      setTranscriptionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const finishTranscriptionProviderAccess = async (provider: TranscriptionProvider) => {
+    setSaving(true);
+    setTranscriptionError(null);
+    try {
+      await (onEnsureSecretBackendAccess ?? onEnsureBackendAccess)(
+        TRANSCRIPTION_SECRET_NAMES[provider],
+      );
+      onTranscriptionProviderComplete?.(provider);
+    } catch (err) {
+      setTranscriptionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleGoogleConnect = async () => {
     setConnecting(true);
     setGoogleError(null);
@@ -289,18 +360,11 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
     setTranscriptionSaving(true);
     setTranscriptionError(null);
     try {
-      if (hasBackendDelegation !== true) {
-        await onEnsureBackendAccess();
+      if (!transcriptionProviderReady(transcriptionProvider)) {
+        throw new Error(
+          `${TRANSCRIPTION_PROVIDER_LABELS[transcriptionProvider]} setup is not complete.`,
+        );
       }
-
-      const secretName = TRANSCRIPTION_SECRET_NAMES[transcriptionProvider];
-      if (transcriptionKey.trim()) {
-        const unlockResult = await tcw.secrets.unlock();
-        if (!unlockResult.ok) throw new Error(unlockResult.error.message);
-        const putResult = await tcw.secrets.put(secretName, transcriptionKey.trim());
-        if (!putResult.ok) throw new Error(putResult.error.message);
-      }
-      await (onEnsureSecretBackendAccess ?? onEnsureBackendAccess)(secretName);
 
       const result = await api.post<TranscribeResponse>("/api/conversations/transcribe", {
         provider: transcriptionProvider,
@@ -456,39 +520,56 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
     }
 
     if (step === "transcription-upload") {
-      const canTranscribe = Boolean(transcriptionFile) && !transcriptionSaving;
+      const providerReady = transcriptionProviderReady(transcriptionProvider);
+      const providerNeedsAccess = transcriptionProviderNeedsAccess(transcriptionProvider);
+      const providerLabel = TRANSCRIPTION_PROVIDER_LABELS[transcriptionProvider];
+      const canTranscribe = Boolean(transcriptionFile) && providerReady && !transcriptionSaving;
       return (
         <div style={s.detailPanel}>
           <span style={s.fieldLabel}>Transcription</span>
           <p style={s.detailText}>
-            Upload audio or video, choose AssemblyAI or Deepgram, and Listen will store the source
-            file in TinyCloud KV before importing the transcript.
+            Upload audio or video, choose a connected transcription provider, and Listen will store
+            the source file in TinyCloud KV before importing the transcript.
           </p>
-          <div style={s.fieldGrid}>
-            <label style={s.fieldStack}>
-              <span style={s.fieldLabel}>Provider</span>
-              <select
-                value={transcriptionProvider}
-                onChange={(event) =>
-                  setTranscriptionProvider(event.target.value as TranscriptionProvider)
-                }
-                style={s.input}
-              >
-                <option value="assemblyai">AssemblyAI</option>
-                <option value="deepgram">Deepgram</option>
-              </select>
-            </label>
-            <label style={s.fieldStack}>
-              <span style={s.fieldLabel}>Provider API key</span>
-              <input
-                type="password"
-                placeholder={`Optional if ${TRANSCRIPTION_SECRET_NAMES[transcriptionProvider]} is saved`}
-                value={transcriptionKey}
-                onChange={(event) => setTranscriptionKey(event.target.value)}
-                style={s.input}
-              />
-            </label>
-          </div>
+          <label style={s.fieldStack}>
+            <span style={s.fieldLabel}>Provider</span>
+            <select
+              value={transcriptionProvider}
+              onChange={(event) =>
+                setTranscriptionProvider(event.target.value as TranscriptionProvider)
+              }
+              style={s.input}
+            >
+              <option value="assemblyai">
+                AssemblyAI {transcriptionProviderReady("assemblyai") ? "(ready)" : ""}
+              </option>
+              <option value="deepgram">
+                Deepgram {transcriptionProviderReady("deepgram") ? "(ready)" : ""}
+              </option>
+            </select>
+          </label>
+          {!providerReady && (
+            <div style={s.errorCard}>
+              {providerNeedsAccess
+                ? `${providerLabel} key is saved. Backend access still needs setup.`
+                : `Connect ${providerLabel} before uploading media for transcription.`}
+              <div style={s.btnRow}>
+                {providerNeedsAccess ? (
+                  <button
+                    style={s.btnPrimary}
+                    disabled={saving}
+                    onClick={() => void finishTranscriptionProviderAccess(transcriptionProvider)}
+                  >
+                    {saving ? "Connecting..." : "Finish setup"}
+                  </button>
+                ) : (
+                  <button style={s.btnPrimary} onClick={() => setStep("transcription-key")}>
+                    Connect {providerLabel}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
           <div style={s.fieldGrid}>
             <label style={s.fieldStack}>
               <span style={s.fieldLabel}>Title</span>
@@ -541,7 +622,46 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
               disabled={!canTranscribe}
               onClick={submitTranscription}
             >
-              {transcriptionSaving ? "Transcribing..." : "Upload and transcribe"}
+              {transcriptionSaving ? "Transcribing..." : `Transcribe with ${providerLabel}`}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    if (step === "transcription-key") {
+      const providerLabel = TRANSCRIPTION_PROVIDER_LABELS[transcriptionProvider];
+      return (
+        <div style={s.detailPanel}>
+          <span style={s.fieldLabel}>{providerLabel} API key</span>
+          <p style={s.detailText}>
+            Store the key in TinyCloud Secrets and share backend access before using this provider
+            for transcription uploads.
+          </p>
+          <input
+            type="password"
+            placeholder={`Paste your ${providerLabel} API key`}
+            value={transcriptionKey}
+            onChange={(event) => {
+              setTranscriptionKey(event.target.value);
+              setTranscriptionError(null);
+            }}
+            style={s.input}
+          />
+          {transcriptionError && <div style={s.errorCard}>{transcriptionError}</div>}
+          <div style={s.btnRow}>
+            <button style={s.btnGhost} onClick={() => setStep("cards")}>
+              Back
+            </button>
+            <button
+              style={{
+                ...s.btnPrimary,
+                ...(transcriptionKey.trim() === "" || saving ? s.btnDisabled : {}),
+              }}
+              disabled={transcriptionKey.trim() === "" || saving}
+              onClick={saveTranscriptionProviderKey}
+            >
+              {saving ? "Connecting..." : "Save key and connect"}
             </button>
           </div>
         </div>
@@ -865,10 +985,38 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
           <SourceCard
             title="Transcription"
             meta="audio - video"
-            description="Upload media and transcribe with AssemblyAI or Deepgram."
+            description="Upload media using a connected transcription provider."
             detail="provider transcription"
-            actionLabel="Transcribe ->"
+            actionLabel="Upload ->"
             onAction={() => setStep("transcription-upload")}
+          />
+
+          <TranscriptionProviderCard
+            provider="assemblyai"
+            connected={transcriptionProviderReady("assemblyai")}
+            needsAccess={transcriptionProviderNeedsAccess("assemblyai")}
+            saving={saving}
+            onConnect={() => {
+              setTranscriptionProvider("assemblyai");
+              setTranscriptionKey("");
+              setTranscriptionError(null);
+              setStep("transcription-key");
+            }}
+            onFinishSetup={() => void finishTranscriptionProviderAccess("assemblyai")}
+          />
+
+          <TranscriptionProviderCard
+            provider="deepgram"
+            connected={transcriptionProviderReady("deepgram")}
+            needsAccess={transcriptionProviderNeedsAccess("deepgram")}
+            saving={saving}
+            onConnect={() => {
+              setTranscriptionProvider("deepgram");
+              setTranscriptionKey("");
+              setTranscriptionError(null);
+              setStep("transcription-key");
+            }}
+            onFinishSetup={() => void finishTranscriptionProviderAccess("deepgram")}
           />
 
           <SourceCard
@@ -1007,6 +1155,44 @@ function SourceCard({
         {actionLabel}
       </button>
     </div>
+  );
+}
+
+function TranscriptionProviderCard({
+  provider,
+  connected,
+  needsAccess,
+  saving,
+  onConnect,
+  onFinishSetup,
+}: {
+  provider: TranscriptionProvider;
+  connected: boolean;
+  needsAccess: boolean;
+  saving: boolean;
+  onConnect: () => void;
+  onFinishSetup: () => void;
+}) {
+  const label = TRANSCRIPTION_PROVIDER_LABELS[provider];
+  return (
+    <SourceCard
+      title={label}
+      meta="transcription api"
+      description={
+        needsAccess
+          ? "API key saved. Backend access is still needed."
+          : `Use ${label} for uploaded media transcription.`
+      }
+      detail="api key"
+      connected={connected}
+      actionLabel={connected ? "Connected" : needsAccess ? "Finish setup ->" : `Connect ->`}
+      disabled={saving || connected}
+      onAction={() => {
+        if (connected) return;
+        if (needsAccess) onFinishSetup();
+        else onConnect();
+      }}
+    />
   );
 }
 

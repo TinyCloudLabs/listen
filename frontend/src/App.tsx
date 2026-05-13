@@ -44,6 +44,16 @@ const FIREFLIES_SECRET_NAME = "FIREFLIES_API_KEY";
 const FIREFLIES_SECRET_VAULT_KEY = `secrets/${FIREFLIES_SECRET_NAME}`;
 const GRANOLA_SECRET_NAME = "GRANOLA_API_KEY";
 const GRANOLA_SECRET_VAULT_KEY = `secrets/${GRANOLA_SECRET_NAME}`;
+const ASSEMBLYAI_SECRET_NAME = "ASSEMBLYAI_API_KEY";
+const DEEPGRAM_SECRET_NAME = "DEEPGRAM_API_KEY";
+type ProviderSecretSource = "fireflies" | "granola" | "assemblyai" | "deepgram";
+type TranscriptionProvider = "assemblyai" | "deepgram";
+type TranscriptionProviderStatus = Record<TranscriptionProvider, boolean | null>;
+
+const EMPTY_TRANSCRIPTION_STATUS: TranscriptionProviderStatus = {
+  assemblyai: null,
+  deepgram: null,
+};
 
 function isChatEnabled(): boolean {
   return import.meta.env.VITE_ENABLE_CHAT === "true";
@@ -442,10 +452,16 @@ async function checkSecretExists(
 
 async function checkSecretExistsFromBackend(
   api: ApiClient,
-  source: "fireflies" | "granola",
+  source: ProviderSecretSource,
 ): Promise<boolean> {
   const result = await api.get<{ exists: boolean }>(`/api/config/${source}-key/exists`);
   return result.exists;
+}
+
+function providerForTranscriptionSecret(secretName: string): TranscriptionProvider | null {
+  if (secretName === ASSEMBLYAI_SECRET_NAME) return "assemblyai";
+  if (secretName === DEEPGRAM_SECRET_NAME) return "deepgram";
+  return null;
 }
 
 type WorkspaceStatusMode = "checking" | "fireflies-access" | "granola-access" | "wallet";
@@ -541,9 +557,14 @@ export function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [hasKey, setHasKey] = useState<boolean | null>(null);
   const [hasGranolaKey, setHasGranolaKey] = useState<boolean | null>(null);
+  const [hasTranscriptionKeys, setHasTranscriptionKeys] = useState<TranscriptionProviderStatus>(
+    EMPTY_TRANSCRIPTION_STATUS,
+  );
   const [hasBackendDelegation, setHasBackendDelegation] = useState<boolean | null>(null);
   const [hasFirefliesBackendAccess, setHasFirefliesBackendAccess] = useState<boolean | null>(null);
   const [hasGranolaBackendAccess, setHasGranolaBackendAccess] = useState<boolean | null>(null);
+  const [hasTranscriptionBackendAccess, setHasTranscriptionBackendAccess] =
+    useState<TranscriptionProviderStatus>(EMPTY_TRANSCRIPTION_STATUS);
   const [hasGoogleMeet, setHasGoogleMeet] = useState<boolean | null>(null);
   const [hasExistingConversations, setHasExistingConversations] = useState<boolean | null>(null);
   const [workspaceActionLoading, setWorkspaceActionLoading] = useState(false);
@@ -660,6 +681,44 @@ export function App() {
   }, [api, tcw, hasBackendDelegation]);
 
   useEffect(() => {
+    if (hasBackendDelegation === null) {
+      setHasTranscriptionKeys(EMPTY_TRANSCRIPTION_STATUS);
+      return;
+    }
+
+    let cancelled = false;
+    const providers = [
+      ["assemblyai", ASSEMBLYAI_SECRET_NAME],
+      ["deepgram", DEEPGRAM_SECRET_NAME],
+    ] as const;
+
+    setHasTranscriptionKeys(EMPTY_TRANSCRIPTION_STATUS);
+    for (const [provider, secretName] of providers) {
+      const check = tcw
+        ? checkSecretExists(tcw, secretName, provider)
+        : api && hasBackendDelegation === true
+          ? checkSecretExistsFromBackend(api, provider)
+          : Promise.resolve(false);
+
+      check
+        .then((exists) => {
+          if (!cancelled) {
+            setHasTranscriptionKeys((state) => ({ ...state, [provider]: exists }));
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setHasTranscriptionKeys((state) => ({ ...state, [provider]: false }));
+          }
+        });
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, tcw, hasBackendDelegation]);
+
+  useEffect(() => {
     if (!api || hasKey !== true) {
       setHasFirefliesBackendAccess(null);
       return;
@@ -702,6 +761,50 @@ export function App() {
       .then((exists) => setHasGranolaBackendAccess(exists))
       .catch(() => setHasGranolaBackendAccess(false));
   }, [api, hasBackendDelegation, hasGranolaKey]);
+
+  useEffect(() => {
+    if (!api) {
+      setHasTranscriptionBackendAccess(EMPTY_TRANSCRIPTION_STATUS);
+      return;
+    }
+
+    let cancelled = false;
+    const providers = ["assemblyai", "deepgram"] as const;
+    setHasTranscriptionBackendAccess(EMPTY_TRANSCRIPTION_STATUS);
+
+    for (const provider of providers) {
+      if (hasTranscriptionKeys[provider] !== true) {
+        setHasTranscriptionBackendAccess((state) => ({ ...state, [provider]: null }));
+        continue;
+      }
+
+      if (hasBackendDelegation === false) {
+        setHasTranscriptionBackendAccess((state) => ({ ...state, [provider]: false }));
+        continue;
+      }
+
+      if (hasBackendDelegation !== true) {
+        setHasTranscriptionBackendAccess((state) => ({ ...state, [provider]: null }));
+        continue;
+      }
+
+      checkSecretExistsFromBackend(api, provider)
+        .then((exists) => {
+          if (!cancelled) {
+            setHasTranscriptionBackendAccess((state) => ({ ...state, [provider]: exists }));
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setHasTranscriptionBackendAccess((state) => ({ ...state, [provider]: false }));
+          }
+        });
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, hasBackendDelegation, hasTranscriptionKeys]);
 
   useEffect(() => {
     if (!api || hasBackendDelegation !== true) {
@@ -869,9 +972,11 @@ export function App() {
     setAuthError(null);
     setHasKey(null);
     setHasGranolaKey(null);
+    setHasTranscriptionKeys(EMPTY_TRANSCRIPTION_STATUS);
     setHasBackendDelegation(null);
     setHasFirefliesBackendAccess(null);
     setHasGranolaBackendAccess(null);
+    setHasTranscriptionBackendAccess(EMPTY_TRANSCRIPTION_STATUS);
     setHasGoogleMeet(null);
     setHasExistingConversations(null);
     setWorkspaceActionError(null);
@@ -937,6 +1042,14 @@ export function App() {
         throw new Error("Reconnect your wallet to finish source setup.");
       }
 
+      const transcriptionProvider = providerForTranscriptionSecret(secretName);
+      if (transcriptionProvider) {
+        setHasTranscriptionBackendAccess((state) => ({
+          ...state,
+          [transcriptionProvider]: null,
+        }));
+      }
+
       await ensureBackendAccess();
 
       const unlockResult = await tcw.secrets.unlock();
@@ -949,9 +1062,25 @@ export function App() {
         throw new Error(shareResult.error.message);
       }
 
+      if (transcriptionProvider && api) {
+        const backendCanRead = await checkSecretExistsFromBackend(api, transcriptionProvider);
+        if (!backendCanRead) {
+          setHasTranscriptionBackendAccess((state) => ({
+            ...state,
+            [transcriptionProvider]: false,
+          }));
+          throw new Error(`Backend still cannot read ${secretName}. Re-save the key or try again.`);
+        }
+        setHasTranscriptionKeys((state) => ({ ...state, [transcriptionProvider]: true }));
+        setHasTranscriptionBackendAccess((state) => ({
+          ...state,
+          [transcriptionProvider]: true,
+        }));
+      }
+
       setHasBackendDelegation(true);
     },
-    [backendDid, ensureBackendAccess, tcw],
+    [api, backendDid, ensureBackendAccess, tcw],
   );
 
   const handleFinishFirefliesAccess = useCallback(async () => {
@@ -976,9 +1105,19 @@ export function App() {
     hasKey === true && hasBackendDelegation === true && hasFirefliesBackendAccess === true;
   const granolaConnected =
     hasGranolaKey === true && hasBackendDelegation === true && hasGranolaBackendAccess === true;
+  const assemblyAIConnected =
+    hasTranscriptionKeys.assemblyai === true &&
+    hasBackendDelegation === true &&
+    hasTranscriptionBackendAccess.assemblyai === true;
+  const deepgramConnected =
+    hasTranscriptionKeys.deepgram === true &&
+    hasBackendDelegation === true &&
+    hasTranscriptionBackendAccess.deepgram === true;
   const connectedSourceCount = [
     firefliesConnected,
     granolaConnected,
+    assemblyAIConnected,
+    deepgramConnected,
     hasGoogleMeet === true,
   ].filter(Boolean).length;
   const googleMeetAvailable = HAS_FRONTEND_GOOGLE_CLIENT_ID || serverGoogleMeetAvailable === true;
@@ -986,24 +1125,34 @@ export function App() {
   const backendStatusReady = hasBackendDelegation !== null;
   const firefliesKeyReady = hasKey !== null;
   const granolaKeyReady = hasGranolaKey !== null;
+  const transcriptionKeysReady = Object.values(hasTranscriptionKeys).every(
+    (value) => value !== null,
+  );
   const firefliesBackendAccessReady =
     hasKey === true && hasBackendDelegation === true ? hasFirefliesBackendAccess !== null : true;
   const granolaBackendAccessReady =
     hasGranolaKey === true && hasBackendDelegation === true
       ? hasGranolaBackendAccess !== null
       : true;
+  const transcriptionBackendAccessReady = (["assemblyai", "deepgram"] as const).every((provider) =>
+    hasTranscriptionKeys[provider] === true && hasBackendDelegation === true
+      ? hasTranscriptionBackendAccess[provider] !== null
+      : true,
+  );
   const backendBackedChecksReady =
     hasBackendDelegation === true
       ? hasGoogleMeet !== null &&
         hasExistingConversations !== null &&
         firefliesBackendAccessReady &&
-        granolaBackendAccessReady
+        granolaBackendAccessReady &&
+        transcriptionBackendAccessReady
       : true;
   const workspaceChecksReady =
     isSignedIn &&
     backendStatusReady &&
     firefliesKeyReady &&
     granolaKeyReady &&
+    transcriptionKeysReady &&
     backendBackedChecksReady;
   const setupAvailable = tcw !== null && backendDid !== null;
   const needsFirefliesAccess =
@@ -1150,6 +1299,16 @@ export function App() {
         (hasBackendDelegation === false || hasGranolaBackendAccess === false) && (
           <span style={s.badge}>Granola key saved</span>
         )}
+      {assemblyAIConnected && <span style={s.badge}>AssemblyAI</span>}
+      {hasTranscriptionKeys.assemblyai === true &&
+        (hasBackendDelegation === false || hasTranscriptionBackendAccess.assemblyai === false) && (
+          <span style={s.badge}>AssemblyAI key saved</span>
+        )}
+      {deepgramConnected && <span style={s.badge}>Deepgram</span>}
+      {hasTranscriptionKeys.deepgram === true &&
+        (hasBackendDelegation === false || hasTranscriptionBackendAccess.deepgram === false) && (
+          <span style={s.badge}>Deepgram key saved</span>
+        )}
       {hasGoogleMeet && <span style={s.badge}>Google Meet</span>}
       <span style={s.badgeSolid}>{did ? "Connected" : "Restored"}</span>
     </>
@@ -1236,8 +1395,14 @@ export function App() {
         selectedConversationId={selectedConversationId}
         refreshKey={refreshKey}
         hasFireflies={firefliesConnected}
+        hasGranola={granolaConnected}
         hasGoogleMeet={hasGoogleMeet === true}
         hasFirefliesBackendAccess={hasFirefliesBackendAccess === true}
+        hasGranolaBackendAccess={hasGranolaBackendAccess === true}
+        hasAssemblyAIKey={hasTranscriptionKeys.assemblyai}
+        hasAssemblyAIBackendAccess={hasTranscriptionBackendAccess.assemblyai}
+        hasDeepgramKey={hasTranscriptionKeys.deepgram}
+        hasDeepgramBackendAccess={hasTranscriptionBackendAccess.deepgram}
         googleMeetAvailable={googleMeetAvailable}
         chatEnabled={chatEnabled}
         onRouteChange={setActivePage}
@@ -1309,9 +1474,13 @@ export function App() {
           mode="onboarding"
           hasFirefliesKey={hasKey}
           hasGranolaKey={hasGranolaKey}
+          hasAssemblyAIKey={hasTranscriptionKeys.assemblyai}
+          hasDeepgramKey={hasTranscriptionKeys.deepgram}
           hasBackendDelegation={hasBackendDelegation}
           hasFirefliesBackendAccess={hasFirefliesBackendAccess}
           hasGranolaBackendAccess={hasGranolaBackendAccess}
+          hasAssemblyAIBackendAccess={hasTranscriptionBackendAccess.assemblyai}
+          hasDeepgramBackendAccess={hasTranscriptionBackendAccess.deepgram}
           hasGoogleMeet={hasGoogleMeet}
           initialStep="cards"
           onEnsureBackendAccess={ensureBackendAccess}
@@ -1331,6 +1500,12 @@ export function App() {
             setHasGranolaBackendAccess(true);
             setRefreshKey((k) => k + 1);
             setActivePage("inbox");
+          }}
+          onTranscriptionProviderComplete={(provider) => {
+            setHasTranscriptionKeys((state) => ({ ...state, [provider]: true }));
+            setHasBackendDelegation(true);
+            setHasTranscriptionBackendAccess((state) => ({ ...state, [provider]: true }));
+            setRefreshKey((k) => k + 1);
           }}
           onTranscriptImportComplete={handleTranscriptImportComplete}
           onDone={() => setActivePage("inbox")}
@@ -1352,9 +1527,13 @@ export function App() {
           mode="sources"
           hasFirefliesKey={hasKey}
           hasGranolaKey={hasGranolaKey}
+          hasAssemblyAIKey={hasTranscriptionKeys.assemblyai}
+          hasDeepgramKey={hasTranscriptionKeys.deepgram}
           hasBackendDelegation={hasBackendDelegation}
           hasFirefliesBackendAccess={hasFirefliesBackendAccess}
           hasGranolaBackendAccess={hasGranolaBackendAccess}
+          hasAssemblyAIBackendAccess={hasTranscriptionBackendAccess.assemblyai}
+          hasDeepgramBackendAccess={hasTranscriptionBackendAccess.deepgram}
           hasGoogleMeet={hasGoogleMeet}
           initialStep={sourcesInitialStep}
           onEnsureBackendAccess={ensureBackendAccess}
@@ -1374,6 +1553,12 @@ export function App() {
             setHasGranolaBackendAccess(true);
             setRefreshKey((k) => k + 1);
             setActivePage("inbox");
+          }}
+          onTranscriptionProviderComplete={(provider) => {
+            setHasTranscriptionKeys((state) => ({ ...state, [provider]: true }));
+            setHasBackendDelegation(true);
+            setHasTranscriptionBackendAccess((state) => ({ ...state, [provider]: true }));
+            setRefreshKey((k) => k + 1);
           }}
           onTranscriptImportComplete={handleTranscriptImportComplete}
           onDone={() => setActivePage("inbox")}
@@ -1477,11 +1662,22 @@ export function App() {
         <ConnectionsScreen
           api={api}
           hasFireflies={firefliesConnected}
+          hasGranola={granolaConnected}
           hasGoogleMeet={hasGoogleMeet === true}
           hasFirefliesBackendAccess={hasFirefliesBackendAccess === true}
+          hasGranolaBackendAccess={hasGranolaBackendAccess === true}
+          hasAssemblyAIKey={hasTranscriptionKeys.assemblyai}
+          hasAssemblyAIBackendAccess={hasTranscriptionBackendAccess.assemblyai}
+          hasDeepgramKey={hasTranscriptionKeys.deepgram}
+          hasDeepgramBackendAccess={hasTranscriptionBackendAccess.deepgram}
           googleMeetAvailable={googleMeetAvailable}
           onAddSource={() => openSourcesSetup()}
           onAddTranscript={() => openSourcesSetup("transcript-import")}
+          onFinishTranscriptionProviderAccess={(provider) =>
+            ensureSecretBackendAccess(
+              provider === "assemblyai" ? ASSEMBLYAI_SECRET_NAME : DEEPGRAM_SECRET_NAME,
+            )
+          }
           onRefresh={() => setRefreshKey((k) => k + 1)}
         />
       )}
