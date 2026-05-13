@@ -30,10 +30,9 @@ interface ConversationListProps {
 
 const PAGE_SIZE = 20;
 
-function conversationPagePath(page: number, sourceFilter: SourceFilter): string {
+function conversationPagePath(page: number): string {
   const offset = (page - 1) * PAGE_SIZE;
-  const sourceParam = sourceFilter !== "all" ? `&source=${sourceFilter}` : "";
-  return `/api/conversations?limit=${PAGE_SIZE}&offset=${offset}${sourceParam}`;
+  return `/api/conversations?limit=${PAGE_SIZE}&offset=${offset}`;
 }
 
 function formatGroupDate(isoString: string): string {
@@ -81,7 +80,7 @@ export const ConversationList: FC<ConversationListProps> = ({
 
   const fetchConversations = useCallback(
     async (page: number) => {
-      const path = conversationPagePath(page, sourceFilter);
+      const path = conversationPagePath(page);
       const cached = readConversationPageCache<Conversation>(path);
       const requestId = requestRef.current + 1;
       requestRef.current = requestId;
@@ -123,7 +122,7 @@ export const ConversationList: FC<ConversationListProps> = ({
         }
       }
     },
-    [api, sourceFilter],
+    [api],
   );
 
   useEffect(() => {
@@ -155,8 +154,9 @@ export const ConversationList: FC<ConversationListProps> = ({
   }, [notice]);
 
   const handleSourceFilterChange = (next: SourceFilter) => {
-    setSourceFilter(next);
-    setCurrentPage(1);
+    setSourceFilter((current) => (current === next || next === "all" ? "all" : next));
+    setSelected(new Set());
+    setContextMenu(null);
   };
 
   const toggleSelect = (id: string) => {
@@ -178,7 +178,10 @@ export const ConversationList: FC<ConversationListProps> = ({
     setContextMenu({ x: event.clientX, y: event.clientY, id });
   };
 
-  const selectedConversations = conversations.filter((conversation) =>
+  const visibleConversations = conversations.filter(
+    (conversation) => sourceFilter === "all" || conversation.source === sourceFilter,
+  );
+  const selectedConversations = visibleConversations.filter((conversation) =>
     selected.has(conversation.id),
   );
   const selectedSummaries = selectedConversations.filter((conversation) => conversation.summary);
@@ -236,19 +239,18 @@ export const ConversationList: FC<ConversationListProps> = ({
   const pageEnd = Math.min(total, (currentPage - 1) * PAGE_SIZE + conversations.length);
   const canGoPrev = currentPage > 1;
   const canGoNext = currentPage < totalPages;
-  const groupedConversations = conversations.reduce<Array<{ date: string; items: Conversation[] }>>(
-    (groups, conversation) => {
-      const date = formatGroupDate(conversation.started_at);
-      const last = groups[groups.length - 1];
-      if (last?.date === date) {
-        last.items.push(conversation);
-      } else {
-        groups.push({ date, items: [conversation] });
-      }
-      return groups;
-    },
-    [],
-  );
+  const groupedConversations = visibleConversations.reduce<
+    Array<{ date: string; items: Conversation[] }>
+  >((groups, conversation) => {
+    const date = formatGroupDate(conversation.started_at);
+    const last = groups[groups.length - 1];
+    if (last?.date === date) {
+      last.items.push(conversation);
+    } else {
+      groups.push({ date, items: [conversation] });
+    }
+    return groups;
+  }, []);
 
   return (
     <section style={s.card} ref={containerRef}>
@@ -266,7 +268,7 @@ export const ConversationList: FC<ConversationListProps> = ({
         total={total}
         sourceFilter={sourceFilter}
         onSourceFilterChange={handleSourceFilterChange}
-        showingCount={conversations.length}
+        showingCount={visibleConversations.length}
       />
 
       {selected.size > 0 && (
@@ -292,28 +294,32 @@ export const ConversationList: FC<ConversationListProps> = ({
       </div>
 
       <div style={s.list}>
-        {groupedConversations.map((group) => (
-          <div key={group.date}>
-            <div style={s.groupHeader}>
-              <span>— {group.date.toUpperCase()}</span>
-              <span style={s.groupRule} />
-              <span>
-                {group.items.length} record{group.items.length === 1 ? "" : "s"}
-              </span>
+        {groupedConversations.length === 0 ? (
+          <div style={s.filteredEmpty}>No conversations match this source.</div>
+        ) : (
+          groupedConversations.map((group) => (
+            <div key={group.date}>
+              <div style={s.groupHeader}>
+                <span>— {group.date.toUpperCase()}</span>
+                <span style={s.groupRule} />
+                <span>
+                  {group.items.length} record{group.items.length === 1 ? "" : "s"}
+                </span>
+              </div>
+              {group.items.map((c) => (
+                <InboxRow
+                  key={c.id}
+                  conversation={c}
+                  selected={selected.has(c.id)}
+                  onToggleSelect={toggleSelect}
+                  onOpen={onSelectConversation}
+                  onContextMenu={openContextMenu}
+                  onMenu={openContextMenu}
+                />
+              ))}
             </div>
-            {group.items.map((c) => (
-              <InboxRow
-                key={c.id}
-                conversation={c}
-                selected={selected.has(c.id)}
-                onToggleSelect={toggleSelect}
-                onOpen={onSelectConversation}
-                onContextMenu={openContextMenu}
-                onMenu={openContextMenu}
-              />
-            ))}
-          </div>
-        ))}
+          ))
+        )}
       </div>
 
       <nav style={s.pagination} aria-label="Conversation pages">
@@ -433,6 +439,13 @@ const s: Record<string, React.CSSProperties> = {
     letterSpacing: "0.08em",
   },
   list: { margin: 0, padding: 0 },
+  filteredEmpty: {
+    padding: "32px",
+    fontFamily: FONT,
+    fontSize: 13,
+    color: "var(--lst-ink-55)",
+    textAlign: "center",
+  },
   groupHeader: {
     display: "flex",
     alignItems: "center",
