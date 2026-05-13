@@ -324,6 +324,22 @@ describe("App manual sign-in processing", () => {
     );
   });
 
+  it("does not post a delegation when the status check fails", async () => {
+    vi.mocked(checkDelegationStatus).mockRejectedValueOnce(
+      new Error("Failed to check delegation status: Too many delegation requests"),
+    );
+
+    await renderAndSignIn();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/failed to check delegation status: too many delegation requests/i),
+      ).toBeInTheDocument();
+    });
+    expect(createManifestDelegation).not.toHaveBeenCalled();
+    expect(sendDelegation).not.toHaveBeenCalled();
+  });
+
   it("renews backend delegation when the connected workspace sees an expired record", async () => {
     vi.mocked(checkDelegationStatus)
       .mockResolvedValueOnce({ status: "active" })

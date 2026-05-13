@@ -291,13 +291,13 @@ async function main() {
 
   app.use(
     "/api/delegations",
-    delegationLimiter,
     createDelegationRouter({
       node,
       did,
       store: delegationStore,
       cache: delegationCache,
       authMiddleware,
+      writeLimiter: delegationLimiter,
     }),
   );
 
