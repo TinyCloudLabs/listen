@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import { ConversationList } from "../components/ConversationList";
+import { conversationPageCacheKey } from "../conversationPageCache";
 import type { ApiClient } from "@listen/client";
 
 function mockApi(overrides: Partial<ApiClient> = {}): ApiClient {
@@ -57,10 +58,12 @@ describe("ConversationList", () => {
   beforeEach(() => {
     api = mockApi();
     onSelectConversation = vi.fn();
+    localStorage.clear();
   });
 
   afterEach(() => {
     cleanup();
+    localStorage.clear();
   });
 
   it("fetches and renders conversations on mount", async () => {
@@ -199,7 +202,7 @@ describe("ConversationList", () => {
     expect(onSelectConversation).toHaveBeenCalledWith("01ABC");
   });
 
-  it("shows Load More button when there are more conversations", async () => {
+  it("shows page navigation when there are more conversations", async () => {
     api = mockApi({
       get: vi.fn().mockResolvedValue({
         conversations: CONVERSATIONS,
@@ -210,11 +213,13 @@ describe("ConversationList", () => {
     render(<ConversationList api={api} onSelectConversation={onSelectConversation} />);
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /load more/i })).toBeInTheDocument();
+      expect(screen.getByText("Page 1 of 3")).toBeInTheDocument();
     });
+    expect(screen.getByRole("button", { name: /previous/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /next/i })).toBeEnabled();
   });
 
-  it("does not show Load More when all conversations are loaded", async () => {
+  it("disables next page when all conversations fit on one page", async () => {
     api = mockApi({
       get: vi.fn().mockResolvedValue({
         conversations: CONVERSATIONS,
@@ -228,15 +233,16 @@ describe("ConversationList", () => {
       expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
     });
 
-    expect(screen.queryByRole("button", { name: /load more/i })).not.toBeInTheDocument();
+    expect(screen.getByText("Page 1 of 1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /next/i })).toBeDisabled();
   });
 
-  it("loads next page when Load More is clicked", async () => {
+  it("loads the next fixed-size page when Next is clicked", async () => {
     const getMock = vi
       .fn()
       .mockResolvedValueOnce({
         conversations: CONVERSATIONS,
-        total: 4,
+        total: 40,
       })
       .mockResolvedValueOnce({
         conversations: [
@@ -252,7 +258,7 @@ describe("ConversationList", () => {
             participant_count: 5,
           },
         ],
-        total: 4,
+        total: 40,
       });
     api = mockApi({ get: getMock });
 
@@ -262,18 +268,53 @@ describe("ConversationList", () => {
       expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /load more/i }));
+    fireEvent.click(screen.getByRole("button", { name: /next/i }));
 
     await waitFor(() => {
       expect(screen.getByText("Retro Meeting")).toBeInTheDocument();
     });
 
-    // Should have fetched with offset=3 (first page had 3 items)
-    expect(getMock).toHaveBeenCalledWith("/api/conversations?limit=20&offset=3");
+    expect(getMock).toHaveBeenCalledWith("/api/conversations?limit=20&offset=20");
 
-    // All 4 conversations should be visible
-    expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
+    expect(screen.getByText("Page 2 of 2")).toBeInTheDocument();
     expect(screen.getByText("Retro Meeting")).toBeInTheDocument();
+  });
+
+  it("renders cached page data immediately and refreshes it from the server", async () => {
+    const path = "/api/conversations?limit=20&offset=0";
+    localStorage.setItem(
+      conversationPageCacheKey(path),
+      JSON.stringify({
+        conversations: [{ ...CONVERSATIONS[0], title: "Cached Planning" }],
+        total: 1,
+        cachedAt: "2026-03-20T15:00:00Z",
+      }),
+    );
+
+    let resolveGet!: (value: { conversations: typeof CONVERSATIONS; total: number }) => void;
+    const getMock = vi.fn().mockReturnValue(
+      new Promise((resolve) => {
+        resolveGet = resolve;
+      }),
+    );
+    api = mockApi({ get: getMock });
+
+    render(<ConversationList api={api} onSelectConversation={onSelectConversation} />);
+
+    expect(await screen.findByText("Cached Planning")).toBeInTheDocument();
+    expect(screen.queryByText("Loading conversations")).not.toBeInTheDocument();
+
+    resolveGet({
+      conversations: [{ ...CONVERSATIONS[0], title: "Fresh Planning" }],
+      total: 1,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Fresh Planning")).toBeInTheDocument();
+    });
+
+    const cached = JSON.parse(localStorage.getItem(conversationPageCacheKey(path))!);
+    expect(cached.conversations[0].title).toBe("Fresh Planning");
   });
 
   it("shows error state on fetch failure", async () => {

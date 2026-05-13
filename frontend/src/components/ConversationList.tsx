@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, type FC, type MouseEvent } from "react";
 import type { ApiClient } from "@listen/client";
+import { readConversationPageCache, writeConversationPageCache } from "../conversationPageCache";
 import { InboxFilters, type SourceFilter } from "./InboxFilters";
 import { InboxBulkBar } from "./InboxBulkBar";
 import { InboxRow, InboxRowGrid } from "./InboxRow";
@@ -28,6 +29,12 @@ interface ConversationListProps {
 }
 
 const PAGE_SIZE = 20;
+
+function conversationPagePath(page: number, sourceFilter: SourceFilter): string {
+  const offset = (page - 1) * PAGE_SIZE;
+  const sourceParam = sourceFilter !== "all" ? `&source=${sourceFilter}` : "";
+  return `/api/conversations?limit=${PAGE_SIZE}&offset=${offset}${sourceParam}`;
+}
 
 function formatGroupDate(isoString: string): string {
   return new Date(isoString).toLocaleDateString("en-US", {
@@ -60,42 +67,75 @@ export const ConversationList: FC<ConversationListProps> = ({
 }) => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [total, setTotal] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const requestRef = useRef(0);
+  const refreshKeyRef = useRef(refreshKey);
 
   const fetchConversations = useCallback(
-    async (offset: number, append: boolean) => {
-      const sourceParam = sourceFilter !== "all" ? `&source=${sourceFilter}` : "";
+    async (page: number) => {
+      const path = conversationPagePath(page, sourceFilter);
+      const cached = readConversationPageCache<Conversation>(path);
+      const requestId = requestRef.current + 1;
+      requestRef.current = requestId;
+
+      setSelected(new Set());
+      setContextMenu(null);
+      setError(null);
+
+      if (cached) {
+        setConversations(cached.conversations);
+        setTotal(cached.total);
+        setLoading(false);
+        setRefreshing(true);
+      } else {
+        setConversations([]);
+        setTotal(0);
+        setLoading(true);
+        setRefreshing(false);
+      }
+
       try {
-        const data = await api.get<ConversationsResponse>(
-          `/api/conversations?limit=${PAGE_SIZE}&offset=${offset}${sourceParam}`,
-        );
-        if (append) {
-          setConversations((prev) => [...prev, ...data.conversations]);
-        } else {
-          setConversations(data.conversations);
-        }
+        const data = await api.get<ConversationsResponse>(path);
+        if (requestRef.current !== requestId) return;
+        setConversations(data.conversations);
         setTotal(data.total);
+        writeConversationPageCache(path, data);
         setError(null);
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        if (requestRef.current !== requestId) return;
+        if (cached) {
+          setNotice("Could not refresh cached page");
+        } else {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        if (requestRef.current === requestId) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     },
     [api, sourceFilter],
   );
 
   useEffect(() => {
-    setLoading(true);
-    setConversations([]);
-    setSelected(new Set());
-    fetchConversations(0, false).finally(() => setLoading(false));
-  }, [fetchConversations, refreshKey]);
+    if (refreshKeyRef.current !== refreshKey) {
+      refreshKeyRef.current = refreshKey;
+      if (currentPage !== 1) {
+        setCurrentPage(1);
+        return;
+      }
+    }
+    void fetchConversations(currentPage);
+  }, [currentPage, fetchConversations, refreshKey]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -114,10 +154,9 @@ export const ConversationList: FC<ConversationListProps> = ({
     return () => window.clearTimeout(timer);
   }, [notice]);
 
-  const handleLoadMore = async () => {
-    setLoadingMore(true);
-    await fetchConversations(conversations.length, true);
-    setLoadingMore(false);
+  const handleSourceFilterChange = (next: SourceFilter) => {
+    setSourceFilter(next);
+    setCurrentPage(1);
   };
 
   const toggleSelect = (id: string) => {
@@ -192,7 +231,11 @@ export const ConversationList: FC<ConversationListProps> = ({
     );
   }
 
-  const hasMore = conversations.length < total;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pageStart = total === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
+  const pageEnd = Math.min(total, (currentPage - 1) * PAGE_SIZE + conversations.length);
+  const canGoPrev = currentPage > 1;
+  const canGoNext = currentPage < totalPages;
   const groupedConversations = conversations.reduce<Array<{ date: string; items: Conversation[] }>>(
     (groups, conversation) => {
       const date = formatGroupDate(conversation.started_at);
@@ -213,12 +256,16 @@ export const ConversationList: FC<ConversationListProps> = ({
         <span style={s.countLabel}>
           {total} conversation{total !== 1 ? "s" : ""}
         </span>
+        <span style={s.pageStatus}>
+          Page {currentPage} of {totalPages} · {pageStart}-{pageEnd} of {total}
+          {refreshing ? " · refreshing" : ""}
+        </span>
       </div>
 
       <InboxFilters
         total={total}
         sourceFilter={sourceFilter}
-        onSourceFilterChange={setSourceFilter}
+        onSourceFilterChange={handleSourceFilterChange}
         showingCount={conversations.length}
       />
 
@@ -269,15 +316,27 @@ export const ConversationList: FC<ConversationListProps> = ({
         ))}
       </div>
 
-      {hasMore && (
+      <nav style={s.pagination} aria-label="Conversation pages">
         <button
-          style={{ ...s.loadMore, ...(loadingMore ? s.loadMoreDisabled : {}) }}
-          disabled={loadingMore}
-          onClick={handleLoadMore}
+          type="button"
+          style={{ ...s.pageButton, ...(!canGoPrev || refreshing ? s.pageButtonDisabled : {}) }}
+          disabled={!canGoPrev || refreshing}
+          onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
         >
-          {loadingMore ? "Loading\u2026" : "Load More"}
+          Previous
         </button>
-      )}
+        <span style={s.pageLabel}>
+          Page {currentPage} of {totalPages}
+        </span>
+        <button
+          type="button"
+          style={{ ...s.pageButton, ...(!canGoNext || refreshing ? s.pageButtonDisabled : {}) }}
+          disabled={!canGoNext || refreshing}
+          onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+        >
+          Next
+        </button>
+      </nav>
 
       {contextMenu && (
         <div
@@ -353,6 +412,11 @@ const s: Record<string, React.CSSProperties> = {
     letterSpacing: "0.08em",
     textTransform: "uppercase" as const,
   },
+  pageStatus: {
+    fontFamily: MONO,
+    fontSize: 11,
+    color: "var(--lst-ink-55)",
+  },
   columnHeader: {
     ...InboxRowGrid,
     padding: "10px 32px",
@@ -384,20 +448,33 @@ const s: Record<string, React.CSSProperties> = {
     background: "var(--lst-rule-soft)",
     flex: 1,
   },
-  loadMore: {
+  pagination: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    padding: "12px 32px",
+    borderTop: "var(--lst-border)",
+  },
+  pageButton: {
     fontFamily: FONT,
-    display: "block",
-    width: "100%",
-    padding: "12px 0",
+    padding: "6px 12px",
     fontSize: 13,
     fontWeight: 500,
     color: "var(--lst-blue)",
     background: "transparent",
-    border: "none",
-    borderTop: "var(--lst-border)",
+    border: "var(--lst-border)",
+    borderRadius: 999,
     cursor: "pointer",
   },
-  loadMoreDisabled: { opacity: 0.5, cursor: "not-allowed" },
+  pageButtonDisabled: { opacity: 0.45, cursor: "not-allowed" },
+  pageLabel: {
+    minWidth: 100,
+    textAlign: "center",
+    fontFamily: MONO,
+    fontSize: 11,
+    color: "var(--lst-ink-55)",
+  },
   loadingCard: {
     fontFamily: FONT,
     display: "flex",
