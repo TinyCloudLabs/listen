@@ -5,7 +5,7 @@ TC-1367 adds a same-repository pull request preview path for Listen:
 1. Create or reuse a Railway environment named `pr-<number>`.
 2. Deploy the backend service to Railway from the PR source.
 3. Build the frontend with `VITE_BACKEND_URL` set to the Railway backend URL.
-4. Upload the frontend to Cloudflare Pages with branch alias `pr-<number>`, which resolves to `https://pr-<number>.listen.pages.dev`.
+4. Upload the frontend to Cloudflare Pages with branch alias `pr-<number>`, which resolves to `https://pr-<number>.<pages-subdomain>.pages.dev`.
 5. Delete the Railway environment when the PR closes.
 
 The workflow skips forked PRs because it needs deployment secrets.
@@ -41,6 +41,7 @@ Repository variables:
 | `RAILWAY_BASE_ENVIRONMENT` | No | `production` | Railway environment duplicated to create `pr-<number>`. |
 | `CLOUDFLARE_ACCOUNT_ID` | No | `9959301f03d2db1a5fcf5e004278d467` | Cloudflare account containing the Pages project. |
 | `CLOUDFLARE_PAGES_PROJECT` | No | `listen` | Cloudflare Pages project name. |
+| `CLOUDFLARE_PAGES_SUBDOMAIN` | No | `CLOUDFLARE_PAGES_PROJECT` | Pages subdomain without `.pages.dev`. Set this when Cloudflare assigns a generated project subdomain such as `listen-5yl`. |
 | `TINYCLOUD_HOST` | No | `https://node.tinycloud.xyz` | TinyCloud node used by previews. |
 | `OPENKEY_ISSUER_URL` | No | `https://openkey.so` | Backend OpenKey issuer. |
 | `VITE_OPENKEY_HOST` | No | `https://openkey.so` | Frontend OpenKey host. |
@@ -67,7 +68,7 @@ For each PR environment, the workflow sets service variables before deploying:
 - `PORT=3001`
 - `BACKEND_PRIVATE_KEY`
 - `TINYCLOUD_HOST`
-- `FRONTEND_URL=https://pr-<number>.listen.pages.dev`
+- `FRONTEND_URL=https://pr-<number>.<pages-subdomain>.pages.dev`
 - `OPENKEY_ISSUER_URL`
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_CLIENT_SECRET`

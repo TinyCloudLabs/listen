@@ -15,6 +15,7 @@ env:
   RAILWAY_BASE_ENVIRONMENT: ${{ vars.RAILWAY_BASE_ENVIRONMENT || 'production' }}
   CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || '9959301f03d2db1a5fcf5e004278d467' }}
   CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'listen' }}
+  CLOUDFLARE_PAGES_SUBDOMAIN: ${{ vars.CLOUDFLARE_PAGES_SUBDOMAIN || vars.CLOUDFLARE_PAGES_PROJECT || 'listen' }}
   VITE_OPENKEY_HOST: ${{ vars.VITE_OPENKEY_HOST || 'https://openkey.so' }}
   OPENKEY_ISSUER_URL: ${{ vars.OPENKEY_ISSUER_URL || 'https://openkey.so' }}
 
@@ -41,7 +42,7 @@ jobs:
           PR_NUMBER="${{ github.event.pull_request.number }}"
           BRANCH_ALIAS="pr-${PR_NUMBER}"
           RAILWAY_ENVIRONMENT="pr-${PR_NUMBER}"
-          FRONTEND_URL="https://${BRANCH_ALIAS}.${CLOUDFLARE_PAGES_PROJECT}.pages.dev"
+          FRONTEND_URL="https://${BRANCH_ALIAS}.${CLOUDFLARE_PAGES_SUBDOMAIN%.pages.dev}.pages.dev"
 
           {
             echo "branch_alias=${BRANCH_ALIAS}"
