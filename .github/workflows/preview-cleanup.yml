@@ -18,22 +18,48 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Install Phala CLI
-        run: npm install -g phala
-
-      - name: Delete preview backend CVM
+      - name: Check cleanup configuration
+        id: cleanup_config
         env:
-          PHALA_CLOUD_API_KEY: ${{ secrets.PHALA_CLOUD_API_KEY }}
-        run: phala cvms delete "listen-pr-${{ github.event.pull_request.number }}" --yes
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          if [ -n "$RAILWAY_PROJECT_ID" ] && [ -n "$RAILWAY_TOKEN" ]; then
+            echo "can_cleanup=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "can_cleanup=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Railway CLI
+        if: steps.cleanup_config.outputs.can_cleanup == 'true'
+        run: npm install -g @railway/cli
+
+      - name: Delete preview backend environment
+        if: steps.cleanup_config.outputs.can_cleanup == 'true'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+          RAILWAY_BASE_ENVIRONMENT: ${{ vars.RAILWAY_BASE_ENVIRONMENT || 'production' }}
+          RAILWAY_SERVICE: ${{ vars.RAILWAY_SERVICE || 'listen-backend' }}
+        run: |
+          railway link \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_BASE_ENVIRONMENT" \
+            --service "$RAILWAY_SERVICE"
+          railway environment delete "pr-${{ github.event.pull_request.number }}" --yes
 
       - name: Comment cleanup
         if: always()
         uses: actions/github-script@v7
         with:
           script: |
+            const configured = '${{ steps.cleanup_config.outputs.can_cleanup }}' === 'true';
+            const envName = 'pr-${{ github.event.pull_request.number }}';
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: 'TC-1367 preview cleanup ran for Phala CVM `listen-pr-${{ github.event.pull_request.number }}`. Cloudflare Pages keeps aliased branch deployments; delete old deployments from Cloudflare if retention needs tighter cleanup.',
+              body: configured
+                ? `TC-1367 preview cleanup ran for Railway environment \`${envName}\`. Cloudflare Pages keeps aliased branch deployments; delete old deployments from Cloudflare if retention needs tighter cleanup.`
+                : `TC-1367 preview cleanup skipped because Railway repository configuration is incomplete. Expected Railway environment: \`${envName}\`.`,
             });
