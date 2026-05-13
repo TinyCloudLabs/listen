@@ -30,6 +30,15 @@ Dockerfile deployments use `backend/Dockerfile` and its `CMD`.
 
 The Railway CLI was used to create the initial `listen-backend` service in project `d0603e71-78b2-45ca-91ed-15d6fb253c1b`.
 
+Railway's GitHub integration also creates deployment statuses for linked
+environments. Those provider-triggered deployments need the backend runtime
+variables in Railway, especially `BACKEND_PRIVATE_KEY`, or the container exits
+before it can serve traffic. Configure Railway's `BACKEND_PRIVATE_KEY` from the
+operator-owned `.env.prod` value without committing it to the repo or printing
+it in logs. The PR Preview workflow sets its own `railway up` deployment
+variables from GitHub secrets; automatic Railway deployments must either have
+equivalent Railway environment variables or be disabled in Railway.
+
 ## Required GitHub Configuration
 
 Repository variables:

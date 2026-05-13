@@ -17,19 +17,39 @@ on:
   workflow_dispatch:
 
 env:
-  DOCKER_IMAGE: skgbafa/listen-backend
+  DOCKER_IMAGE: ${{ vars.LISTEN_BACKEND_IMAGE || 'ghcr.io/tinycloudlabs/listen-backend' }}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Log in to Docker Hub
+      - name: Check deployment configuration
+        env:
+          PHALA_CLOUD_API_KEY: ${{ secrets.PHALA_CLOUD_API_KEY }}
+        run: |
+          missing=()
+          for item in PHALA_CLOUD_API_KEY; do
+            if [ -z "${!item}" ]; then
+              missing+=("$item")
+            fi
+          done
+
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "Missing required GitHub Actions secrets: ${missing[*]}" >&2
+            exit 1
+          fi
+
+      - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKER_REGISTRY_USERNAME }}
-          password: ${{ secrets.DOCKER_REGISTRY_PASSWORD }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -45,9 +65,12 @@ jobs:
           tags: |
             ${{ env.DOCKER_IMAGE }}:${{ github.sha }}
             ${{ env.DOCKER_IMAGE }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=Listen backend
 
       - name: Pin deployed image tag
-        run: sed -i "s|\${LISTEN_BACKEND_IMAGE:-skgbafa/listen-backend:latest}|${{ env.DOCKER_IMAGE }}:${{ github.sha }}|g" docker-compose.phala.yml
+        run: sed -i "s|\${LISTEN_BACKEND_IMAGE:-ghcr.io/tinycloudlabs/listen-backend:latest}|${{ env.DOCKER_IMAGE }}:${{ github.sha }}|g" docker-compose.phala.yml
 
       - name: Install Phala CLI
         run: npm install -g phala
@@ -93,3 +116,44 @@ jobs:
           echo "Timeout waiting for CVM after 10 minutes"
           phala cvms list --json | jq '.items[] | select(.cvmName == "listen-backend")'
           exit 1
+
+  phala-status:
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: always()
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Publish Phala deployment status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          TARGET_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          case "$DEPLOY_RESULT" in
+            success)
+              STATE=success
+              DESCRIPTION="Phala deployment succeeded"
+              ;;
+            cancelled)
+              STATE=error
+              DESCRIPTION="Phala deployment cancelled"
+              ;;
+            skipped)
+              STATE=error
+              DESCRIPTION="Phala deployment skipped"
+              ;;
+            *)
+              STATE=failure
+              DESCRIPTION="Phala deployment failed"
+              ;;
+          esac
+
+          gh api \
+            --method POST \
+            "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state="$STATE" \
+            -f context="listen-backend - phala" \
+            -f description="$DESCRIPTION" \
+            -f target_url="$TARGET_URL"
