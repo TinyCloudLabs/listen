@@ -1,0 +1,6 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "deploy": {
+    "startCommand": "if [ -d backend ]; then bun run --cwd backend start; else bun run start; fi"
+  }
+}

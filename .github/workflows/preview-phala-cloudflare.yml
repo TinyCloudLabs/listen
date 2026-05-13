@@ -1,0 +1,304 @@
+name: PR Preview
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: listen-preview-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+  RAILWAY_SERVICE: ${{ vars.RAILWAY_SERVICE || 'listen-backend' }}
+  RAILWAY_BASE_ENVIRONMENT: ${{ vars.RAILWAY_BASE_ENVIRONMENT || 'production' }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || '9959301f03d2db1a5fcf5e004278d467' }}
+  CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'listen' }}
+  CLOUDFLARE_PAGES_SUBDOMAIN: ${{ vars.CLOUDFLARE_PAGES_SUBDOMAIN || vars.CLOUDFLARE_PAGES_PROJECT || 'listen' }}
+  VITE_OPENKEY_HOST: ${{ vars.VITE_OPENKEY_HOST || 'https://openkey.so' }}
+  OPENKEY_ISSUER_URL: ${{ vars.OPENKEY_ISSUER_URL || 'https://openkey.so' }}
+
+jobs:
+  deploy:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Derive preview names
+        id: preview
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          BRANCH_ALIAS="pr-${PR_NUMBER}"
+          RAILWAY_ENVIRONMENT="pr-${PR_NUMBER}"
+          FRONTEND_URL="https://${BRANCH_ALIAS}.${CLOUDFLARE_PAGES_SUBDOMAIN%.pages.dev}.pages.dev"
+
+          {
+            echo "branch_alias=${BRANCH_ALIAS}"
+            echo "railway_environment=${RAILWAY_ENVIRONMENT}"
+            echo "frontend_url=${FRONTEND_URL}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check preview deploy configuration
+        id: deploy_config
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+          BACKEND_PRIVATE_KEY: ${{ secrets.LISTEN_PREVIEW_BACKEND_PRIVATE_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          missing=()
+          for item in \
+            "RAILWAY_PROJECT_ID:RAILWAY_PROJECT_ID" \
+            "RAILWAY_API_TOKEN:RAILWAY_API_TOKEN" \
+            "BACKEND_PRIVATE_KEY:LISTEN_PREVIEW_BACKEND_PRIVATE_KEY"; do
+            env_name="${item%%:*}"
+            config_name="${item##*:}"
+            if [ -z "${!env_name}" ]; then
+              missing+=("$config_name")
+            fi
+          done
+
+          if [ -n "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "has_cloudflare=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_cloudflare=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ ${#missing[@]} -eq 0 ]; then
+            echo "can_deploy=true" >> "$GITHUB_OUTPUT"
+            echo "missing=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          {
+            echo "can_deploy=false"
+            echo "missing=${missing[*]}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build backend
+        run: bun run build --filter=listen-backend
+
+      - name: Build frontend without deploy configuration
+        if: steps.deploy_config.outputs.can_deploy != 'true'
+        env:
+          VITE_BACKEND_URL: https://preview-not-configured.invalid
+          VITE_OPENKEY_HOST: ${{ env.VITE_OPENKEY_HOST }}
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.LISTEN_PREVIEW_GOOGLE_CLIENT_ID }}
+          VITE_ENABLE_TINYCLOUD_HOOKS: ${{ vars.VITE_ENABLE_TINYCLOUD_HOOKS || 'false' }}
+          VITE_ENABLE_AGENT: ${{ vars.VITE_ENABLE_AGENT || 'false' }}
+        run: bun run build --filter=listen-frontend
+
+      - name: Install Railway CLI
+        if: steps.deploy_config.outputs.can_deploy == 'true'
+        run: npm install -g @railway/cli
+
+      - name: Deploy preview backend to Railway
+        if: steps.deploy_config.outputs.can_deploy == 'true'
+        id: railway
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+          BACKEND_PRIVATE_KEY: ${{ secrets.LISTEN_PREVIEW_BACKEND_PRIVATE_KEY }}
+          TINYCLOUD_HOST: ${{ vars.TINYCLOUD_HOST || 'https://node.tinycloud.xyz' }}
+          GOOGLE_CLIENT_ID: ${{ secrets.LISTEN_PREVIEW_GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.LISTEN_PREVIEW_GOOGLE_CLIENT_SECRET }}
+          GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.LISTEN_PREVIEW_GOOGLE_SERVICE_ACCOUNT_KEY }}
+        run: |
+          set -euo pipefail
+
+          railway link \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_BASE_ENVIRONMENT" \
+            --service "$RAILWAY_SERVICE"
+
+          railway environment new "${{ steps.preview.outputs.railway_environment }}" \
+            --duplicate "$RAILWAY_BASE_ENVIRONMENT" || \
+            railway environment "${{ steps.preview.outputs.railway_environment }}"
+
+          railway link \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "${{ steps.preview.outputs.railway_environment }}" \
+            --service "$RAILWAY_SERVICE"
+
+          DOMAIN_JSON=$(railway domain --service "$RAILWAY_SERVICE" --port 3001 --json 2>/tmp/railway-domain.err || true)
+          BACKEND_URL=$(printf '%s' "$DOMAIN_JSON" | jq -r '.domain // empty')
+          if [ -z "$BACKEND_URL" ]; then
+            EXISTING_DOMAIN=$(railway variables \
+              --service "$RAILWAY_SERVICE" \
+              --environment "${{ steps.preview.outputs.railway_environment }}" \
+              --json | jq -r '.RAILWAY_PUBLIC_DOMAIN // empty')
+            if [ -n "$EXISTING_DOMAIN" ]; then
+              BACKEND_URL="https://${EXISTING_DOMAIN#https://}"
+            fi
+          fi
+          if [ -z "$BACKEND_URL" ]; then
+            echo "Failed to resolve Railway public domain." >&2
+            cat /tmp/railway-domain.err >&2 || true
+            exit 1
+          fi
+
+          railway variables \
+            --service "$RAILWAY_SERVICE" \
+            --environment "${{ steps.preview.outputs.railway_environment }}" \
+            --skip-deploys \
+            --set "RAILWAY_DOCKERFILE_PATH=backend/Dockerfile" \
+            --set "RAILPACK_CONFIG_FILE=railpack.json" \
+            --set "RAILPACK_START_CMD=if [ -d backend ]; then bun run --cwd backend start; else bun run start; fi" \
+            --set "NODE_ENV=production" \
+            --set "PORT=3001" \
+            --set "BACKEND_PRIVATE_KEY=${BACKEND_PRIVATE_KEY}" \
+            --set "TINYCLOUD_HOST=${TINYCLOUD_HOST}" \
+            --set "FRONTEND_URL=${{ steps.preview.outputs.frontend_url }}" \
+            --set "OPENKEY_ISSUER_URL=${OPENKEY_ISSUER_URL}" \
+            --set "GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}" \
+            --set "GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}" \
+            --set "GOOGLE_SERVICE_ACCOUNT_KEY=${GOOGLE_SERVICE_ACCOUNT_KEY}" \
+            --set "GOOGLE_PUBSUB_PUSH_URL=${BACKEND_URL}/api/webhooks/google-meet"
+
+          railway up \
+            --service "$RAILWAY_SERVICE" \
+            --environment "${{ steps.preview.outputs.railway_environment }}"
+
+          for attempt in $(seq 1 90); do
+            STATUS=$(railway deployment list \
+              --service "$RAILWAY_SERVICE" \
+              --environment "${{ steps.preview.outputs.railway_environment }}" \
+              --limit 1 \
+              --json | jq -r '.[0].status // "UNKNOWN"')
+            echo "Railway deployment status: ${STATUS}"
+            case "$STATUS" in
+              SUCCESS)
+                break
+                ;;
+              FAILED|CRASHED|REMOVED|REMOVING)
+                exit 1
+                ;;
+            esac
+            if [ "$attempt" -eq 90 ]; then
+              echo "Timed out waiting for Railway deployment." >&2
+              exit 1
+            fi
+            sleep 10
+          done
+
+          echo "backend_url=${BACKEND_URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Build preview frontend
+        if: steps.deploy_config.outputs.can_deploy == 'true'
+        env:
+          VITE_BACKEND_URL: ${{ steps.railway.outputs.backend_url }}
+          VITE_OPENKEY_HOST: ${{ env.VITE_OPENKEY_HOST }}
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.LISTEN_PREVIEW_GOOGLE_CLIENT_ID }}
+          VITE_ENABLE_TINYCLOUD_HOOKS: ${{ vars.VITE_ENABLE_TINYCLOUD_HOOKS || 'false' }}
+          VITE_ENABLE_AGENT: ${{ vars.VITE_ENABLE_AGENT || 'false' }}
+        run: bun run build --filter=listen-frontend
+
+      - uses: actions/setup-node@v4
+        if: steps.deploy_config.outputs.can_deploy == 'true' && steps.deploy_config.outputs.has_cloudflare == 'true'
+        with:
+          node-version: 22
+
+      - name: Deploy preview frontend to Cloudflare Pages
+        if: steps.deploy_config.outputs.can_deploy == 'true' && steps.deploy_config.outputs.has_cloudflare == 'true'
+        id: cloudflare
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          bunx wrangler pages deploy frontend/dist \
+            --project-name "$CLOUDFLARE_PAGES_PROJECT" \
+            --branch "${{ steps.preview.outputs.branch_alias }}" \
+            --commit-hash "${{ github.event.pull_request.head.sha }}" \
+            --commit-message "TC-1367 PR #${{ github.event.pull_request.number }} preview"
+
+      - name: Comment preview URLs
+        if: steps.deploy_config.outputs.can_deploy == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- listen-pr-preview -->';
+            const cloudflareOutcome = '${{ steps.cloudflare.outcome }}';
+            const frontend =
+              cloudflareOutcome === 'success'
+                ? '${{ steps.preview.outputs.frontend_url }}'
+                : `not deployed (${cloudflareOutcome || 'Cloudflare token not configured'})`;
+            const body = `${marker}
+            TC-1367 preview is deployed.
+
+            Frontend: ${frontend}
+            Backend: ${{ steps.railway.outputs.backend_url }}
+            Railway environment: \`${{ steps.preview.outputs.railway_environment }}\``;
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+            });
+            const existing = comments.find((comment) => comment.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      - name: Comment waiting for preview configuration
+        if: steps.deploy_config.outputs.can_deploy != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- listen-pr-preview -->';
+            const missing = '${{ steps.deploy_config.outputs.missing }}'
+              .split(' ')
+              .filter(Boolean)
+              .map((name) => `\`${name}\``)
+              .join(', ');
+            const body = `${marker}
+            TC-1367 preview backend and frontend builds passed.
+
+            Preview deployment is waiting for repository configuration: ${missing}.`;
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+            });
+            const existing = comments.find((comment) => comment.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+  skipped-fork:
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Comment skipped preview
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: 'TC-1367 preview was skipped because this PR comes from a fork and preview deployment requires repository secrets.',
+            });
