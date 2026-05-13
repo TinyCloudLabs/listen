@@ -287,7 +287,7 @@ describe("App manual sign-in processing", () => {
       "https://tinycloud.xyz/interoperable-apps",
     );
     expect(
-      screen.getByText(/I recorded everything, but I had no idea where it lived/i),
+      screen.getByText(/I recorded everything across meetings, notes, and files/i),
     ).toBeInTheDocument();
   });
 
