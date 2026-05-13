@@ -26,6 +26,7 @@ function renderConnections(overrides: Partial<Parameters<typeof ConnectionsScree
 
 describe("ConnectionsScreen", () => {
   afterEach(() => {
+    vi.clearAllMocks();
     cleanup();
   });
 
@@ -68,6 +69,20 @@ describe("ConnectionsScreen", () => {
 
     await waitFor(() => {
       expect(onFinish).toHaveBeenCalledWith("assemblyai");
+    });
+  });
+
+  it("renders one error banner when a sync action fails", async () => {
+    api.post.mockRejectedValueOnce(new Error("sync failed"));
+    renderConnections({
+      hasFireflies: true,
+      hasFirefliesBackendAccess: true,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /sync now/i }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText("sync failed")).toHaveLength(1);
     });
   });
 });
