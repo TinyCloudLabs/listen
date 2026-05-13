@@ -282,18 +282,19 @@ function LandingPage({
               <h1>
                 Capture thoughts.
                 <br />
-                Operate on data.
+                Bring your own data.
               </h1>
               <p className="landing-hero-lede">
-                One inbox for every synced transcript from Fireflies and Google Meet. Search across
-                all of it and open the source transcript.
+                One inbox for transcripts, audio, and meeting notes from Fireflies, Google Meet,
+                Granola imports, and the files you already have.
               </p>
               <div className="landing-hero-meta">
                 <span>
-                  <span className="landing-dot" />2 sources connected
+                  <span className="landing-dot" />
+                  connect many sources
                 </span>
                 <span>-</span>
-                <span>transcripts indexed in TinyCloud</span>
+                <span>transcripts and audio indexed in TinyCloud</span>
               </div>
               <div className="landing-hero-actions">
                 <button className="landing-btn" onClick={onSignIn} disabled={loading}>
@@ -316,12 +317,14 @@ function LandingPage({
                 <span className="landing-eyebrow">01 - sources</span>
                 <h2>Bring everything in.</h2>
               </div>
-              <span className="landing-mono landing-muted">2 connected - always syncing</span>
+              <span className="landing-mono landing-muted">many sources - synced or imported</span>
             </div>
             <div className="landing-sources-row">
               {[
-                ["Fireflies", "meet bot - webhook"],
+                ["Fireflies", "meeting transcripts"],
                 ["Google Meet", "captions sync"],
+                ["Granola", "existing notes import"],
+                ["Files", "transcripts + audio"],
               ].map(([name, meta]) => (
                 <div key={name} className="landing-source-cell">
                   <span className="landing-dot" />
@@ -338,17 +341,17 @@ function LandingPage({
                 [
                   "01",
                   "One inbox",
-                  "Fireflies and Google Meet transcripts land in a single chronological feed. Filter by source, person, or date.",
+                  "Fireflies, Google Meet, Granola imports, transcripts, and audio files land in a single chronological feed.",
                 ],
                 [
                   "02",
-                  "Real summaries",
-                  "Per-transcript summaries you can read like documents. Copy, export, and sync the records you need.",
+                  "Bring the archive",
+                  "Import the conversations you already captured, then keep new source updates flowing into the same workspace.",
                 ],
                 [
                   "03",
                   "Search in chat",
-                  "Ask across your transcript library in a chat-like flow. Every result traces back to the source.",
+                  "Ask across your transcript and audio library in a chat-like flow. Every result traces back to the source.",
                 ],
               ].map(([num, title, description]) => (
                 <div key={num} className="landing-feature">
@@ -378,8 +381,8 @@ function LandingPage({
 
           <section className="landing-quote-section">
             <p>
-              "I recorded everything, but I had no idea where it lived. Listen helps me see it all
-              and bring my data together in one place."
+              "I recorded everything across meetings, notes, and files, but I had no idea where it
+              lived. Listen helps me bring the whole archive together."
             </p>
             <span className="landing-mono landing-muted">- Priya R - Head of Product</span>
           </section>
@@ -389,8 +392,8 @@ function LandingPage({
               <div>
                 <LandingLogo />
                 <p>
-                  A transcript workspace that aggregates spoken words and turns them into
-                  searchable, structured information.
+                  A transcript workspace that brings meeting tools, imported notes, transcripts, and
+                  audio into searchable, structured information.
                 </p>
               </div>
               <div>
@@ -1060,7 +1063,7 @@ export function App() {
                       ? `inbox · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`
                       : "onboarding / sources";
   const pageTitle = !isSignedIn
-    ? "Capture thoughts. Operate on data."
+    ? "Capture thoughts. Bring your own data."
     : selectedConversationId
       ? "Transcript detail"
       : showWorkspaceLoading
