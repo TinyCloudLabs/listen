@@ -1,5 +1,6 @@
 import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
+import { Buffer } from "node:buffer";
 import type { NormalizedConversation } from "../adapters/types.js";
 import { conversationSql, ensureSchema } from "../schema.js";
 import { persistConversation } from "../services/persist-conversation.js";
@@ -24,6 +25,7 @@ interface ConversationsRoutesConfig {
 
 const DEFAULT_LIMIT = 20;
 const DEFAULT_OFFSET = 0;
+const BASE64_AUDIO_STORAGE_ENCODING = "base64-string-kv";
 
 interface ManualTranscriptImportBody {
   title?: unknown;
@@ -85,6 +87,51 @@ function parseParticipants(value: unknown): string[] {
         .filter((entry) => entry.length > 0),
     ),
   );
+}
+
+function audioFallbackUrl(id: string): string {
+  return `/api/conversations/${encodeURIComponent(id)}/audio`;
+}
+
+async function resolveAudioPlaybackMetadata(
+  access: NonNullable<Request["delegatedAccess"]>,
+  id: string,
+  metadata: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const audioKey =
+    typeof metadata.audio_data_kv_key === "string" ? metadata.audio_data_kv_key : null;
+  if (!audioKey) return metadata;
+
+  const fallback = {
+    ...metadata,
+    audio_playback_url: audioFallbackUrl(id),
+    audio_playback_url_source: "backend-kv-fallback",
+  };
+
+  if (metadata.audio_storage_encoding === BASE64_AUDIO_STORAGE_ENCODING) {
+    return fallback;
+  }
+
+  const createSignedReadUrl = access.kv.createSignedReadUrl;
+  if (typeof createSignedReadUrl !== "function") {
+    return fallback;
+  }
+
+  try {
+    const signedResult = await createSignedReadUrl.call(access.kv, audioKey);
+    if (signedResult.ok && signedResult.data?.url) {
+      return {
+        ...metadata,
+        audio_playback_url: signedResult.data.url,
+        audio_signed_url_expires_at: signedResult.data.expiresAt,
+        audio_playback_url_source: "tinycloud-signed-kv",
+      };
+    }
+  } catch {
+    return fallback;
+  }
+
+  return fallback;
 }
 
 function parseTimestamp(value: string): number | null {
@@ -484,6 +531,8 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         metadata = {};
       }
 
+      metadata = await resolveAudioPlaybackMetadata(access, id, metadata);
+
       const conversation = { ...row, metadata };
 
       // Fetch participants
@@ -525,6 +574,73 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
       console.error("[conversations] detail failed:", err);
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: "detail_failed", message });
+    }
+  });
+
+  // ── GET /:id/audio — stream stored Fireflies audio from KV ──
+  router.get("/:id/audio", async (req: Request, res: Response) => {
+    const access = req.delegatedAccess!;
+    const { id } = req.params;
+
+    try {
+      await ensureSchema(access);
+      const sqlDb = conversationSql(access);
+      const convoResult = await sqlDb.query(`SELECT metadata FROM conversation WHERE id = ?`, [id]);
+
+      if (!convoResult.ok || !convoResult.data.rows?.length) {
+        res.status(404).json({ error: "not_found", message: `Conversation ${id} not found` });
+        return;
+      }
+
+      const rawMetadata = Array.isArray(convoResult.data.rows[0])
+        ? convoResult.data.rows[0][0]
+        : (convoResult.data.rows[0] as any).metadata;
+
+      let metadata: Record<string, unknown> = {};
+      try {
+        metadata = rawMetadata ? JSON.parse(String(rawMetadata)) : {};
+      } catch {
+        metadata = {};
+      }
+
+      const audioKey =
+        typeof metadata.audio_data_kv_key === "string" ? metadata.audio_data_kv_key : null;
+      if (!audioKey) {
+        res.status(404).json({ error: "audio_not_found", message: "No audio is available" });
+        return;
+      }
+
+      const kvResult = await access.kv.get(audioKey);
+      if (!kvResult.ok || !kvResult.data.data) {
+        res.status(404).json({ error: "audio_not_found", message: "Stored audio is missing" });
+        return;
+      }
+
+      const base64Audio = typeof kvResult.data.data === "string" ? kvResult.data.data : null;
+      if (!base64Audio) {
+        res.status(404).json({ error: "audio_not_found", message: "Stored audio is invalid" });
+        return;
+      }
+
+      const contentType =
+        typeof metadata.audio_content_type === "string"
+          ? metadata.audio_content_type
+          : "audio/mpeg";
+      const buffer = Buffer.from(base64Audio, "base64");
+      const contentLength =
+        typeof metadata.audio_size_bytes === "number" &&
+        Number.isFinite(metadata.audio_size_bytes) &&
+        metadata.audio_size_bytes >= 0
+          ? metadata.audio_size_bytes
+          : buffer.byteLength;
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Content-Length", String(contentLength));
+      res.setHeader("Cache-Control", "private, max-age=3600");
+      res.send(buffer);
+    } catch (err) {
+      console.error("[conversations] audio failed:", err);
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: "audio_failed", message });
     }
   });
 

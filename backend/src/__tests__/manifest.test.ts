@@ -9,6 +9,12 @@ describe("manifest", () => {
     expect(manifest.app_id).toBe("xyz.tinycloud.listen");
     expect(manifest.prefix).toBeUndefined();
     expect(manifest.defaults).toBe(true);
+    expect(manifest.secrets).toEqual({
+      FIREFLIES_API_KEY: ["read"],
+      GRANOLA_API_KEY: ["read"],
+      ASSEMBLYAI_API_KEY: ["read"],
+      DEEPGRAM_API_KEY: ["read"],
+    });
     expect(manifest.delegations).toBeUndefined();
     expect("backend" in manifest).toBe(false);
     expect(manifest.permissions).toEqual([

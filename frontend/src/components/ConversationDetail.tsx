@@ -150,6 +150,11 @@ function exportText(
   ].join("\n");
 }
 
+function audioPlaybackUrl(conversation: ConversationData): string | null {
+  const value = conversation.metadata.audio_playback_url;
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
 function downloadText(filename: string, text: string): void {
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -245,6 +250,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
   if (!data) return null;
 
   const { conversation, participants, transcript } = data;
+  const audioUrl = audioPlaybackUrl(conversation);
 
   const copySummary = async () => {
     if (!conversation.summary) return;
@@ -323,6 +329,13 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
           <span style={s.vRule} />
           <span style={s.chip}>#{conversation.source.replace(/-/g, "")}</span>
         </div>
+        {audioUrl && (
+          <div style={s.audioRow}>
+            <audio style={s.audioPlayer} controls src={audioUrl} preload="metadata">
+              <a href={audioUrl}>Play recording</a>
+            </audio>
+          </div>
+        )}
       </div>
 
       {notice && <div style={s.notice}>{notice}</div>}
@@ -495,6 +508,14 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: 12,
     fontWeight: 500,
     color: "var(--lst-blue)",
+  },
+  audioRow: {
+    marginTop: 14,
+  },
+  audioPlayer: {
+    display: "block",
+    width: "min(520px, 100%)",
+    height: 36,
   },
   notice: {
     padding: "8px 32px",

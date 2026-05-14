@@ -12,6 +12,8 @@ import {
   checkDelegationStatus,
   revokeDelegation,
   SessionStore,
+  loadPersistedSession,
+  clearPersistedSession,
   composeManifestWithDelegatees,
   loadAppManifest,
   resolveManifestPermissionPath,
@@ -55,6 +57,13 @@ const EMPTY_TRANSCRIPTION_STATUS: TranscriptionProviderStatus = {
   deepgram: null,
 };
 
+interface AppBootstrapContext {
+  info: ServerInfo;
+  agent: ServerInfo | null;
+  composedRequest: ComposedManifestRequest;
+  conversationEventPathPrefix: string | null;
+}
+
 function isChatEnabled(): boolean {
   return import.meta.env.VITE_ENABLE_CHAT === "true";
 }
@@ -67,6 +76,30 @@ async function fetchAgentInfo(endpoint: string): Promise<ServerInfo | null> {
   } catch {
     return null;
   }
+}
+
+async function loadAppBootstrapContext(): Promise<AppBootstrapContext> {
+  const [info, agent] = await Promise.all([
+    (async (): Promise<ServerInfo> => {
+      const res = await fetch(`${BACKEND_URL}/api/server-info`);
+      if (!res.ok) throw new Error(`Server info: ${res.statusText}`);
+      return res.json();
+    })(),
+    ENABLE_AGENT ? fetchAgentInfo(AGENT_ENDPOINT) : Promise.resolve(null),
+  ]);
+  const appManifest = await loadAppManifest(`${BACKEND_URL}/api/manifest`);
+  const conversationEventPathPrefix = ENABLE_TINYCLOUD_HOOKS
+    ? resolveManifestPermissionPath(appManifest, "tinycloud.sql", "conversations/conversation")
+    : null;
+  const delegatees: ServerInfo[] = agent ? [info, agent] : [info];
+  const composedRequest = composeManifestWithDelegatees(appManifest, delegatees);
+
+  return {
+    info,
+    agent,
+    composedRequest,
+    conversationEventPathPrefix,
+  };
 }
 
 function LandingIcon({ name, size = 14 }: { name: "plus" | "minus"; size?: number }) {
@@ -591,6 +624,65 @@ export function App() {
   const isMobile = useIsMobile();
   const chatEnabled = isChatEnabled();
 
+  const restoreStoredSession = useCallback(async (storedAddress?: string): Promise<boolean> => {
+    const sessionAddress = sessionStoreRef.current.getAddress();
+    const addr = storedAddress ?? sessionAddress;
+    if (
+      !addr ||
+      !sessionAddress ||
+      sessionAddress.toLowerCase() !== addr.toLowerCase() ||
+      !sessionStoreRef.current.hasSession() ||
+      sessionStoreRef.current.isExpired()
+    ) {
+      return false;
+    }
+
+    const persistedSession = loadPersistedSession(addr);
+    const { info, agent, composedRequest, conversationEventPathPrefix } =
+      await loadAppBootstrapContext();
+    const apiClient = createApiClient(BACKEND_URL, {
+      sessionStore: sessionStoreRef.current,
+    });
+
+    setAddress(addr);
+    setDid(persistedSession?.did ?? null);
+    setTcw(null);
+    setApi(apiClient);
+    setAgentInfo(agent);
+    setBackendDid(info.did);
+    setCapabilityRequest(composedRequest);
+    setServerGoogleMeetAvailable(info.features?.googleMeet?.available ?? null);
+    setLiveWritePathPrefix(conversationEventPathPrefix);
+    setLiveWriteHost(null);
+    return true;
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const restore = async () => {
+      const addr = sessionStoreRef.current.getAddress();
+      if (!addr || !sessionStoreRef.current.hasSession() || sessionStoreRef.current.isExpired()) {
+        return;
+      }
+
+      setAuthLoading(true);
+      setAuthError(null);
+      try {
+        await restoreStoredSession(addr);
+      } catch (err) {
+        if (!cancelled) setAuthError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!cancelled) setAuthLoading(false);
+      }
+    };
+
+    void restore();
+    return () => {
+      cancelled = true;
+    };
+  }, [restoreStoredSession]);
+
   const renewBackendDelegation = useCallback(async () => {
     if (!tcw || !backendDid || !capabilityRequest) {
       throw new Error("Reconnect your wallet to finish source setup.");
@@ -890,77 +982,73 @@ export function App() {
 
   // ── Sign In ───────────────────────────────────────────────────────
 
-  const handleSignIn = useCallback(async () => {
-    setAuthLoading(true);
-    setAuthError(null);
-    setWorkspaceActionError(null);
-    try {
-      const { address: addr, web3Provider } = await connectWallet({ host: OPENKEY_HOST });
-      const [nonce, info, agent] = await Promise.all([
-        requestNonce(BACKEND_URL, addr),
-        (async (): Promise<ServerInfo> => {
-          const res = await fetch(`${BACKEND_URL}/api/server-info`);
-          if (!res.ok) throw new Error(`Server info: ${res.statusText}`);
-          return res.json();
-        })(),
-        ENABLE_AGENT ? fetchAgentInfo(AGENT_ENDPOINT) : Promise.resolve(null),
-      ]);
-      const appManifest = await loadAppManifest(`${BACKEND_URL}/api/manifest`);
-      const conversationEventPathPrefix = ENABLE_TINYCLOUD_HOOKS
-        ? resolveManifestPermissionPath(appManifest, "tinycloud.sql", "conversations/conversation")
-        : null;
-      const delegatees: ServerInfo[] = agent ? [info, agent] : [info];
-      const composedRequest = composeManifestWithDelegatees(appManifest, delegatees);
+  const handleSignIn = useCallback(
+    async (options?: { forceWallet?: boolean }) => {
+      setAuthLoading(true);
+      setAuthError(null);
+      setWorkspaceActionError(null);
+      try {
+        const { address: addr, web3Provider } = await connectWallet({ host: OPENKEY_HOST });
+        if (!options?.forceWallet) {
+          const restored = await restoreStoredSession(addr);
+          if (restored) return;
+        }
 
-      const { tcw: tcwInstance, session } = await createAndSignIn(web3Provider, {
-        nonce,
-        autoCreateSpace: true,
-        manifest: appManifest,
-        capabilityRequest: composedRequest,
-      });
-      const { token, expiresIn } = await verifySession(
-        BACKEND_URL,
-        session.siwe,
-        session.signature,
-      );
-      sessionStoreRef.current.setSession(token, expiresIn, addr);
-      const apiClient = createApiClient(BACKEND_URL, {
-        sessionStore: sessionStoreRef.current,
-      });
+        clearPersistedSession(addr);
+        const [nonce, { info, agent, composedRequest, conversationEventPathPrefix }] =
+          await Promise.all([requestNonce(BACKEND_URL, addr), loadAppBootstrapContext()]);
 
-      const delegationStatus = await checkDelegationStatus(BACKEND_URL, token);
-      let backendDelegationActive = delegationStatus.status === "active";
-      if (!backendDelegationActive) {
-        const { serialized } = await createManifestDelegation(
-          tcwInstance,
-          info.did,
-          composedRequest,
+        const { tcw: tcwInstance, session } = await createAndSignIn(web3Provider, {
+          nonce,
+          autoCreateSpace: true,
+          capabilityRequest: composedRequest,
+        });
+        const { token, expiresIn } = await verifySession(
+          BACKEND_URL,
+          session.siwe,
+          session.signature,
         );
-        await sendDelegation(BACKEND_URL, serialized, token);
-        backendDelegationActive = true;
+        sessionStoreRef.current.setSession(token, expiresIn, addr);
+        const apiClient = createApiClient(BACKEND_URL, {
+          sessionStore: sessionStoreRef.current,
+        });
+
+        const delegationStatus = await checkDelegationStatus(BACKEND_URL, token);
+        let backendDelegationActive = delegationStatus.status === "active";
+        if (!backendDelegationActive) {
+          const { serialized } = await createManifestDelegation(
+            tcwInstance,
+            info.did,
+            composedRequest,
+          );
+          await sendDelegation(BACKEND_URL, serialized, token);
+          backendDelegationActive = true;
+        }
+        setAddress(addr);
+        setDid(tcwInstance.did ?? null);
+        setTcw(tcwInstance);
+        setApi(apiClient);
+        setAgentInfo(agent);
+        setBackendDid(info.did);
+        setCapabilityRequest(composedRequest);
+        setServerGoogleMeetAvailable(info.features?.googleMeet?.available ?? null);
+        setHasBackendDelegation(backendDelegationActive);
+        setLiveWritePathPrefix(conversationEventPathPrefix);
+        setLiveWriteHost(tcwInstance.hosts[0] ?? null);
+      } catch (err) {
+        setAuthError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setAuthLoading(false);
       }
-      setAddress(addr);
-      setDid(tcwInstance.did ?? null);
-      setTcw(tcwInstance);
-      setApi(apiClient);
-      setAgentInfo(agent);
-      setBackendDid(info.did);
-      setCapabilityRequest(composedRequest);
-      setServerGoogleMeetAvailable(info.features?.googleMeet?.available ?? null);
-      setHasBackendDelegation(backendDelegationActive);
-      setLiveWritePathPrefix(conversationEventPathPrefix);
-      setLiveWriteHost(tcwInstance.hosts[0] ?? null);
-    } catch (err) {
-      setAuthError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setAuthLoading(false);
-    }
-  }, []);
+    },
+    [restoreStoredSession],
+  );
 
   const handleSignOut = useCallback(async () => {
     const token = sessionStoreRef.current.getToken();
     if (token) revokeDelegation(BACKEND_URL, token).catch(() => {});
     await tcw?.signOut?.();
+    if (address) clearPersistedSession(address);
     sessionStoreRef.current.clear();
     setAddress(null);
     setDid(null);
@@ -986,7 +1074,7 @@ export function App() {
     setWorkspaceActionLoading(false);
     setActivePage("inbox");
     setGmLapsedBanner(false);
-  }, [tcw]);
+  }, [address, tcw]);
 
   const ensureBackendAccess = useCallback(async () => {
     await renewBackendDelegation();
@@ -1466,7 +1554,7 @@ export function App() {
           mode="wallet"
           loading={authLoading}
           error={authError}
-          onAction={handleSignIn}
+          onAction={() => void handleSignIn({ forceWallet: true })}
         />
       )}
 

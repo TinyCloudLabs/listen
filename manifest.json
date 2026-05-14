@@ -5,10 +5,10 @@
   "description": "Sync Fireflies, Granola, and Google Meet transcripts into a TinyCloud space.",
   "defaults": true,
   "secrets": {
-    "FIREFLIES_API_KEY": ["read", "write"],
-    "GRANOLA_API_KEY": ["read", "write"],
-    "ASSEMBLYAI_API_KEY": ["read", "write"],
-    "DEEPGRAM_API_KEY": ["read", "write"]
+    "FIREFLIES_API_KEY": ["read"],
+    "GRANOLA_API_KEY": ["read"],
+    "ASSEMBLYAI_API_KEY": ["read"],
+    "DEEPGRAM_API_KEY": ["read"]
   },
   "permissions": [
     {

@@ -25,7 +25,10 @@ const DETAIL_RESPONSE = {
     ended_at: "2026-03-20T14:30:00Z",
     duration_secs: 1800,
     summary: "Discussed roadmap priorities and assigned tasks for the upcoming sprint.",
-    metadata: { audio_url: "https://audio.example.com/abc.mp3" },
+    metadata: {
+      audio_url: "https://audio.example.com/abc.mp3",
+      audio_playback_url: "/api/conversations/01ABC/audio",
+    },
     created_at: "2026-03-20T15:00:00Z",
     updated_at: "2026-03-20T15:00:00Z",
   },
@@ -245,6 +248,40 @@ describe("ConversationDetail", () => {
       expect(link).toBeInTheDocument();
       expect(link.closest("a")).toHaveAttribute("href", "https://app.fireflies.ai/view/01ABC");
     });
+  });
+
+  it("renders audio playback when stored audio is available", async () => {
+    api = mockApi({ get: vi.fn().mockResolvedValue(DETAIL_RESPONSE) });
+
+    const { container } = render(
+      <ConversationDetail api={api} conversationId="01ABC" onBack={onBack} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
+    });
+
+    const audio = container.querySelector("audio");
+    expect(audio).toBeInTheDocument();
+    expect(audio).toHaveAttribute("src", "/api/conversations/01ABC/audio");
+  });
+
+  it("hides audio playback when stored audio is unavailable", async () => {
+    const noAudioResponse = {
+      ...DETAIL_RESPONSE,
+      conversation: { ...DETAIL_RESPONSE.conversation, metadata: {} },
+    };
+    api = mockApi({ get: vi.fn().mockResolvedValue(noAudioResponse) });
+
+    const { container } = render(
+      <ConversationDetail api={api} conversationId="01ABC" onBack={onBack} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
+    });
+
+    expect(container.querySelector("audio")).not.toBeInTheDocument();
   });
 
   it("hides 'View on Fireflies' link when source_url is null", async () => {

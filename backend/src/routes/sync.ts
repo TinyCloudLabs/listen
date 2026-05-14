@@ -13,7 +13,8 @@ interface SyncRoutesConfig {
   /** Optional factory for testing — defaults to creating a real FirefliesClient */
   createClient?: (
     apiKey: string,
-  ) => Pick<FirefliesClient, "listTranscripts" | "listAllTranscripts" | "getTranscript">;
+  ) => Pick<FirefliesClient, "listTranscripts" | "listAllTranscripts" | "getTranscript"> &
+    Partial<Pick<FirefliesClient, "downloadAudio">>;
   /** Delay between API calls in ms (default 800). Set to 0 for tests. */
   syncDelayMs?: number;
 }
@@ -102,24 +103,34 @@ export function createSyncRouter(config: SyncRoutesConfig) {
       const newSummaries = summaries.filter((s) => !existingIds.has(s.id));
       const skipped = summaries.length - newSummaries.length;
 
-      // 7. Persist each new transcript — no extra API call, content was in list query
+      // 7. Fetch full content for each new transcript, then persist.
       let synced = 0;
       let failed = 0;
       const errors: string[] = [];
       const conversations: Array<{ id: string; title: string; started_at: string }> = [];
 
-      for (const transcript of newSummaries) {
-        const result = await persistFullTranscript(transcript, access);
-        if (result.status === "created") {
-          synced++;
-          conversations.push({
-            id: result.conversationId!,
-            title: result.title ?? transcript.title ?? "",
-            started_at: result.startedAt ?? "",
+      for (const summary of newSummaries) {
+        try {
+          const transcript = await client.getTranscript(summary.id);
+          const result = await persistFullTranscript(transcript, access, {
+            downloadAudio: client.downloadAudio?.bind(client),
           });
-        } else if (result.status === "error") {
+          if (result.status === "created") {
+            synced++;
+            conversations.push({
+              id: result.conversationId!,
+              title: result.title ?? summary.title ?? "",
+              started_at: result.startedAt ?? "",
+            });
+          } else if (result.status === "error") {
+            failed++;
+            errors.push(`${summary.id}: ${result.error}`);
+          }
+        } catch (err) {
+          if (err instanceof FirefliesRateLimitError) throw err;
           failed++;
-          errors.push(`${transcript.id}: ${result.error}`);
+          const message = err instanceof Error ? err.message : String(err);
+          errors.push(`${summary.id}: ${message}`);
         }
       }
 
@@ -242,19 +253,29 @@ export function createSyncRouter(config: SyncRoutesConfig) {
       for (let i = 0; i < newSummaries.length; i++) {
         if (aborted) break;
 
-        const transcript = newSummaries[i];
-        const result = await persistFullTranscript(transcript, access);
-
-        if (result.status === "created") {
-          synced++;
-          conversations.push({
-            id: result.conversationId!,
-            title: result.title ?? transcript.title ?? "",
-            started_at: result.startedAt ?? "",
+        const summary = newSummaries[i];
+        try {
+          const transcript = await client.getTranscript(summary.id);
+          const result = await persistFullTranscript(transcript, access, {
+            downloadAudio: client.downloadAudio?.bind(client),
           });
-        } else if (result.status === "error") {
+
+          if (result.status === "created") {
+            synced++;
+            conversations.push({
+              id: result.conversationId!,
+              title: result.title ?? summary.title ?? "",
+              started_at: result.startedAt ?? "",
+            });
+          } else if (result.status === "error") {
+            failed++;
+            errors.push(`${summary.id}: ${result.error}`);
+          }
+        } catch (err) {
+          if (err instanceof FirefliesRateLimitError) throw err;
           failed++;
-          errors.push(`${transcript.id}: ${result.error}`);
+          const message = err instanceof Error ? err.message : String(err);
+          errors.push(`${summary.id}: ${message}`);
         }
 
         sendEvent("progress", {
@@ -263,7 +284,7 @@ export function createSyncRouter(config: SyncRoutesConfig) {
           total: newSummaries.length,
           synced,
           failed,
-          lastTitle: transcript.title,
+          lastTitle: summary.title,
         });
       }
 

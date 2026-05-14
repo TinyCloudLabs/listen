@@ -3,6 +3,7 @@ import type { FirefliesClient, FullTranscript } from "./fireflies-client.js";
 import { normalizeFireflies } from "../adapters/fireflies.js";
 import { persistConversation } from "./persist-conversation.js";
 import { conversationSql } from "../schema.js";
+import { storeAudio, type DownloadedAudio } from "./fireflies-audio.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -15,6 +16,10 @@ export interface SyncSingleResult {
   error?: string;
 }
 
+export interface PersistFullTranscriptOptions {
+  downloadAudio?: (audioUrl: string) => Promise<DownloadedAudio>;
+}
+
 // ── persistFullTranscript ─────────────────────────────────────────────
 
 /**
@@ -25,9 +30,27 @@ export interface SyncSingleResult {
 export async function persistFullTranscript(
   transcript: FullTranscript,
   access: DelegatedAccess,
+  options: PersistFullTranscriptOptions = {},
 ): Promise<SyncSingleResult> {
   try {
     const normalized = normalizeFireflies(transcript);
+
+    if (transcript.audio_url && options.downloadAudio) {
+      try {
+        const audio = await options.downloadAudio(transcript.audio_url);
+        Object.assign(
+          normalized.conversation.metadata,
+          await storeAudio(access, normalized.conversation.id, audio, {
+            sourceUrl: transcript.audio_url,
+          }),
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        normalized.conversation.metadata.audio_import_error = message;
+        console.warn(`[sync] Fireflies audio import skipped for ${transcript.id}: ${message}`);
+      }
+    }
+
     await persistConversation(access, normalized);
     return {
       status: "created",
@@ -52,7 +75,8 @@ export async function persistFullTranscript(
 export async function syncSingleTranscript(
   meetingId: string,
   access: DelegatedAccess,
-  firefliesClient: Pick<FirefliesClient, "getTranscript">,
+  firefliesClient: Pick<FirefliesClient, "getTranscript"> &
+    Partial<Pick<FirefliesClient, "downloadAudio">>,
 ): Promise<SyncSingleResult> {
   try {
     const sqlDb = conversationSql(access);
@@ -76,7 +100,9 @@ export async function syncSingleTranscript(
     const fullTranscript = await firefliesClient.getTranscript(meetingId);
 
     // 3. Normalize + persist
-    return persistFullTranscript(fullTranscript, access);
+    return persistFullTranscript(fullTranscript, access, {
+      downloadAudio: firefliesClient.downloadAudio?.bind(firefliesClient),
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { status: "error", meetingId, error: message };
