@@ -282,7 +282,7 @@ function LandingPage({
               <h1>
                 Capture thoughts.
                 <br />
-                Bring your own data.
+                Transform them into insights.
               </h1>
               <p className="landing-hero-lede">
                 One inbox for transcripts, audio, and meeting notes from Fireflies, Google Meet,
