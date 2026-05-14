@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
 import { MobileExperience } from "../components/mobile/MobileExperience";
 import { conversationDetailCacheKey, conversationPageCacheKey } from "../conversationPageCache";
 import type { ApiClient } from "@listen/client";
@@ -126,5 +126,33 @@ describe("MobileExperience", () => {
     expect(await screen.findByText("Cached Mobile Detail")).toBeInTheDocument();
     expect(screen.getByText(/roadmap priorities/i)).toBeInTheDocument();
     expect(getMock).toHaveBeenCalledWith("/api/conversations/01ABC");
+  });
+
+  it("toggles an active source chip back to all locally", async () => {
+    const conversations = [
+      CONVERSATION,
+      { ...CONVERSATION, id: "02GRN", title: "Granola Review", source: "granola" },
+    ];
+    const getMock = vi.fn().mockResolvedValue({ conversations, total: 2 });
+    api = mockApi({ get: getMock });
+
+    renderMobile(api);
+
+    await waitFor(() => {
+      expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
+      expect(screen.getByText("Granola Review")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "FIREFLIES" }));
+
+    expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
+    expect(screen.queryByText("Granola Review")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "FIREFLIES" }));
+
+    expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
+    expect(screen.getByText("Granola Review")).toBeInTheDocument();
+    expect(getMock).toHaveBeenCalledTimes(1);
+    expect(getMock).toHaveBeenCalledWith(MOBILE_CONVERSATIONS_PATH);
   });
 });

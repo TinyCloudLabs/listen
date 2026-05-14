@@ -313,6 +313,10 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
     onRouteChange(tab);
   };
 
+  const selectSource = (source: string) => {
+    setSourceFilter((current) => (current === source || source === "all" ? "all" : source));
+  };
+
   const openConversation = (id: string) => {
     onSelectConversation(id);
     onRouteChange("inbox");
@@ -471,7 +475,7 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
         total={total}
         sourceFilter={sourceFilter}
         sources={sources}
-        onSelectSource={setSourceFilter}
+        onSelectSource={selectSource}
         onSelectConversation={openConversation}
         onSearch={() => onRouteChange("chat")}
         onAdd={onAddSource}

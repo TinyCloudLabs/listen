@@ -391,24 +391,38 @@ describe("ConversationList", () => {
     });
   });
 
-  it("filters by source when filter chip is clicked", async () => {
-    const getMock = vi
-      .fn()
-      .mockResolvedValueOnce({ conversations: CONVERSATIONS, total: 3 })
-      .mockResolvedValueOnce({ conversations: [CONVERSATIONS[0]], total: 1 });
+  it("filters by source locally without refetching or showing the loading state", async () => {
+    const mixedConversations = [
+      CONVERSATIONS[0],
+      { ...CONVERSATIONS[1], id: "02GRN", title: "Granola Review", source: "granola" },
+      { ...CONVERSATIONS[2], id: "03MEET", title: "Meet Standup", source: "google-meet" },
+    ];
+    const getMock = vi.fn().mockResolvedValue({ conversations: mixedConversations, total: 3 });
     api = mockApi({ get: getMock });
 
     render(<ConversationList api={api} onSelectConversation={onSelectConversation} />);
 
     await waitFor(() => {
       expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
+      expect(screen.getByText("Granola Review")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /^fireflies$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^granola$/i }));
 
-    await waitFor(() => {
-      expect(getMock).toHaveBeenCalledWith("/api/conversations?limit=20&offset=0&source=fireflies");
-    });
+    expect(screen.getByText("Granola Review")).toBeInTheDocument();
+    expect(screen.queryByText("Sprint Planning")).not.toBeInTheDocument();
+    expect(screen.queryByText("Meet Standup")).not.toBeInTheDocument();
+    expect(screen.queryByText("Loading conversations")).not.toBeInTheDocument();
+    expect(screen.getByText(/showing 1 of 3/i)).toBeInTheDocument();
+    expect(getMock).toHaveBeenCalledTimes(1);
+    expect(getMock).toHaveBeenCalledWith("/api/conversations?limit=20&offset=0");
+
+    fireEvent.click(screen.getByRole("button", { name: /^granola$/i }));
+
+    expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
+    expect(screen.getByText("Granola Review")).toBeInTheDocument();
+    expect(screen.getByText("Meet Standup")).toBeInTheDocument();
+    expect(getMock).toHaveBeenCalledTimes(1);
   });
 
   it("shows source badge on conversation rows", async () => {
