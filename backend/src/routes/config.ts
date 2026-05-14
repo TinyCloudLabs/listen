@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
 import { FIREFLIES_SECRET_NAME, GRANOLA_SECRET_NAME, resolveAppPath } from "../manifest.js";
+import { TRANSCRIPTION_SECRET_NAMES } from "../services/transcription.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -125,6 +126,18 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
     "/granola-key/exists",
     delegationMiddleware,
     createSecretExistsHandler(GRANOLA_SECRET_NAME, "granola"),
+  );
+
+  router.get(
+    "/assemblyai-key/exists",
+    delegationMiddleware,
+    createSecretExistsHandler(TRANSCRIPTION_SECRET_NAMES.assemblyai, "assemblyai"),
+  );
+
+  router.get(
+    "/deepgram-key/exists",
+    delegationMiddleware,
+    createSecretExistsHandler(TRANSCRIPTION_SECRET_NAMES.deepgram, "deepgram"),
   );
 
   // ── Google Meet connection routes (auth + delegation) ──────────────

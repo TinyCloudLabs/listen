@@ -4,15 +4,22 @@ import type { ApiClient } from "@listen/client";
 interface ConnectionsScreenProps {
   api: ApiClient;
   hasFireflies: boolean;
+  hasGranola?: boolean;
   hasGoogleMeet: boolean;
   hasFirefliesBackendAccess: boolean;
+  hasGranolaBackendAccess?: boolean;
+  hasAssemblyAIKey?: boolean | null;
+  hasAssemblyAIBackendAccess?: boolean | null;
+  hasDeepgramKey?: boolean | null;
+  hasDeepgramBackendAccess?: boolean | null;
   googleMeetAvailable: boolean;
   onAddSource: () => void;
   onAddTranscript?: () => void;
+  onFinishTranscriptionProviderAccess?: (provider: "assemblyai" | "deepgram") => Promise<void>;
   onRefresh: () => void;
 }
 
-type SourceId = "fireflies" | "google-meet";
+type SourceId = "fireflies" | "granola" | "google-meet" | "assemblyai" | "deepgram";
 
 interface SourceRow {
   id: SourceId;
@@ -21,16 +28,25 @@ interface SourceRow {
   ready: boolean;
   available: boolean;
   description: string;
+  syncable?: boolean;
+  finishSetup?: () => Promise<void>;
 }
 
 export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
   api,
   hasFireflies,
+  hasGranola = false,
   hasGoogleMeet,
   hasFirefliesBackendAccess,
+  hasGranolaBackendAccess = false,
+  hasAssemblyAIKey = null,
+  hasAssemblyAIBackendAccess = null,
+  hasDeepgramKey = null,
+  hasDeepgramBackendAccess = null,
   googleMeetAvailable,
   onAddSource,
   onAddTranscript,
+  onFinishTranscriptionProviderAccess,
   onRefresh,
 }) => {
   const [busySource, setBusySource] = useState<SourceId | "all" | null>(null);
@@ -46,6 +62,15 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
       ready: hasFireflies && hasFirefliesBackendAccess,
       available: true,
       description: "Syncs Fireflies transcripts and summaries into Listen.",
+      syncable: true,
+    },
+    {
+      id: "granola",
+      name: "Granola",
+      connected: hasGranola,
+      ready: hasGranola && hasGranolaBackendAccess,
+      available: true,
+      description: "Syncs Granola notes, transcripts, and summaries into Listen.",
     },
     {
       id: "google-meet",
@@ -56,11 +81,35 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
       description: googleMeetAvailable
         ? "Imports Google Meet transcripts through the connected Google account."
         : "Google Meet is not configured on this Listen server.",
+      syncable: true,
+    },
+    {
+      id: "assemblyai",
+      name: "AssemblyAI",
+      connected: hasAssemblyAIKey === true,
+      ready: hasAssemblyAIKey === true && hasAssemblyAIBackendAccess === true,
+      available: true,
+      description: "Transcribes uploaded audio and video with AssemblyAI.",
+      finishSetup: onFinishTranscriptionProviderAccess
+        ? () => onFinishTranscriptionProviderAccess("assemblyai")
+        : undefined,
+    },
+    {
+      id: "deepgram",
+      name: "Deepgram",
+      connected: hasDeepgramKey === true,
+      ready: hasDeepgramKey === true && hasDeepgramBackendAccess === true,
+      available: true,
+      description: "Transcribes uploaded audio and video with Deepgram.",
+      finishSetup: onFinishTranscriptionProviderAccess
+        ? () => onFinishTranscriptionProviderAccess("deepgram")
+        : undefined,
     },
   ];
 
   const connected = sources.filter((source) => source.connected);
   const available = sources.filter((source) => !source.connected);
+  const syncableConnected = connected.filter((source) => source.ready && source.syncable);
 
   const syncSource = async (source: SourceId) => {
     setBusySource(source);
@@ -69,7 +118,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
     try {
       if (source === "fireflies") {
         await api.post("/api/sync/fireflies", { mode: "incremental" });
-      } else {
+      } else if (source === "google-meet") {
         await api.post("/api/sync/google-meet");
       }
       setMessage(`${sources.find((item) => item.id === source)?.name ?? "Source"} synced`);
@@ -87,10 +136,10 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
     setMessage(null);
     try {
       for (const source of connected) {
-        if (source.ready) {
+        if (source.ready && source.syncable) {
           if (source.id === "fireflies") {
             await api.post("/api/sync/fireflies", { mode: "incremental" });
-          } else {
+          } else if (source.id === "google-meet") {
             await api.post("/api/sync/google-meet");
           }
         }
@@ -113,9 +162,9 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
           <div style={s.headerActions}>
             <button
               type="button"
-              style={{ ...s.btnGhost, ...(connected.length === 0 ? s.btnDisabled : {}) }}
+              style={{ ...s.btnGhost, ...(syncableConnected.length === 0 ? s.btnDisabled : {}) }}
               onClick={syncAll}
-              disabled={connected.length === 0 || busySource !== null}
+              disabled={syncableConnected.length === 0 || busySource !== null}
             >
               {busySource === "all" ? "Syncing" : "Sync connected"}
             </button>
@@ -149,10 +198,10 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
                 </div>
               </div>
               <span style={source.ready ? s.chipSolid : s.chipGhost}>
-                {source.ready ? "Live" : "Reconnect"}
+                {source.ready ? "Live" : "Finish setup"}
               </span>
               <div style={s.rowActions}>
-                {source.ready ? (
+                {source.ready && source.syncable ? (
                   <button
                     type="button"
                     style={s.btnGhostSm}
@@ -161,11 +210,32 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
                   >
                     {busySource === source.id ? "Syncing" : "Sync now"}
                   </button>
-                ) : (
-                  <button type="button" style={s.btnGhostSm} onClick={onAddSource}>
-                    Reconnect
+                ) : !source.ready && source.finishSetup ? (
+                  <button
+                    type="button"
+                    style={s.btnGhostSm}
+                    onClick={() => {
+                      setBusySource(source.id);
+                      setError(null);
+                      setMessage(null);
+                      source
+                        .finishSetup?.()
+                        .then(() => {
+                          setMessage(`${source.name} setup finished`);
+                          onRefresh();
+                        })
+                        .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+                        .finally(() => setBusySource(null));
+                    }}
+                    disabled={busySource !== null}
+                  >
+                    {busySource === source.id ? "Connecting" : "Finish setup"}
                   </button>
-                )}
+                ) : !source.ready ? (
+                  <button type="button" style={s.btnGhostSm} onClick={onAddSource}>
+                    Finish setup
+                  </button>
+                ) : null}
                 <button type="button" style={s.btnGhostSm} onClick={onAddSource}>
                   Settings
                 </button>
