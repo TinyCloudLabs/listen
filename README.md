@@ -116,12 +116,12 @@ Configuration still needed outside the repo:
 - Cloudflare custom domain mapping for `listen.tinycloud.xyz`.
 - Phala auth (`phala login` or `PHALA_CLOUD_API_KEY`) with credits/workspace access.
 - `CLOUDFLARE_API_TOKEN` and `CERTBOT_EMAIL` in `.env.prod`; `dstack-ingress` uses those to map `api.listen.tinycloud.xyz` and issue the certificate.
-- A pushed amd64 backend image. The default target is the public Docker Hub image `skgbafa/listen-backend:latest`; create that Docker Hub repo as public before the first push, and set `LISTEN_BACKEND_IMAGE` to deploy a specific tag.
-- For automated backend deploys, set GitHub Actions secrets `DOCKER_REGISTRY_USERNAME`, `DOCKER_REGISTRY_PASSWORD`, and `PHALA_CLOUD_API_KEY`.
+- A pushed amd64 backend image. The default target is the GHCR image `ghcr.io/tinycloudlabs/listen-backend:latest`; set `LISTEN_BACKEND_IMAGE` to deploy a specific tag.
+- For automated backend deploys, set GitHub Actions secret `PHALA_CLOUD_API_KEY`. The workflow pushes to GHCR with `GITHUB_TOKEN` and `packages: write`; the `ghcr.io/tinycloudlabs/listen-backend` package must grant this repository Actions write access and must be readable by Phala.
 - OpenKey OAuth redirect/origin allowlist entries for production and local URLs.
 - Production `.env` values for `BACKEND_PRIVATE_KEY`, `FRONTEND_URL`, and optional Google credentials.
 
-Pull request previews for same-repository branches deploy a PR-tagged Phala backend and a Cloudflare Pages preview frontend. See [docs/pr-preview-deployments.md](docs/pr-preview-deployments.md) for required GitHub secrets/vars, production-data caveats, and cleanup behavior.
+Pull request previews for same-repository branches deploy a Railway backend and a Cloudflare Pages preview frontend. See [docs/pr-preview-deployments.md](docs/pr-preview-deployments.md) for required GitHub secrets/vars, production-data caveats, and cleanup behavior.
 
 ## Checks
 
