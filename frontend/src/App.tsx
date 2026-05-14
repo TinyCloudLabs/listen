@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComposedManifestRequest, TinyCloudWeb } from "@tinycloud/web-sdk";
 import type { ServerInfo } from "@listen/core";
 import {
@@ -32,6 +32,7 @@ import { ConnectAgentButton } from "./components/ConnectAgentButton";
 import { AppShell, type ShellRoute, type ShellSourceConfig } from "./components/AppShell";
 import { MobileExperience } from "./components/mobile";
 import { useIsMobile } from "./hooks/useIsMobile";
+import { createTinyCloudConversationApi } from "./lib/tinycloudConversations";
 
 // ── Environment ─────────────────────────────────────────────────────
 
@@ -623,6 +624,10 @@ export function App() {
   const sessionStoreRef = useRef(new SessionStore());
   const isMobile = useIsMobile();
   const chatEnabled = isChatEnabled();
+  const conversationApi = useMemo(
+    () => (api ? createTinyCloudConversationApi(api, tcw) : null),
+    [api, tcw],
+  );
 
   const restoreStoredSession = useCallback(async (storedAddress?: string): Promise<boolean> => {
     const sessionAddress = sessionStoreRef.current.getAddress();
@@ -913,16 +918,16 @@ export function App() {
   }, [api, hasBackendDelegation]);
 
   useEffect(() => {
-    if (!api || hasBackendDelegation !== true) {
+    if (!conversationApi || (!tcw && hasBackendDelegation !== true)) {
       setHasExistingConversations(null);
       return;
     }
 
-    api
+    conversationApi
       .get<{ total: number }>("/api/conversations?limit=1&offset=0")
       .then((res) => setHasExistingConversations(res.total > 0))
       .catch(() => setHasExistingConversations(false));
-  }, [api, hasBackendDelegation, refreshKey]);
+  }, [conversationApi, hasBackendDelegation, refreshKey, tcw]);
 
   useEffect(() => {
     if (!api || hasFirefliesBackendAccess !== true) return;
@@ -1233,18 +1238,20 @@ export function App() {
   const backendBackedChecksReady =
     hasBackendDelegation === true
       ? hasGoogleMeet !== null &&
-        hasExistingConversations !== null &&
         firefliesBackendAccessReady &&
         granolaBackendAccessReady &&
         transcriptionBackendAccessReady
       : true;
+  const conversationChecksReady =
+    tcw || hasBackendDelegation === true ? hasExistingConversations !== null : true;
   const workspaceChecksReady =
     isSignedIn &&
     backendStatusReady &&
     firefliesKeyReady &&
     granolaKeyReady &&
     transcriptionKeysReady &&
-    backendBackedChecksReady;
+    backendBackedChecksReady &&
+    conversationChecksReady;
   const setupAvailable = tcw !== null && backendDid !== null;
   const needsFirefliesAccess =
     workspaceChecksReady &&
@@ -1277,6 +1284,8 @@ export function App() {
   if (!isSignedIn) {
     return <LandingPage loading={authLoading} error={authError} onSignIn={handleSignIn} />;
   }
+
+  const activeConversationApi = conversationApi ?? api!;
 
   const pageEyebrow = !isSignedIn
     ? "welcome"
@@ -1481,7 +1490,7 @@ export function App() {
   ) {
     return (
       <MobileExperience
-        api={api}
+        api={activeConversationApi}
         activeRoute={activePage}
         selectedConversationId={selectedConversationId}
         refreshKey={refreshKey}
@@ -1700,7 +1709,7 @@ export function App() {
 
       {hasUsableInbox && activePage === "inbox" && selectedConversationId && (
         <ConversationDetail
-          api={api}
+          api={activeConversationApi}
           conversationId={selectedConversationId}
           onBack={() => setSelectedConversationId(null)}
         />
@@ -1726,7 +1735,7 @@ export function App() {
             />
           )}
           <ConversationList
-            api={api}
+            api={activeConversationApi}
             onSelectConversation={setSelectedConversationId}
             refreshKey={refreshKey}
           />
@@ -1738,7 +1747,7 @@ export function App() {
         api &&
         (chatEnabled ? (
           <ChatScreen
-            api={api}
+            api={activeConversationApi}
             refreshKey={refreshKey}
             onOpenConversation={(id) => {
               setSelectedConversationId(id);
