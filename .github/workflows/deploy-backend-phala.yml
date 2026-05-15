@@ -18,6 +18,7 @@ on:
 
 env:
   DOCKER_IMAGE: ${{ vars.LISTEN_BACKEND_IMAGE || 'ghcr.io/tinycloudlabs/listen-backend' }}
+  PHALA_CVM_ID: ${{ vars.PHALA_CVM_ID || '5b6391f2-9e81-4331-baa7-162a5d9838da' }}
 
 jobs:
   deploy:
@@ -31,9 +32,22 @@ jobs:
       - name: Check deployment configuration
         env:
           PHALA_CLOUD_API_KEY: ${{ secrets.PHALA_CLOUD_API_KEY }}
+          BACKEND_PRIVATE_KEY: ${{ secrets.BACKEND_PRIVATE_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CERTBOT_EMAIL: ${{ secrets.CERTBOT_EMAIL }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
         run: |
           missing=()
-          for item in PHALA_CLOUD_API_KEY; do
+          for item in \
+            PHALA_CLOUD_API_KEY \
+            BACKEND_PRIVATE_KEY \
+            CLOUDFLARE_API_TOKEN \
+            CERTBOT_EMAIL \
+            GOOGLE_CLIENT_ID \
+            GOOGLE_CLIENT_SECRET \
+            GOOGLE_SERVICE_ACCOUNT_KEY; do
             if [ -z "${!item}" ]; then
               missing+=("$item")
             fi
@@ -75,23 +89,39 @@ jobs:
       - name: Install Phala CLI
         run: npm install -g phala
 
-      - name: Get CVM ID by name
-        id: cvm
-        env:
-          PHALA_CLOUD_API_KEY: ${{ secrets.PHALA_CLOUD_API_KEY }}
-        run: |
-          CVM_APP_ID=$(phala cvms list --json | jq -r '.items[] | select(.cvmName == "listen-backend") | .appId')
-          if [ -z "$CVM_APP_ID" ]; then
-            echo "Error: CVM 'listen-backend' not found"
-            exit 1
-          fi
-          echo "app_id=app_${CVM_APP_ID}" >> "$GITHUB_OUTPUT"
-          echo "Found CVM: app_${CVM_APP_ID}"
-
       - name: Deploy to Phala Cloud
         env:
           PHALA_CLOUD_API_KEY: ${{ secrets.PHALA_CLOUD_API_KEY }}
-        run: phala deploy --cvm-id ${{ steps.cvm.outputs.app_id }} -c docker-compose.phala.yml
+          BACKEND_PRIVATE_KEY: ${{ secrets.BACKEND_PRIVATE_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CERTBOT_EMAIL: ${{ secrets.CERTBOT_EMAIL }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
+        run: |
+          ENV_FILE="$RUNNER_TEMP/phala-prod.env"
+          {
+            printf '%s\n' "BACKEND_PRIVATE_KEY=$BACKEND_PRIVATE_KEY"
+            printf '%s\n' "TINYCLOUD_HOST=https://node.tinycloud.xyz"
+            printf '%s\n' "FRONTEND_URL=https://listen.tinycloud.xyz"
+            printf '%s\n' "OPENKEY_ISSUER_URL=https://openkey.so"
+            printf '%s\n' "GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID"
+            printf '%s\n' "GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET"
+            printf '%s\n' "GOOGLE_SERVICE_ACCOUNT_KEY=$GOOGLE_SERVICE_ACCOUNT_KEY"
+            printf '%s\n' "GOOGLE_PUBSUB_PUSH_URL=https://api.listen.tinycloud.xyz/api/webhooks/google-meet"
+            printf '%s\n' "CLOUDFLARE_API_TOKEN=$CLOUDFLARE_API_TOKEN"
+            printf '%s\n' "CERTBOT_EMAIL=$CERTBOT_EMAIL"
+            printf '%s\n' "LISTEN_BACKEND_IMAGE=${DOCKER_IMAGE}:${GITHUB_SHA}"
+            printf '%s\n' "PORT=3001"
+            printf '%s\n' "PHALA_INGRESS_DOMAIN=api.listen.tinycloud.xyz"
+          } > "$ENV_FILE"
+
+          phala deploy \
+            --cvm-id "$PHALA_CVM_ID" \
+            -c docker-compose.phala.yml \
+            -e "$ENV_FILE" \
+            --wait \
+            --no-public-logs
 
       - name: Wait for deployment
         env:
@@ -99,7 +129,7 @@ jobs:
         run: |
           echo "Waiting for CVM to be ready (up to 10 minutes)..."
           for i in {1..60}; do
-            RAW=$(phala cvms list --json | jq '.items[] | select(.cvmName == "listen-backend") | {status, cvmName}')
+            RAW=$(phala cvms get "$PHALA_CVM_ID" --json | jq '{status, name}')
             STATUS=$(echo "$RAW" | jq -r '.status')
             echo "Attempt $i/60: Status = '$STATUS'"
             if [ "$STATUS" = "running" ]; then
@@ -108,13 +138,13 @@ jobs:
             fi
             if [ "$STATUS" = "failed" ] || [ "$STATUS" = "error" ]; then
               echo "CVM deployment failed with status: $STATUS"
-              phala cvms list --json | jq '.items[] | select(.cvmName == "listen-backend")'
+              phala cvms get "$PHALA_CVM_ID" --json
               exit 1
             fi
             sleep 10
           done
           echo "Timeout waiting for CVM after 10 minutes"
-          phala cvms list --json | jq '.items[] | select(.cvmName == "listen-backend")'
+          phala cvms get "$PHALA_CVM_ID" --json
           exit 1
 
   phala-status:
