@@ -5,7 +5,8 @@
   "workspaces": [
     "packages/*",
     "frontend",
-    "backend"
+    "backend",
+    "test"
   ],
   "overrides": {
     "@tinycloud/sdk-core": "2.2.0-beta.12",
@@ -29,6 +30,9 @@
     "dev:portless:backend": "cd backend && FRONTEND_URL=https://listen.localhost bun --env-file=../.env run dev:portless",
     "generate-key": "cd packages/server && bun run generate-key",
     "test": "turbo run test",
+    "test:app:install": "bun run --cwd test install:browsers",
+    "test:app:install:ci": "bun run --cwd test install:browsers:ci",
+    "test:app": "bunx turbo run build --filter=@listen/client... && bun run --cwd test app:smoke",
     "lint": "turbo run lint",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",

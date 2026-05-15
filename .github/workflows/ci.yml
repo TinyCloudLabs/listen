@@ -31,3 +31,9 @@ jobs:
 
       - name: Test
         run: bun run test
+
+      - name: Install app smoke test browser
+        run: bun run test:app:install:ci
+
+      - name: App smoke test
+        run: bun run test:app

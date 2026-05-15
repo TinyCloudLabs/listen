@@ -4,9 +4,13 @@
   "type": "module",
   "scripts": {
     "setup": "bun setup-passkey.ts",
-    "signin": "bun run-signin.ts"
+    "signin": "bun run-signin.ts",
+    "install:browsers": "playwright install chromium",
+    "install:browsers:ci": "playwright install --with-deps chromium",
+    "app:smoke": "playwright test"
   },
   "dependencies": {
+    "@playwright/test": "^1.50.0",
     "playwright": "^1.50.0"
   }
 }

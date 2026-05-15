@@ -9,6 +9,7 @@ const LOG_FILE = resolve(__dirname, ".last-run.log");
 const APP_URL = process.env.APP_URL ?? "https://localhost:5173/";
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:3001";
 const FIREFLIES_API_KEY = process.env.FIREFLIES_API_KEY;
+const HEADLESS = process.env.HEADLESS === "1";
 
 if (!existsSync(CRED_FILE)) {
   console.error(`No credentials at ${CRED_FILE}. Run \`bun run setup\` first.`);
@@ -26,7 +27,7 @@ for (const credential of credentials) {
   credential.signCount = Math.max(Number(credential.signCount) || 0, 1) + 100;
 }
 
-const browser = await chromium.launch({ headless: false });
+const browser = await chromium.launch({ headless: HEADLESS });
 const context = await browser.newContext({ ignoreHTTPSErrors: true });
 const page = await context.newPage();
 const cdp = await context.newCDPSession(page);
