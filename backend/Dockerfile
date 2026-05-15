@@ -10,6 +10,7 @@ COPY manifest.json ./
 COPY packages ./packages
 COPY backend ./backend
 COPY frontend/package.json ./frontend/package.json
+COPY test/package.json ./test/package.json
 
 RUN bun install
 RUN cd packages/core && bun run build
