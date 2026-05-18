@@ -35,6 +35,7 @@ export function createTinyCloudWeb(
   web3Provider: providers.Web3Provider,
   config?: TinyCloudWebConfig,
 ): TinyCloudWeb {
+  const manifest = config?.manifest ?? config?.capabilityRequest?.manifests;
   const tcw = new (TinyCloudWeb as any)({
     providers: { web3: { driver: web3Provider } },
     tinycloudHosts: config?.tinycloudHosts,
@@ -43,7 +44,7 @@ export function createTinyCloudWeb(
     autoCreateSpace: config?.autoCreateSpace ?? true,
     sessionStorage: new BrowserSessionStorage(),
     siweConfig: config?.siweConfig,
-    manifest: config?.manifest,
+    manifest,
     capabilityRequest: config?.capabilityRequest,
     includeAccountRegistryPermissions: config?.includeAccountRegistryPermissions,
   });
