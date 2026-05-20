@@ -110,14 +110,21 @@ bun run docker:backend:push
 bun run deploy:backend:phala
 ```
 
+The backend exposes an unauthenticated health endpoint at `https://api.listen.tinycloud.xyz/healthz`.
+Manual and automated Phala deploys verify both `/healthz` and `/api/server-info`
+after the CVM reports `running`, so TLS, ingress, and backend boot failures fail
+the deploy instead of appearing as a successful rollout.
+
 Configuration still needed outside the repo:
 
 - Cloudflare auth (`wrangler login` or `CLOUDFLARE_API_TOKEN`) with access to the `listen` Pages project.
 - Cloudflare custom domain mapping for `listen.tinycloud.xyz`.
 - Phala auth (`phala login` or `PHALA_CLOUD_API_KEY`) with credits/workspace access.
-- `CLOUDFLARE_API_TOKEN` and `CERTBOT_EMAIL` in `.env.prod`; `dstack-ingress` uses those to map `api.listen.tinycloud.xyz` and issue the certificate.
-- A pushed amd64 backend image. The default target is the GHCR image `ghcr.io/tinycloudlabs/listen-backend:latest`; set `LISTEN_BACKEND_IMAGE` to deploy a specific tag.
-- For automated backend deploys, set GitHub Actions secret `PHALA_CLOUD_API_KEY`. The workflow pushes to GHCR with `GITHUB_TOKEN` and `packages: write`; the `ghcr.io/tinycloudlabs/listen-backend` package must grant this repository Actions write access and must be readable by Phala.
+- DNS for `api.listen.tinycloud.xyz` must point at the Phala CVM: `CNAME api.listen.tinycloud.xyz -> _.dstack-pha-prod5.phala.network` and `TXT _dstack-app-address.api.listen.tinycloud.xyz -> 4beb60ce67cd668ba9e61180a50871cce1f3f307:443`. The GitHub Actions deploy verifies these records before deploying.
+- `CLOUDFLARE_API_TOKEN` and `CERTBOT_EMAIL` in `.env.prod`; the Phala ingress uses those if it must bootstrap or renew certificates. Existing certificates are reused without rewriting DNS records.
+- Phala backend deploys use `https://tee.node.tinycloud.xyz` as `TINYCLOUD_HOST` so backend-to-node traffic stays on the direct TEE endpoint instead of the Cloudflare-proxied node endpoint.
+- Pushed amd64 backend and ingress images. The default targets are `ghcr.io/tinycloudlabs/listen-backend:latest` and `ghcr.io/tinycloudlabs/listen-backend:ingress-latest`; set `LISTEN_BACKEND_IMAGE` or `LISTEN_INGRESS_IMAGE` to deploy a specific tag.
+- For automated backend deploys, set GitHub Actions secret `PHALA_CLOUD_API_KEY`. The workflow runs on backend/deployment-relevant `main` changes or manual dispatch, pushes to GHCR with `GITHUB_TOKEN` and `packages: write`, and publishes a `listen-backend - phala` commit status. The `ghcr.io/tinycloudlabs/listen-backend` package must grant this repository Actions write access and must be readable by Phala.
 - OpenKey OAuth redirect/origin allowlist entries for production and local URLs.
 - Production `.env` values for `BACKEND_PRIVATE_KEY`, `FRONTEND_URL`, and optional Google credentials.
 

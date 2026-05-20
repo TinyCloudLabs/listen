@@ -8,6 +8,8 @@ on:
       - "packages/**"
       - "backend/Dockerfile"
       - "docker-compose.phala.yml"
+      - "phala.toml"
+      - "manifest.json"
       - "package.json"
       - "bun.lock"
       - "frontend/package.json"
@@ -16,18 +18,57 @@ on:
       - ".github/workflows/deploy-backend-phala.yml"
   workflow_dispatch:
 
+concurrency:
+  group: listen-backend-phala-production
+  cancel-in-progress: false
+
 env:
   DOCKER_IMAGE: ${{ vars.LISTEN_BACKEND_IMAGE || 'ghcr.io/tinycloudlabs/listen-backend' }}
+  INGRESS_IMAGE: ${{ vars.LISTEN_INGRESS_IMAGE || 'ghcr.io/tinycloudlabs/listen-backend' }}
   PHALA_CVM_ID: ${{ vars.PHALA_CVM_ID || '5b6391f2-9e81-4331-baa7-162a5d9838da' }}
+  PHALA_INGRESS_DOMAIN: ${{ vars.PHALA_INGRESS_DOMAIN || 'api.listen.tinycloud.xyz' }}
+  PRODUCTION_API_URL: ${{ vars.LISTEN_BACKEND_URL || 'https://api.listen.tinycloud.xyz' }}
+  PRODUCTION_FRONTEND_URL: ${{ vars.LISTEN_FRONTEND_URL || 'https://listen.tinycloud.xyz' }}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment:
+      name: production-api
+      url: ${{ vars.LISTEN_BACKEND_URL || 'https://api.listen.tinycloud.xyz' }}
     permissions:
       contents: read
       packages: write
+      statuses: write
     steps:
       - uses: actions/checkout@v4
+
+      - name: Publish pending deployment status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh api \
+            --method POST \
+            "/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state="pending" \
+            -f context="listen-backend - phala" \
+            -f description="Phala deployment started" \
+            -f target_url="$TARGET_URL"
+
+      - name: Summarize deployment target
+        run: |
+          {
+            echo "## Phala backend deployment"
+            echo
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Image: \`${DOCKER_IMAGE}:${GITHUB_SHA}\`"
+            echo "- CVM ID: \`${PHALA_CVM_ID}\`"
+            echo "- Public API: ${PRODUCTION_API_URL}"
+            echo "- Ingress domain: \`${PHALA_INGRESS_DOMAIN}\`"
+            echo "- Run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Check deployment configuration
         env:
@@ -50,13 +91,20 @@ jobs:
             GOOGLE_SERVICE_ACCOUNT_KEY; do
             if [ -z "${!item}" ]; then
               missing+=("$item")
+              echo "::error title=Missing deployment secret::$item is not configured"
             fi
           done
 
           if [ ${#missing[@]} -gt 0 ]; then
-            echo "Missing required GitHub Actions secrets: ${missing[*]}" >&2
+            {
+              echo "### Missing deployment configuration"
+              echo
+              printf -- "- \`%s\`\n" "${missing[@]}"
+            } >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
+
+          echo "All required deployment secrets are configured."
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -69,6 +117,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push Docker image
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -81,13 +130,128 @@ jobs:
             ${{ env.DOCKER_IMAGE }}:latest
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.description=Listen backend
 
+      - name: Build and push ingress image
+        id: ingress-build
+        uses: docker/build-push-action@v5
+        with:
+          context: infra/phala-ingress
+          file: infra/phala-ingress/Dockerfile
+          platforms: linux/amd64
+          push: true
+          no-cache: true
+          tags: |
+            ${{ env.INGRESS_IMAGE }}:ingress-${{ github.sha }}
+            ${{ env.INGRESS_IMAGE }}:ingress-latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.description=Listen Phala ingress
+
+      - name: Record pushed image
+        run: |
+          {
+            echo
+            echo "### Container image"
+            echo
+            echo "- Tag: \`${DOCKER_IMAGE}:${GITHUB_SHA}\`"
+            echo "- Digest: \`${{ steps.build.outputs.digest }}\`"
+            echo "- Ingress tag: \`${INGRESS_IMAGE}:ingress-${GITHUB_SHA}\`"
+            echo "- Ingress digest: \`${{ steps.ingress-build.outputs.digest }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Pin deployed image tag
-        run: sed -i "s|\${LISTEN_BACKEND_IMAGE:-ghcr.io/tinycloudlabs/listen-backend:latest}|${{ env.DOCKER_IMAGE }}:${{ github.sha }}|g" docker-compose.phala.yml
+        run: |
+          sed -i "s|\${LISTEN_BACKEND_IMAGE:-ghcr.io/tinycloudlabs/listen-backend:latest}|${DOCKER_IMAGE}:${GITHUB_SHA}|g" docker-compose.phala.yml
+          sed -i "s|\${LISTEN_INGRESS_IMAGE:-ghcr.io/tinycloudlabs/listen-backend:ingress-latest}|${INGRESS_IMAGE}:ingress-${GITHUB_SHA}|g" docker-compose.phala.yml
 
       - name: Install Phala CLI
-        run: npm install -g phala
+        run: |
+          npm install -g phala
+          phala --version || true
+
+      - name: Capture CVM status before deploy
+        env:
+          PHALA_CLOUD_API_KEY: ${{ secrets.PHALA_CLOUD_API_KEY }}
+        run: |
+          echo "::group::CVM status before deploy"
+          phala cvms get "$PHALA_CVM_ID" --json \
+            | jq '{id, name, status, app_id, instance_type, gateway, updated_at, created_at}'
+          echo "::endgroup::"
+
+      - name: Resolve Phala gateway CNAME
+        env:
+          PHALA_CLOUD_API_KEY: ${{ secrets.PHALA_CLOUD_API_KEY }}
+        run: |
+          RAW="$(phala cvms get "$PHALA_CVM_ID" --json)"
+          PHALA_GATEWAY_CNAME="$(echo "$RAW" | jq -r '.gateway.cname // empty')"
+          PHALA_APP_ID="$(echo "$RAW" | jq -r '.app_id // empty')"
+
+          if [ -z "$PHALA_GATEWAY_CNAME" ]; then
+            echo "::error title=Missing Phala gateway CNAME::Could not resolve .gateway.cname for CVM ${PHALA_CVM_ID}"
+            echo "$RAW" | jq '{id, name, status, app_id, gateway}'
+            exit 1
+          fi
+
+          echo "PHALA_GATEWAY_CNAME=$PHALA_GATEWAY_CNAME" >> "$GITHUB_ENV"
+          echo "PHALA_APP_ID=$PHALA_APP_ID" >> "$GITHUB_ENV"
+          {
+            echo
+            echo "### Phala gateway"
+            echo
+            echo "- Gateway CNAME: \`$PHALA_GATEWAY_CNAME\`"
+            echo "- App ID: \`$PHALA_APP_ID\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify custom domain DNS
+        run: |
+          node <<'NODE'
+          const dns = require("node:dns").promises;
+
+          const domain = process.env.PHALA_INGRESS_DOMAIN;
+          const expectedCname = process.env.PHALA_GATEWAY_CNAME.replace(/\.$/, "");
+          const expectedTxt = `${process.env.PHALA_APP_ID}:443`;
+          const txtName = `_dstack-app-address.${domain}`;
+
+          async function main() {
+            const fail = (title, message) => {
+              console.error(`::error title=${title}::${message}`);
+              process.exitCode = 1;
+            };
+
+            const cnameRecords = await dns.resolveCname(domain).catch(() => []);
+            const txtRecords = await dns.resolveTxt(txtName).catch(() => []);
+            const actualCname = cnameRecords.map((value) => value.replace(/\.$/, ""));
+            const actualTxt = txtRecords.map((parts) => parts.join(""));
+
+            console.log(`CNAME ${domain}: ${actualCname.join(", ") || "<missing>"}`);
+            console.log(`TXT ${txtName}: ${actualTxt.join(", ") || "<missing>"}`);
+
+            if (!actualCname.includes(expectedCname)) {
+              fail("Phala DNS CNAME mismatch", `${domain} must CNAME to ${expectedCname}`);
+            }
+            if (!actualTxt.includes(expectedTxt)) {
+              fail("Phala DNS TXT mismatch", `${txtName} must contain ${expectedTxt}`);
+            }
+
+            if (process.exitCode) process.exit(process.exitCode);
+          }
+
+          main().catch((error) => {
+            console.error(error);
+            process.exit(1);
+          });
+          NODE
+
+          {
+            echo
+            echo "### Custom domain DNS"
+            echo
+            echo "- CNAME target: \`${PHALA_GATEWAY_CNAME}\`"
+            echo "- TXT target: \`${PHALA_APP_ID}:443\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Deploy to Phala Cloud
         env:
@@ -100,22 +264,33 @@ jobs:
           GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
         run: |
           ENV_FILE="$RUNNER_TEMP/phala-prod.env"
+          DEPLOY_RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          GOOGLE_PUSH_URL="${PRODUCTION_API_URL%/}/api/webhooks/google-meet"
           {
             printf '%s\n' "BACKEND_PRIVATE_KEY=$BACKEND_PRIVATE_KEY"
-            printf '%s\n' "TINYCLOUD_HOST=https://node.tinycloud.xyz"
-            printf '%s\n' "FRONTEND_URL=https://listen.tinycloud.xyz"
+            printf '%s\n' "TINYCLOUD_HOST=https://tee.node.tinycloud.xyz"
+            printf '%s\n' "FRONTEND_URL=$PRODUCTION_FRONTEND_URL"
             printf '%s\n' "OPENKEY_ISSUER_URL=https://openkey.so"
             printf '%s\n' "GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID"
             printf '%s\n' "GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET"
             printf '%s\n' "GOOGLE_SERVICE_ACCOUNT_KEY=$GOOGLE_SERVICE_ACCOUNT_KEY"
-            printf '%s\n' "GOOGLE_PUBSUB_PUSH_URL=https://api.listen.tinycloud.xyz/api/webhooks/google-meet"
+            printf '%s\n' "GOOGLE_PUBSUB_PUSH_URL=$GOOGLE_PUSH_URL"
             printf '%s\n' "CLOUDFLARE_API_TOKEN=$CLOUDFLARE_API_TOKEN"
             printf '%s\n' "CERTBOT_EMAIL=$CERTBOT_EMAIL"
             printf '%s\n' "LISTEN_BACKEND_IMAGE=${DOCKER_IMAGE}:${GITHUB_SHA}"
+            printf '%s\n' "LISTEN_INGRESS_IMAGE=${INGRESS_IMAGE}:ingress-$GITHUB_SHA"
+            printf '%s\n' "LISTEN_BUILD_SHA=$GITHUB_SHA"
+            printf '%s\n' "LISTEN_DEPLOY_RUN_URL=$DEPLOY_RUN_URL"
             printf '%s\n' "PORT=3001"
-            printf '%s\n' "PHALA_INGRESS_DOMAIN=api.listen.tinycloud.xyz"
+            printf '%s\n' "PHALA_INGRESS_DOMAIN=$PHALA_INGRESS_DOMAIN"
+            printf '%s\n' "PHALA_GATEWAY_CNAME=$PHALA_GATEWAY_CNAME"
           } > "$ENV_FILE"
 
+          echo "::group::Deploy environment keys"
+          awk -F= '/^[A-Z0-9_]+=/ {print $1"=<set>"}' "$ENV_FILE"
+          echo "::endgroup::"
+
+          echo "Submitting Phala deploy for CVM ${PHALA_CVM_ID}..."
           phala deploy \
             --cvm-id "$PHALA_CVM_ID" \
             -c docker-compose.phala.yml \
@@ -123,29 +298,118 @@ jobs:
             --wait \
             --no-public-logs
 
-      - name: Wait for deployment
+      - name: Wait for CVM to report running
         env:
           PHALA_CLOUD_API_KEY: ${{ secrets.PHALA_CLOUD_API_KEY }}
         run: |
-          echo "Waiting for CVM to be ready (up to 10 minutes)..."
-          for i in {1..60}; do
-            RAW=$(phala cvms get "$PHALA_CVM_ID" --json | jq '{status, name}')
-            STATUS=$(echo "$RAW" | jq -r '.status')
-            echo "Attempt $i/60: Status = '$STATUS'"
+          echo "Waiting for CVM to be running (up to 15 minutes)..."
+          for i in {1..90}; do
+            RAW=$(phala cvms get "$PHALA_CVM_ID" --json)
+            STATUS=$(echo "$RAW" | jq -r '.status // "unknown"')
+            NAME=$(echo "$RAW" | jq -r '.name // "unknown"')
+            UPDATED_AT=$(echo "$RAW" | jq -r '.updated_at // "unknown"')
+            APP_ID=$(echo "$RAW" | jq -r '.app_id // empty')
+            GATEWAY_BASE_DOMAIN=$(echo "$RAW" | jq -r '.gateway.base_domain // empty')
+            echo "Attempt $i/90: name='$NAME' status='$STATUS' updated_at='$UPDATED_AT'"
             if [ "$STATUS" = "running" ]; then
-              echo "CVM is running"
+              echo "CVM is running."
+              if [ -n "$APP_ID" ] && [ -n "$GATEWAY_BASE_DOMAIN" ]; then
+                RAW_API_URL="https://${APP_ID}-3001.${GATEWAY_BASE_DOMAIN}"
+                echo "PHALA_RAW_API_URL=$RAW_API_URL" >> "$GITHUB_ENV"
+              fi
+              {
+                echo
+                echo "### CVM status"
+                echo
+                echo "- Status: \`running\`"
+                echo "- Last update: \`$UPDATED_AT\`"
+                if [ -n "${RAW_API_URL:-}" ]; then
+                  echo "- Raw gateway API: ${RAW_API_URL}"
+                fi
+              } >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
             if [ "$STATUS" = "failed" ] || [ "$STATUS" = "error" ]; then
-              echo "CVM deployment failed with status: $STATUS"
-              phala cvms get "$PHALA_CVM_ID" --json
+              echo "::error title=Phala CVM failed::CVM deployment failed with status '$STATUS'"
+              echo "$RAW" | jq '{id, name, status, app_id, instance_type, updated_at, created_at}'
               exit 1
             fi
             sleep 10
           done
-          echo "Timeout waiting for CVM after 10 minutes"
-          phala cvms get "$PHALA_CVM_ID" --json
+
+          echo "::error title=Phala CVM timeout::Timed out waiting for CVM to become running"
+          phala cvms get "$PHALA_CVM_ID" --json \
+            | jq '{id, name, status, app_id, instance_type, updated_at, created_at}'
           exit 1
+
+      - name: Verify public API
+        run: |
+          probe_url() {
+            local label="$1"
+            local url="$2"
+            local body_file err_file status exit_code
+
+            echo "Probing $label at $url"
+            for i in {1..30}; do
+              body_file="$(mktemp)"
+              err_file="$(mktemp)"
+              set +e
+              status="$(curl -sS -o "$body_file" -w "%{http_code}" --connect-timeout 5 --max-time 15 "$url" 2>"$err_file")"
+              exit_code=$?
+              set -e
+
+              echo "Attempt $i/30: curl_exit=$exit_code http_status=$status"
+              if [ -s "$err_file" ]; then
+                sed 's/^/curl: /' "$err_file"
+              fi
+              if [ -s "$body_file" ]; then
+                echo "Response body (first 1000 bytes):"
+                head -c 1000 "$body_file"
+                echo
+              fi
+
+              if [ "$exit_code" -eq 0 ] && [[ "$status" =~ ^2 ]]; then
+                echo "$label probe passed."
+                rm -f "$body_file" "$err_file"
+                return 0
+              fi
+
+              rm -f "$body_file" "$err_file"
+              sleep 10
+            done
+
+            echo "::error title=Public API probe failed::$label did not return a 2xx response"
+            echo "::group::Verbose curl diagnostics for $label"
+            curl -v --max-time 20 "$url" || true
+            echo "::endgroup::"
+            return 1
+          }
+
+          HEALTH_URL="${PRODUCTION_API_URL%/}/healthz"
+          INFO_URL="${PRODUCTION_API_URL%/}/api/server-info"
+          if ! probe_url "healthz" "$HEALTH_URL"; then
+            if [ -n "${PHALA_RAW_API_URL:-}" ]; then
+              echo "::notice title=Raw Phala gateway diagnostic::Custom domain failed; probing ${PHALA_RAW_API_URL}/api/server-info"
+              probe_url "raw gateway server-info" "${PHALA_RAW_API_URL%/}/api/server-info" || true
+            fi
+            exit 1
+          fi
+
+          if ! probe_url "server-info" "$INFO_URL"; then
+            if [ -n "${PHALA_RAW_API_URL:-}" ]; then
+              echo "::notice title=Raw Phala gateway diagnostic::Custom domain failed; probing ${PHALA_RAW_API_URL}/api/server-info"
+              probe_url "raw gateway server-info" "${PHALA_RAW_API_URL%/}/api/server-info" || true
+            fi
+            exit 1
+          fi
+
+          {
+            echo
+            echo "### Public API probes"
+            echo
+            echo "- ${HEALTH_URL}: passed"
+            echo "- ${INFO_URL}: passed"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   phala-status:
     runs-on: ubuntu-latest
@@ -164,7 +428,7 @@ jobs:
           case "$DEPLOY_RESULT" in
             success)
               STATE=success
-              DESCRIPTION="Phala deployment succeeded"
+              DESCRIPTION="Phala deployment and API probe succeeded"
               ;;
             cancelled)
               STATE=error
@@ -176,7 +440,7 @@ jobs:
               ;;
             *)
               STATE=failure
-              DESCRIPTION="Phala deployment failed"
+              DESCRIPTION="Phala deployment or API probe failed"
               ;;
           esac
 

@@ -8,17 +8,19 @@ services:
       NODE_ENV: production
       PORT: "3001"
       BACKEND_PRIVATE_KEY: ${BACKEND_PRIVATE_KEY}
-      TINYCLOUD_HOST: ${TINYCLOUD_HOST:-https://node.tinycloud.xyz}
+      TINYCLOUD_HOST: ${TINYCLOUD_HOST:-https://tee.node.tinycloud.xyz}
       FRONTEND_URL: ${FRONTEND_URL:-https://listen.tinycloud.xyz}
       OPENKEY_ISSUER_URL: ${OPENKEY_ISSUER_URL:-https://openkey.so}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_SERVICE_ACCOUNT_KEY: ${GOOGLE_SERVICE_ACCOUNT_KEY:-}
       GOOGLE_PUBSUB_PUSH_URL: ${GOOGLE_PUBSUB_PUSH_URL:-}
+      LISTEN_BUILD_SHA: ${LISTEN_BUILD_SHA:-}
+      LISTEN_DEPLOY_RUN_URL: ${LISTEN_DEPLOY_RUN_URL:-}
     restart: unless-stopped
 
   dstack-ingress:
-    image: dstacktee/dstack-ingress:20250924@sha256:40429d78060ef3066b5f93676bf3ba7c2e9ac47d4648440febfdda558aed4b32
+    image: ${LISTEN_INGRESS_IMAGE:-ghcr.io/tinycloudlabs/listen-backend:ingress-latest}
     ports:
       - "443:443"
     depends_on:
@@ -27,7 +29,7 @@ services:
       DOMAIN: ${PHALA_INGRESS_DOMAIN:-api.listen.tinycloud.xyz}
       TARGET_ENDPOINT: http://listen-backend:3001
       CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
-      GATEWAY_DOMAIN: _.${DSTACK_GATEWAY_DOMAIN}
+      GATEWAY_DOMAIN: ${PHALA_GATEWAY_CNAME}
       CERTBOT_EMAIL: ${CERTBOT_EMAIL}
       SET_CAA: "true"
       DNS_PROVIDER: cloudflare

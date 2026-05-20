@@ -40,7 +40,7 @@
     "docker:backend:build": "docker buildx build --platform linux/amd64 -f backend/Dockerfile -t ${LISTEN_BACKEND_IMAGE:-ghcr.io/tinycloudlabs/listen-backend:latest} .",
     "docker:backend:push": "docker buildx build --platform linux/amd64 -f backend/Dockerfile -t ${LISTEN_BACKEND_IMAGE:-ghcr.io/tinycloudlabs/listen-backend:latest} --push .",
     "deploy:frontend": "bun run build --filter=listen-frontend && CLOUDFLARE_ACCOUNT_ID=9959301f03d2db1a5fcf5e004278d467 bunx wrangler pages deploy",
-    "deploy:backend:phala": "phala deploy --cvm-id 5b6391f2-9e81-4331-baa7-162a5d9838da -c docker-compose.phala.yml -e .env.prod -e LISTEN_BACKEND_IMAGE=${LISTEN_BACKEND_IMAGE:-ghcr.io/tinycloudlabs/listen-backend:latest} -e PORT=3001 --wait",
+    "deploy:backend:phala": "phala deploy --cvm-id 5b6391f2-9e81-4331-baa7-162a5d9838da -c docker-compose.phala.yml -e .env.prod -e LISTEN_BACKEND_IMAGE=${LISTEN_BACKEND_IMAGE:-ghcr.io/tinycloudlabs/listen-backend:latest} -e LISTEN_INGRESS_IMAGE=${LISTEN_INGRESS_IMAGE:-ghcr.io/tinycloudlabs/listen-backend:ingress-latest} -e TINYCLOUD_HOST=${TINYCLOUD_HOST:-https://tee.node.tinycloud.xyz} -e PORT=3001 -e PHALA_GATEWAY_CNAME=${PHALA_GATEWAY_CNAME:-_.dstack-pha-prod5.phala.network} --wait && curl -fsS https://api.listen.tinycloud.xyz/healthz && curl -fsS https://api.listen.tinycloud.xyz/api/server-info",
     "prepare": "husky"
   },
   "devDependencies": {
