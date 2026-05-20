@@ -26,6 +26,7 @@ import {
 } from "./delegation-activation.js";
 import { backendDelegationPolicyHash, resolveAppPath } from "./manifest.js";
 import { createAuthRouter } from "./routes/auth.js";
+import { createHealthRouter } from "./routes/health.js";
 import { createManifestRouter } from "./routes/manifest.js";
 import { createServerInfoRouter } from "./routes/server-info.js";
 import { createDelegationRouter } from "./routes/delegations.js";
@@ -185,6 +186,7 @@ async function main() {
   const app = express();
   app.set("trust proxy", "loopback");
   app.use(cors({ origin: FRONTEND_URL }));
+  app.use("/healthz", createHealthRouter());
 
   // Webhook routes — mounted before express.json() so raw body is preserved for HMAC verification
   // Auth + delegation middleware passed for pending queue endpoints (GET/DELETE)
