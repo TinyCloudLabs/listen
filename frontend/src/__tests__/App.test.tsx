@@ -28,6 +28,8 @@ const mockPost = vi.fn();
 const mockPut = vi.fn();
 const mockDel = vi.fn();
 const mockSecretDelete = vi.fn();
+const mockTinyCloudQuery = vi.fn();
+const mockTinyCloudKvGet = vi.fn();
 
 const mockApiClient = { get: mockGet, post: mockPost, put: mockPut, del: mockDel };
 
@@ -163,6 +165,30 @@ function jsonResponse(body: unknown): Response {
   } as Response;
 }
 
+function toArrayRows(objects: Record<string, unknown>[]): { rows: unknown[][]; columns: string[] } {
+  if (objects.length === 0) return { rows: [], columns: [] };
+  const columns = Object.keys(objects[0]!);
+  return {
+    columns,
+    rows: objects.map((obj) => columns.map((column) => obj[column])),
+  };
+}
+
+function mockTinyCloudConversationPage(
+  conversations: Record<string, unknown>[],
+  total = conversations.length,
+) {
+  mockTinyCloudQuery.mockImplementation((sql: string) => {
+    if (sql.includes("COUNT(*) AS total")) {
+      return Promise.resolve({ ok: true, data: toArrayRows([{ total }]) });
+    }
+    if (sql.includes("participant_count")) {
+      return Promise.resolve({ ok: true, data: toArrayRows(conversations) });
+    }
+    return Promise.resolve({ ok: true, data: toArrayRows([]) });
+  });
+}
+
 function mockAuthFlow() {
   vi.mocked(connectWallet).mockResolvedValue({
     address: "0xabc123",
@@ -177,6 +203,12 @@ function mockAuthFlow() {
         unlock: vi.fn().mockResolvedValue({ ok: true }),
         get: vi.fn().mockResolvedValue({ ok: true, data: "fireflies-key" }),
         delete: mockSecretDelete,
+      },
+      sql: {
+        db: vi.fn(() => ({ query: mockTinyCloudQuery })),
+      },
+      kv: {
+        get: mockTinyCloudKvGet,
       },
       signOut: vi.fn(),
     },
@@ -276,6 +308,8 @@ describe("App manual sign-in processing", () => {
     mockAuthFlow();
     vi.mocked(loadPersistedSession).mockReturnValue(null);
     mockSecretDelete.mockResolvedValue({ ok: true });
+    mockTinyCloudConversationPage([]);
+    mockTinyCloudKvGet.mockResolvedValue({ ok: true, data: { data: null } });
 
     // Default: backfill returns no updates
     mockPost.mockResolvedValue({ updated: 0, still_missing: 0 });
@@ -376,7 +410,7 @@ describe("App manual sign-in processing", () => {
     expect(createAndSignIn).toHaveBeenCalled();
   });
 
-  it("posts backend delegation during manual sign-in when none is stored", async () => {
+  it("posts backend delegation after manual sign-in when none is stored", async () => {
     vi.mocked(checkDelegationStatus)
       .mockResolvedValueOnce({ status: "none", expiresAt: null })
       .mockResolvedValue({ status: "active" });
@@ -401,7 +435,7 @@ describe("App manual sign-in processing", () => {
     );
   });
 
-  it("does not post a delegation when the status check fails", async () => {
+  it("keeps the frontend signed in when the backend delegation status check fails", async () => {
     vi.mocked(checkDelegationStatus).mockRejectedValueOnce(
       new Error("Failed to check delegation status: Too many delegation requests"),
     );
@@ -409,21 +443,47 @@ describe("App manual sign-in processing", () => {
     await renderAndSignIn();
 
     await waitFor(() => {
-      expect(
-        screen.getByText(/failed to check delegation status: too many delegation requests/i),
-      ).toBeInTheDocument();
+      expect(checkDelegationStatus).toHaveBeenCalledWith("http://localhost:3001", "mock-token");
     });
+    expect(await screen.findByText("0xabc1…c123")).toBeInTheDocument();
     expect(createManifestDelegation).not.toHaveBeenCalled();
     expect(sendDelegation).not.toHaveBeenCalled();
   });
 
+  it("renders direct TinyCloud conversations while backend delegation status is still loading", async () => {
+    let resolveDelegationStatus!: (value: { status: "active" }) => void;
+    vi.mocked(checkDelegationStatus).mockReturnValue(
+      new Promise((resolve) => {
+        resolveDelegationStatus = resolve;
+      }),
+    );
+    mockTinyCloudConversationPage([
+      {
+        id: "01ABC",
+        title: "Planning",
+        source: "fireflies",
+        source_url: null,
+        started_at: "2026-05-14T14:00:00Z",
+        duration_secs: 1200,
+        summary: "Roadmap",
+        created_at: "2026-05-14T14:30:00Z",
+        participant_count: 2,
+      },
+    ]);
+
+    await renderAndSignIn();
+
+    expect(await screen.findByText("Planning")).toBeInTheDocument();
+    expect(mockGet).not.toHaveBeenCalledWith(expect.stringMatching(/^\/api\/conversations/));
+
+    resolveDelegationStatus({ status: "active" });
+  });
+
   it("renews backend delegation when the connected workspace sees an expired record", async () => {
-    vi.mocked(checkDelegationStatus)
-      .mockResolvedValueOnce({ status: "active" })
-      .mockResolvedValueOnce({
-        status: "expired",
-        expiresAt: "2026-05-10T00:46:27.000Z",
-      });
+    vi.mocked(checkDelegationStatus).mockResolvedValueOnce({
+      status: "expired",
+      expiresAt: "2026-05-10T00:46:27.000Z",
+    });
 
     await renderAndSignIn();
 
@@ -576,7 +636,7 @@ describe("App manual sign-in processing", () => {
 
     await renderAndSignIn();
     await openUserMenu();
-    fireEvent.click(screen.getByRole("button", { name: /disconnect fireflies/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /disconnect fireflies/i }));
 
     expect(window.confirm).toHaveBeenCalledWith(expect.stringMatching(/disconnect fireflies/i));
     expect(mockSecretDelete).not.toHaveBeenCalled();
@@ -585,7 +645,7 @@ describe("App manual sign-in processing", () => {
   it("disconnects Fireflies after confirmation", async () => {
     await renderAndSignIn();
     await openUserMenu();
-    fireEvent.click(screen.getByRole("button", { name: /disconnect fireflies/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /disconnect fireflies/i }));
 
     await waitFor(() => {
       expect(mockSecretDelete).toHaveBeenCalledWith("FIREFLIES_API_KEY");
@@ -606,14 +666,19 @@ describe("App manual sign-in processing", () => {
     vi.stubEnv("VITE_ENABLE_CHAT", "true");
 
     await renderAndSignIn();
+    mockTinyCloudQuery.mockClear();
 
     fireEvent.click(await screen.findByRole("button", { name: /chat/i }));
 
     expect(await screen.findByText(/ask about your synced transcripts/i)).toBeInTheDocument();
     expect(screen.queryByText(/chat is under development/i)).not.toBeInTheDocument();
     await waitFor(() => {
-      expect(mockGet).toHaveBeenCalledWith("/api/conversations?limit=100&offset=0");
+      expect(mockTinyCloudQuery).toHaveBeenCalledWith(
+        expect.stringContaining("participant_count"),
+        [100, 0],
+      );
     });
+    expect(mockGet).not.toHaveBeenCalledWith("/api/conversations?limit=100&offset=0");
   });
 });
 
@@ -774,7 +839,7 @@ describe("Google Meet webhook check", () => {
 
     await renderAndSignIn();
     await openUserMenu();
-    fireEvent.click(screen.getByRole("button", { name: /disconnect google meet/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /disconnect google meet/i }));
 
     expect(window.confirm).toHaveBeenCalledWith(expect.stringMatching(/disconnect google meet/i));
     expect(mockDel).not.toHaveBeenCalledWith("/api/config/google-meet");
@@ -785,7 +850,7 @@ describe("Google Meet webhook check", () => {
 
     await renderAndSignIn();
     await openUserMenu();
-    fireEvent.click(screen.getByRole("button", { name: /disconnect google meet/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /disconnect google meet/i }));
 
     await waitFor(() => {
       expect(mockDel).toHaveBeenCalledWith("/api/config/google-meet");

@@ -1017,18 +1017,6 @@ export function App() {
         const apiClient = createApiClient(BACKEND_URL, {
           sessionStore: sessionStoreRef.current,
         });
-
-        const delegationStatus = await checkDelegationStatus(BACKEND_URL, token);
-        let backendDelegationActive = delegationStatus.status === "active";
-        if (!backendDelegationActive) {
-          const { serialized } = await createManifestDelegation(
-            tcwInstance,
-            info.did,
-            composedRequest,
-          );
-          await sendDelegation(BACKEND_URL, serialized, token);
-          backendDelegationActive = true;
-        }
         setAddress(addr);
         setDid(tcwInstance.did ?? null);
         setTcw(tcwInstance);
@@ -1037,7 +1025,6 @@ export function App() {
         setBackendDid(info.did);
         setCapabilityRequest(composedRequest);
         setServerGoogleMeetAvailable(info.features?.googleMeet?.available ?? null);
-        setHasBackendDelegation(backendDelegationActive);
         setLiveWritePathPrefix(conversationEventPathPrefix);
         setLiveWriteHost(tcwInstance.hosts[0] ?? null);
       } catch (err) {
@@ -1218,6 +1205,7 @@ export function App() {
   ].filter(Boolean).length;
   const googleMeetAvailable = HAS_FRONTEND_GOOGLE_CLIENT_ID || serverGoogleMeetAvailable === true;
   const hasUsableInbox = connectedSourceCount > 0 || hasExistingConversations === true;
+  const directExistingConversationsReady = tcw !== null && hasExistingConversations === true;
   const backendStatusReady = hasBackendDelegation !== null;
   const firefliesKeyReady = hasKey !== null;
   const granolaKeyReady = hasGranolaKey !== null;
@@ -1246,12 +1234,13 @@ export function App() {
     tcw || hasBackendDelegation === true ? hasExistingConversations !== null : true;
   const workspaceChecksReady =
     isSignedIn &&
-    backendStatusReady &&
-    firefliesKeyReady &&
-    granolaKeyReady &&
-    transcriptionKeysReady &&
-    backendBackedChecksReady &&
-    conversationChecksReady;
+    conversationChecksReady &&
+    (directExistingConversationsReady ||
+      (backendStatusReady &&
+        firefliesKeyReady &&
+        granolaKeyReady &&
+        transcriptionKeysReady &&
+        backendBackedChecksReady));
   const setupAvailable = tcw !== null && backendDid !== null;
   const needsFirefliesAccess =
     workspaceChecksReady &&

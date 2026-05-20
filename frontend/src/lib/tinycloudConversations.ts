@@ -286,11 +286,8 @@ export function createTinyCloudConversationApi(
   return {
     async get<T>(path: string): Promise<T> {
       if (parseListPath(path) || parseDetailPath(path)) {
-        try {
-          return (await getFromTinyCloud(tcw, path)) as T;
-        } catch {
-          return api.get<T>(path);
-        }
+        if (tcw) return (await getFromTinyCloud(tcw, path)) as T;
+        return api.get<T>(path);
       }
 
       return api.get<T>(path);
