@@ -144,7 +144,7 @@ describe("createTinyCloudConversationApi", () => {
     expect(backendGet).not.toHaveBeenCalled();
   });
 
-  it("falls back to the backend when direct TinyCloud reads fail", async () => {
+  it("surfaces direct TinyCloud read failures instead of falling back to the backend", async () => {
     const backendGet = vi.fn().mockResolvedValue({ conversations: [], total: 0 });
     const api = mockApi({ get: backendGet });
     const query = vi.fn(async () => ({
@@ -152,6 +152,18 @@ describe("createTinyCloudConversationApi", () => {
       error: { message: "SQL unavailable" },
     }));
     const client = createTinyCloudConversationApi(api, mockTinyCloud(query));
+
+    await expect(client.get("/api/conversations?limit=20&offset=0")).rejects.toThrow(
+      "SQL unavailable",
+    );
+
+    expect(backendGet).not.toHaveBeenCalled();
+  });
+
+  it("uses the backend for conversation reads only when no TinyCloud client is available", async () => {
+    const backendGet = vi.fn().mockResolvedValue({ conversations: [], total: 0 });
+    const api = mockApi({ get: backendGet });
+    const client = createTinyCloudConversationApi(api, null);
 
     const result = await client.get("/api/conversations?limit=20&offset=0");
 
