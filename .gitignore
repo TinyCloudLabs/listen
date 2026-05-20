@@ -11,3 +11,5 @@ bun.lock
 .claude/
 test/.passkey.json
 test/.last-run.log
+test/playwright-report/
+test/test-results/

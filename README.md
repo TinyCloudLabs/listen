@@ -130,4 +130,9 @@ bun run lint
 bun run format:check
 bun run build
 bun run test
+bun run test:app:install
+bun run test:app
 ```
+
+See [App Automated Testing](docs/app-automated-testing.md) for the CI-safe Playwright smoke test and
+the opt-in real OpenKey passkey harness.
