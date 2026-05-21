@@ -41,6 +41,16 @@ describe("SourcesSetup", () => {
     cleanup();
   });
 
+  it("links TinyCloud Secrets for managed provider secrets", () => {
+    renderSources();
+
+    expect(screen.getByText(/Secrets are managed through TinyCloud Secrets/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "secrets@tinycloud.xyz" })).toHaveAttribute(
+      "href",
+      "https://secrets.tinycloud.xyz",
+    );
+  });
+
   it("keeps Google Meet visible with a disabled unavailable action", () => {
     renderSources();
 

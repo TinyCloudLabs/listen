@@ -28,6 +28,7 @@ const TRANSCRIPTION_PROVIDER_LABELS: Record<TranscriptionProvider, string> = {
   assemblyai: "AssemblyAI",
   deepgram: "Deepgram",
 };
+const TINYCLOUD_SECRETS_URL = "https://secrets.tinycloud.xyz";
 const VERIFY_RETRY_DELAYS_MS = [250, 750, 1500];
 
 interface SourcesSetupProps {
@@ -948,6 +949,13 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
             Listen can sync from providers or import a transcript directly. Provider credentials
             stay in TinyCloud Secrets; transcript imports write straight into your inbox.
           </p>
+          <p style={s.secretsNote}>
+            Secrets are managed through TinyCloud Secrets at{" "}
+            <a href={TINYCLOUD_SECRETS_URL} target="_blank" rel="noreferrer" style={s.secretsLink}>
+              secrets@tinycloud.xyz
+            </a>
+            .
+          </p>
 
           <div style={s.divider} />
 
@@ -1302,6 +1310,19 @@ const s: Record<string, React.CSSProperties> = {
     lineHeight: 1.55,
     color: "var(--lst-blue)",
     margin: 0,
+  },
+  secretsNote: {
+    fontSize: 12,
+    lineHeight: 1.45,
+    color: "var(--lst-ink-70)",
+    margin: "10px 0 0",
+  },
+  secretsLink: {
+    fontFamily: MONO,
+    fontSize: 11,
+    color: "var(--lst-blue)",
+    textDecoration: "none",
+    fontWeight: 500,
   },
   divider: {
     height: 1,
