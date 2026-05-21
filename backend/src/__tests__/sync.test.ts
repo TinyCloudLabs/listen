@@ -32,17 +32,39 @@ function createMockKV() {
   };
 }
 
+function seedTranscriptBlob(
+  mockKV: ReturnType<typeof createMockKV>,
+  conversationId: string,
+  text = "Already synced",
+) {
+  mockKV._data.set(
+    `transcript/${conversationId}`,
+    JSON.stringify([
+      {
+        index: 0,
+        speaker_name: "Alice",
+        text,
+        start_time: 0,
+        end_time: 1,
+      },
+    ]),
+  );
+}
+
 // ── Mock SQL (matches real SDK: query for SELECT, execute for writes) ──
 
 function createMockSQL() {
   const calls: Array<{ method: string; sql: string; params?: any[] }> = [];
-  let dedupRows: Array<{ source_id: string }> = [];
+  let dedupRows: Array<{ id: string; source_id: string }> = [];
   const failingSourceIds = new Set<string>();
 
   return {
     _calls: calls,
-    _setDedupRows(rows: Array<{ source_id: string }>) {
-      dedupRows = rows;
+    _setDedupRows(rows: Array<{ id?: string; source_id: string }>) {
+      dedupRows = rows.map((row) => ({
+        id: row.id ?? `conv-${row.source_id}`,
+        source_id: row.source_id,
+      }));
     },
     /**
      * Causes any INSERT whose params contain the given source_id to throw.
@@ -54,7 +76,18 @@ function createMockSQL() {
     query: async (sql: string, params?: any[]) => {
       calls.push({ method: "query", sql, params });
 
-      // Dedup SELECT query — rows are arrays, source_id at index 0
+      // Existing Fireflies SELECT query — rows are arrays.
+      if (sql.includes("SELECT id, source_id FROM conversation")) {
+        return {
+          ok: true,
+          data: {
+            rows: dedupRows.map((r) => [r.id, r.source_id]),
+            columns: ["id", "source_id"],
+          },
+        };
+      }
+
+      // Legacy/source_id-only dedup SELECT query — source_id at index 0.
       if (sql.includes("SELECT source_id FROM conversation")) {
         return {
           ok: true,
@@ -192,30 +225,16 @@ function createMockClientFactory() {
         listAllTranscripts: async (options?: PaginationOptions): Promise<PaginationResult> => {
           // If batches are set, simulate real pagination
           if (listBatches) {
-            const knownIds = options?.knownIds;
-            const mode = options?.mode ?? "incremental";
             const all: FullTranscript[] = [];
             let batchCount = 0;
-            let earlyExit = false;
 
             for (const batch of listBatches) {
               batchCount++;
-              if (mode === "incremental" && knownIds) {
-                const seenInBatch = batch.some((t) => knownIds.has(t.id));
-                if (seenInBatch) {
-                  for (const t of batch) {
-                    if (!knownIds.has(t.id)) all.push(t);
-                  }
-                  earlyExit = true;
-                  options?.onProgress?.({ batch: batchCount, totalSoFar: all.length });
-                  break;
-                }
-              }
               all.push(...batch);
               options?.onProgress?.({ batch: batchCount, totalSoFar: all.length });
             }
 
-            return { transcripts: all, batchCount, earlyExit };
+            return { transcripts: all, batchCount, earlyExit: false };
           }
 
           // Simple fallback: return listResult as single batch
@@ -419,6 +438,7 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
 
     // ff-1 already exists in DB
     mockSQL._setDedupRows([{ source_id: "ff-1" }]);
+    seedTranscriptBlob(mockKV, "conv-ff-1");
 
     const res = await fetch(`http://localhost:${port}/api/sync/fireflies`, {
       method: "POST",
@@ -450,6 +470,8 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
 
     // Both already in DB
     mockSQL._setDedupRows([{ source_id: "ff-1" }, { source_id: "ff-2" }]);
+    seedTranscriptBlob(mockKV, "conv-ff-1");
+    seedTranscriptBlob(mockKV, "conv-ff-2");
 
     const res = await fetch(`http://localhost:${port}/api/sync/fireflies`, {
       method: "POST",
@@ -465,6 +487,47 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
     expect(body.failed).toBe(0);
     expect(body.errors).toEqual([]);
     expect(body.conversations).toHaveLength(0);
+  });
+
+  it("scans past already-synced Fireflies rows and imports older missing history", async () => {
+    mockKV._data.set(KV_KEY, "test-api-key");
+
+    const knownBatch = [
+      createMockFullTranscript({ id: "ff-known-1", title: "Known 1" }),
+      createMockFullTranscript({ id: "ff-known-2", title: "Known 2" }),
+    ];
+    const olderUnsyncedBatch = [
+      createMockFullTranscript({ id: "ff-old-1", title: "Older 1" }),
+      createMockFullTranscript({ id: "ff-old-2", title: "Older 2" }),
+    ];
+    clientFactory.setListBatches([knownBatch, olderUnsyncedBatch]);
+    clientFactory.setGetResult(
+      "ff-old-1",
+      createMockFullTranscript({ id: "ff-old-1", title: "Older 1" }),
+    );
+    clientFactory.setGetResult(
+      "ff-old-2",
+      createMockFullTranscript({ id: "ff-old-2", title: "Older 2" }),
+    );
+
+    mockSQL._setDedupRows([{ source_id: "ff-known-1" }, { source_id: "ff-known-2" }]);
+    seedTranscriptBlob(mockKV, "conv-ff-known-1");
+    seedTranscriptBlob(mockKV, "conv-ff-known-2");
+
+    const res = await fetch(`http://localhost:${port}/api/sync/fireflies`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "incremental" }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.synced).toBe(2);
+    expect(body.skipped).toBe(2);
+    expect(body.repaired).toBe(0);
+    expect(body.failed).toBe(0);
+    expect(clientFactory.getGetCalls()).toEqual(["ff-old-1", "ff-old-2"]);
   });
 
   // ── Individual failure ──────────────────────────────────────────
@@ -620,6 +683,59 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
     const parsed = JSON.parse(storedBlob!);
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed[0].text).toBe("Hello everyone");
+  });
+
+  it("repairs an existing Fireflies conversation with a missing transcript blob", async () => {
+    mockKV._data.set(KV_KEY, "test-api-key");
+
+    const summary = createMockFullTranscript({ id: "ff-1", title: "Existing Meeting" });
+    clientFactory.setListResult([summary]);
+    clientFactory.setGetResult(
+      "ff-1",
+      createMockFullTranscript({
+        id: "ff-1",
+        title: "Existing Meeting",
+        sentences: [
+          {
+            index: 0,
+            speaker_id: "s1",
+            speaker_name: "Alice",
+            text: "Recovered transcript line",
+            raw_text: "Recovered transcript line",
+            start_time: 0,
+            end_time: 2,
+            ai_filters: {
+              task: false,
+              pricing: false,
+              metric: false,
+              question: false,
+              date_and_time: false,
+              sentiment: "neutral",
+            },
+          },
+        ],
+      }),
+    );
+    mockSQL._setDedupRows([{ id: "existing-conv", source_id: "ff-1" }]);
+
+    const res = await fetch(`http://localhost:${port}/api/sync/fireflies`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.synced).toBe(0);
+    expect(body.repaired).toBe(1);
+    expect(body.skipped).toBe(0);
+    expect(body.failed).toBe(0);
+    expect(clientFactory.getGetCalls()).toEqual(["ff-1"]);
+
+    const storedBlob = mockKV._data.get("transcript/existing-conv");
+    expect(storedBlob).toBeDefined();
+    expect(JSON.parse(storedBlob!)[0].text).toBe("Recovered transcript line");
   });
 
   it("stores Fireflies audio data and metadata separately in KV when audio_url exists", async () => {
@@ -865,6 +981,7 @@ describe("Sync Routes — GET /api/sync/fireflies/stream", () => {
 
     // ff-1 already in DB
     mockSQL._setDedupRows([{ source_id: "ff-1" }]);
+    seedTranscriptBlob(mockKV, "conv-ff-1");
 
     const res = await fetch(`http://localhost:${port}/api/sync/fireflies/stream?mode=incremental`);
     const text = await res.text();
@@ -1145,11 +1262,14 @@ describe("Sync Routes — SSE pagination integration (75 meetings)", () => {
     // Simulate: 50 oldest already in DB
     const existingIds = summaries.slice(25).map((s) => ({ source_id: s.id }));
     mockSQL._setDedupRows(existingIds);
+    for (const existing of existingIds) {
+      seedTranscriptBlob(mockKV, `conv-${existing.source_id}`);
+    }
 
-    // Pagination: batch 1 = newest 25 (all new), batch 2 has some known -> early exit
+    // Pagination: batch 1 = newest 25 (all new), batch 2 has known rows.
     clientFactory.setListBatches([
       summaries.slice(0, 25), // all new
-      summaries.slice(25, 50), // all known -> triggers early exit
+      summaries.slice(25, 50), // all known
     ]);
 
     // Only need getTranscript for the new 25
@@ -1164,11 +1284,11 @@ describe("Sync Routes — SSE pagination integration (75 meetings)", () => {
     const complete = events.find((e) => e.type === "complete");
     expect(complete).toBeDefined();
     expect(complete!.data.synced).toBe(25);
-    expect(complete!.data.skipped).toBe(0); // batch dedup removes known ones before syncing
+    expect(complete!.data.skipped).toBe(25);
     expect(complete!.data.failed).toBe(0);
     expect(complete!.data.conversations).toHaveLength(25);
 
-    // Should have only 2 listing batches (early exit on batch 2)
+    // Should scan both available listing batches and dedupe after listing.
     const listingProgress = events.filter(
       (e) => e.type === "progress" && e.data.phase === "listing",
     );
