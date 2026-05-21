@@ -280,26 +280,31 @@ async function getFromTinyCloud(tcw: TinyCloudWeb | null, path: string): Promise
 }
 
 export function createTinyCloudConversationApi(
-  api: ApiClient,
+  api: ApiClient | null,
   tcw: TinyCloudWeb | null,
 ): ApiClient {
+  const requireApi = (): ApiClient => {
+    if (!api) throw new Error("Listen backend is offline. This action is unavailable.");
+    return api;
+  };
+
   return {
     async get<T>(path: string): Promise<T> {
       if (parseListPath(path) || parseDetailPath(path)) {
         if (tcw) return (await getFromTinyCloud(tcw, path)) as T;
-        return api.get<T>(path);
+        return requireApi().get<T>(path);
       }
 
-      return api.get<T>(path);
+      return requireApi().get<T>(path);
     },
     post<T>(path: string, body?: unknown): Promise<T> {
-      return api.post<T>(path, body);
+      return requireApi().post<T>(path, body);
     },
     put<T>(path: string, body?: unknown): Promise<T> {
-      return api.put<T>(path, body);
+      return requireApi().put<T>(path, body);
     },
     del<T>(path: string): Promise<T> {
-      return api.del<T>(path);
+      return requireApi().del<T>(path);
     },
   };
 }

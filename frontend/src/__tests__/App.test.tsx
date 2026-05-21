@@ -5,6 +5,7 @@ import {
   composeManifestWithDelegatees,
   connectWallet,
   createAndSignIn,
+  createApiClient,
   createManifestDelegation,
   clearPersistedSession,
   loadPersistedSession,
@@ -288,6 +289,21 @@ async function renderAndSignIn() {
   });
 }
 
+function expectLastSignInUsedLocalManifest() {
+  const lastCall = vi.mocked(createAndSignIn).mock.calls.at(-1);
+  expect(lastCall?.[1]).toEqual(
+    expect.objectContaining({
+      autoCreateSpace: true,
+      manifest: expect.objectContaining({
+        app_id: "xyz.tinycloud.listen",
+        name: "Listen",
+        defaults: true,
+      }),
+    }),
+  );
+  expect(lastCall?.[1]).not.toHaveProperty("capabilityRequest");
+}
+
 async function openUserMenu() {
   const userName = await screen.findByText("0xabc1…c123");
   const userButton = userName.closest("button");
@@ -477,6 +493,71 @@ describe("App manual sign-in processing", () => {
     expect(mockGet).not.toHaveBeenCalledWith(expect.stringMatching(/^\/api\/conversations/));
 
     resolveDelegationStatus({ status: "active" });
+  });
+
+  it("falls back to direct TinyCloud sign-in when backend bootstrap is offline", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("backend offline"))),
+    );
+    mockTinyCloudConversationPage([
+      {
+        id: "01OFFLINE",
+        title: "Offline Planning",
+        source: "fireflies",
+        source_url: null,
+        started_at: "2026-05-14T14:00:00Z",
+        duration_secs: 1200,
+        summary: "Roadmap",
+        created_at: "2026-05-14T14:30:00Z",
+        participant_count: 2,
+      },
+    ]);
+
+    await renderAndSignIn();
+
+    expect(await screen.findByText("Offline Planning")).toBeInTheDocument();
+    expectLastSignInUsedLocalManifest();
+    expect(requestNonce).not.toHaveBeenCalled();
+    expect(verifySession).not.toHaveBeenCalled();
+    expect(createApiClient).not.toHaveBeenCalled();
+    expect(mockGet).not.toHaveBeenCalled();
+    expect(
+      screen.getByText(/Backend offline\. Sync and source setup are unavailable/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /sync fireflies/i })).not.toBeInTheDocument();
+  });
+
+  it("falls back to direct TinyCloud sign-in when nonce request fails", async () => {
+    vi.mocked(requestNonce).mockRejectedValueOnce(new Error("nonce unavailable"));
+
+    await renderAndSignIn();
+
+    await screen.findAllByText(/Backend offline/i);
+    expectLastSignInUsedLocalManifest();
+    expect(verifySession).not.toHaveBeenCalled();
+    expect(createApiClient).not.toHaveBeenCalled();
+    expect(sendDelegation).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a local-manifest TinyCloud session when backend verification fails", async () => {
+    vi.mocked(verifySession).mockRejectedValueOnce(new Error("verify unavailable"));
+
+    await renderAndSignIn();
+
+    await waitFor(() => {
+      expect(createAndSignIn).toHaveBeenCalledTimes(2);
+    });
+    await screen.findAllByText(/Backend offline/i);
+    expect(verifySession).toHaveBeenCalledWith(
+      "http://localhost:3001",
+      "mock-siwe",
+      "mock-signature",
+    );
+    expectLastSignInUsedLocalManifest();
+    expect(createApiClient).not.toHaveBeenCalled();
+    expect(checkDelegationStatus).not.toHaveBeenCalled();
+    expect(sendDelegation).not.toHaveBeenCalled();
   });
 
   it("renews backend delegation when the connected workspace sees an expired record", async () => {
