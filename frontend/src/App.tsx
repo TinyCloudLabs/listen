@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ComposedManifestRequest, TinyCloudWeb } from "@tinycloud/web-sdk";
+import type { ComposedManifestRequest, Manifest, TinyCloudWeb } from "@tinycloud/web-sdk";
 import type { ServerInfo } from "@listen/core";
 import {
   connectWallet,
@@ -65,6 +65,30 @@ interface AppBootstrapContext {
   conversationEventPathPrefix: string | null;
 }
 
+const LOCAL_APP_MANIFEST: Manifest = {
+  manifest_version: 1,
+  app_id: "xyz.tinycloud.listen",
+  name: "Listen",
+  description: "Sync Fireflies, Granola, and Google Meet transcripts into a TinyCloud space.",
+  defaults: true,
+  secrets: {
+    FIREFLIES_API_KEY: ["read"],
+    GRANOLA_API_KEY: ["read"],
+    ASSEMBLYAI_API_KEY: ["read"],
+    DEEPGRAM_API_KEY: ["read"],
+  },
+  permissions: [
+    {
+      service: "tinycloud.hooks",
+      path: "sql/xyz.tinycloud.listen/conversations/conversation",
+      actions: ["subscribe"],
+      skipPrefix: true,
+      description:
+        "Subscribe to conversation row write events for live updates when hooks are enabled.",
+    },
+  ],
+};
+
 function isChatEnabled(): boolean {
   return import.meta.env.VITE_ENABLE_CHAT === "true";
 }
@@ -101,6 +125,15 @@ async function loadAppBootstrapContext(): Promise<AppBootstrapContext> {
     composedRequest,
     conversationEventPathPrefix,
   };
+}
+
+function localConversationEventPathPrefix(): string | null {
+  if (!ENABLE_TINYCLOUD_HOOKS) return null;
+  return resolveManifestPermissionPath(
+    LOCAL_APP_MANIFEST,
+    "tinycloud.sql",
+    "conversations/conversation",
+  );
 }
 
 function LandingIcon({ name, size = 14 }: { name: "plus" | "minus"; size?: number }) {
@@ -501,7 +534,12 @@ function providerForTranscriptionSecret(secretName: string): TranscriptionProvid
   return null;
 }
 
-type WorkspaceStatusMode = "checking" | "fireflies-access" | "granola-access" | "wallet";
+type WorkspaceStatusMode =
+  | "checking"
+  | "fireflies-access"
+  | "granola-access"
+  | "wallet"
+  | "backend-offline";
 
 function WorkspaceStatusPanel({
   mode,
@@ -520,24 +558,35 @@ function WorkspaceStatusPanel({
       title: "Checking workspace state.",
       copy: "Listen is checking backend access, source credentials, and whether transcripts already exist.",
       action: null,
+      items: ["backend delegation", "secrets access", "existing transcripts"],
     },
     "fireflies-access": {
       eyebrow: "fireflies",
       title: "Finish Fireflies access.",
       copy: "The Fireflies key is stored in TinyCloud Secrets. Delegate access to the Listen backend so sync can run.",
       action: "Finish access",
+      items: ["backend delegation", "secrets access", "existing transcripts"],
     },
     "granola-access": {
       eyebrow: "granola",
       title: "Finish Granola access.",
       copy: "The Granola key is stored in TinyCloud Secrets. Delegate access to the Listen backend so sync can run.",
       action: "Finish access",
+      items: ["backend delegation", "secrets access", "existing transcripts"],
     },
     wallet: {
       eyebrow: "sources",
       title: "Reconnect wallet to connect sources.",
       copy: "This session was restored without a TinyCloud wallet instance. Reconnect to read or write Secrets and add providers.",
       action: "Reconnect wallet",
+      items: ["wallet session", "secrets access", "source setup"],
+    },
+    "backend-offline": {
+      eyebrow: "backend offline",
+      title: "Backend offline.",
+      copy: "TinyCloud conversations remain available directly from your space. Sync, source setup, Google Meet, and backend imports are unavailable until the Listen backend is reachable.",
+      action: null,
+      items: ["TinyCloud direct reads", "sync unavailable", "source setup unavailable"],
     },
   }[mode];
 
@@ -547,9 +596,9 @@ function WorkspaceStatusPanel({
       <h3 style={s.statusTitle}>{content.title}</h3>
       <p style={s.statusText}>{content.copy}</p>
       <div style={s.statusList}>
-        <span>backend delegation</span>
-        <span>secrets access</span>
-        <span>existing transcripts</span>
+        {content.items.map((item) => (
+          <span key={item}>{item}</span>
+        ))}
       </div>
       {error && <div style={s.statusError}>{error}</div>}
       {content.action && onAction && (
@@ -625,8 +674,39 @@ export function App() {
   const isMobile = useIsMobile();
   const chatEnabled = isChatEnabled();
   const conversationApi = useMemo(
-    () => (api ? createTinyCloudConversationApi(api, tcw) : null),
+    () => (api || tcw ? createTinyCloudConversationApi(api, tcw) : null),
     [api, tcw],
+  );
+
+  const applyDirectTinyCloudSession = useCallback((addr: string, tcwInstance: TinyCloudWeb) => {
+    sessionStoreRef.current.clear();
+    setAddress(addr);
+    setDid(tcwInstance.did ?? null);
+    setTcw(tcwInstance);
+    setApi(null);
+    setAgentInfo(null);
+    setBackendDid(null);
+    setCapabilityRequest(null);
+    setServerGoogleMeetAvailable(false);
+    setLiveWritePathPrefix(localConversationEventPathPrefix());
+    setLiveWriteHost(tcwInstance.hosts[0] ?? null);
+    setHasBackendDelegation(false);
+    setHasFirefliesBackendAccess(null);
+    setHasGranolaBackendAccess(null);
+    setHasTranscriptionBackendAccess(EMPTY_TRANSCRIPTION_STATUS);
+    setHasGoogleMeet(null);
+    setWorkspaceActionError(null);
+  }, []);
+
+  const signInDirectTinyCloud = useCallback(
+    async (addr: string, web3Provider: Parameters<typeof createAndSignIn>[0]) => {
+      const { tcw: tcwInstance } = await createAndSignIn(web3Provider, {
+        autoCreateSpace: true,
+        manifest: LOCAL_APP_MANIFEST,
+      });
+      applyDirectTinyCloudSession(addr, tcwInstance);
+    },
+    [applyDirectTinyCloudSession],
   );
 
   const restoreStoredSession = useCallback(async (storedAddress?: string): Promise<boolean> => {
@@ -643,8 +723,13 @@ export function App() {
     }
 
     const persistedSession = loadPersistedSession(addr);
-    const { info, agent, composedRequest, conversationEventPathPrefix } =
-      await loadAppBootstrapContext();
+    let bootstrap: AppBootstrapContext;
+    try {
+      bootstrap = await loadAppBootstrapContext();
+    } catch {
+      return false;
+    }
+    const { info, agent, composedRequest, conversationEventPathPrefix } = bootstrap;
     const apiClient = createApiClient(BACKEND_URL, {
       sessionStore: sessionStoreRef.current,
     });
@@ -705,7 +790,7 @@ export function App() {
 
   useEffect(() => {
     if (!api) {
-      setHasBackendDelegation(null);
+      setHasBackendDelegation(tcw ? false : null);
       return;
     }
 
@@ -732,7 +817,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [api, renewBackendDelegation]);
+  }, [api, renewBackendDelegation, tcw]);
 
   useEffect(() => {
     if (hasBackendDelegation === null) {
@@ -1000,20 +1085,38 @@ export function App() {
         }
 
         clearPersistedSession(addr);
-        const [nonce, { info, agent, composedRequest, conversationEventPathPrefix }] =
-          await Promise.all([requestNonce(BACKEND_URL, addr), loadAppBootstrapContext()]);
+        const bootstrap = await loadAppBootstrapContext().catch(() => null);
+        if (!bootstrap) {
+          await signInDirectTinyCloud(addr, web3Provider);
+          return;
+        }
 
+        const nonce = await requestNonce(BACKEND_URL, addr).catch(() => null);
+        if (!nonce) {
+          await signInDirectTinyCloud(addr, web3Provider);
+          return;
+        }
+
+        const { info, agent, composedRequest, conversationEventPathPrefix } = bootstrap;
         const { tcw: tcwInstance, session } = await createAndSignIn(web3Provider, {
           nonce,
           autoCreateSpace: true,
           capabilityRequest: composedRequest,
         });
-        const { token, expiresIn } = await verifySession(
-          BACKEND_URL,
-          session.siwe,
-          session.signature,
+        const verified = await verifySession(BACKEND_URL, session.siwe, session.signature).catch(
+          () => null,
         );
-        sessionStoreRef.current.setSession(token, expiresIn, addr);
+        if (!verified) {
+          try {
+            await tcwInstance.signOut?.();
+          } catch {
+            // Continue into direct TinyCloud mode when backend verification is unavailable.
+          }
+          await signInDirectTinyCloud(addr, web3Provider);
+          return;
+        }
+
+        sessionStoreRef.current.setSession(verified.token, verified.expiresIn, addr);
         const apiClient = createApiClient(BACKEND_URL, {
           sessionStore: sessionStoreRef.current,
         });
@@ -1033,7 +1136,7 @@ export function App() {
         setAuthLoading(false);
       }
     },
-    [restoreStoredSession],
+    [restoreStoredSession, signInDirectTinyCloud],
   );
 
   const handleSignOut = useCallback(async () => {
@@ -1183,7 +1286,8 @@ export function App() {
 
   // ── Render ────────────────────────────────────────────────────────
 
-  const isSignedIn = address !== null && api !== null;
+  const isSignedIn = address !== null && (api !== null || tcw !== null);
+  const backendUnavailable = isSignedIn && api === null;
   const firefliesConnected =
     hasKey === true && hasBackendDelegation === true && hasFirefliesBackendAccess === true;
   const granolaConnected =
@@ -1203,10 +1307,11 @@ export function App() {
     deepgramConnected,
     hasGoogleMeet === true,
   ].filter(Boolean).length;
-  const googleMeetAvailable = HAS_FRONTEND_GOOGLE_CLIENT_ID || serverGoogleMeetAvailable === true;
+  const googleMeetAvailable =
+    !backendUnavailable && (HAS_FRONTEND_GOOGLE_CLIENT_ID || serverGoogleMeetAvailable === true);
   const hasUsableInbox = connectedSourceCount > 0 || hasExistingConversations === true;
   const directExistingConversationsReady = tcw !== null && hasExistingConversations === true;
-  const backendStatusReady = hasBackendDelegation !== null;
+  const backendStatusReady = backendUnavailable || hasBackendDelegation !== null;
   const firefliesKeyReady = hasKey !== null;
   const granolaKeyReady = hasGranolaKey !== null;
   const transcriptionKeysReady = Object.values(hasTranscriptionKeys).every(
@@ -1241,12 +1346,14 @@ export function App() {
         granolaKeyReady &&
         transcriptionKeysReady &&
         backendBackedChecksReady));
-  const setupAvailable = tcw !== null && backendDid !== null;
+  const setupAvailable = tcw !== null && backendDid !== null && api !== null;
   const needsFirefliesAccess =
+    !backendUnavailable &&
     workspaceChecksReady &&
     hasKey === true &&
     (hasBackendDelegation === false || hasFirefliesBackendAccess === false);
   const needsGranolaAccess =
+    !backendUnavailable &&
     workspaceChecksReady &&
     hasGranolaKey === true &&
     (hasBackendDelegation === false || hasGranolaBackendAccess === false);
@@ -1260,6 +1367,7 @@ export function App() {
     setupAvailable;
   const showWalletSetupState =
     isSignedIn &&
+    !backendUnavailable &&
     workspaceChecksReady &&
     !hasUsableInbox &&
     !needsFirefliesAccess &&
@@ -1268,7 +1376,15 @@ export function App() {
   const showSourcesSetup =
     isSignedIn && hasUsableInbox && activePage === "sources" && setupAvailable;
   const showSourcesWalletState =
-    isSignedIn && hasUsableInbox && activePage === "sources" && !setupAvailable;
+    isSignedIn &&
+    !backendUnavailable &&
+    hasUsableInbox &&
+    activePage === "sources" &&
+    !setupAvailable;
+  const showBackendOfflineState =
+    backendUnavailable &&
+    workspaceChecksReady &&
+    (!hasUsableInbox || activePage === "sources" || activePage === "connections");
 
   if (!isSignedIn) {
     return <LandingPage loading={authLoading} error={authError} onSignIn={handleSignIn} />;
@@ -1282,42 +1398,46 @@ export function App() {
       ? "library / transcript"
       : showWorkspaceLoading
         ? "workspace / checking"
-        : needsFirefliesAccess
-          ? "sources / access"
-          : needsGranolaAccess
+        : showBackendOfflineState
+          ? "workspace / backend offline"
+          : needsFirefliesAccess
             ? "sources / access"
-            : showWalletSetupState || showSourcesWalletState
-              ? "sources / reconnect"
-              : activePage === "sources"
-                ? "sources / manage"
-                : activePage === "connections"
-                  ? "settings / sources"
-                  : activePage === "chat"
-                    ? "library / chat"
-                    : hasUsableInbox
-                      ? `inbox · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`
-                      : "onboarding / sources";
+            : needsGranolaAccess
+              ? "sources / access"
+              : showWalletSetupState || showSourcesWalletState
+                ? "sources / reconnect"
+                : activePage === "sources"
+                  ? "sources / manage"
+                  : activePage === "connections"
+                    ? "settings / sources"
+                    : activePage === "chat"
+                      ? "library / chat"
+                      : hasUsableInbox
+                        ? `inbox · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`
+                        : "onboarding / sources";
   const pageTitle = !isSignedIn
     ? "Capture thoughts. Transform them into insights."
     : selectedConversationId
       ? "Transcript detail"
       : showWorkspaceLoading
         ? "Checking workspace."
-        : needsFirefliesAccess
-          ? "Finish Fireflies access."
-          : needsGranolaAccess
-            ? "Finish Granola access."
-            : showWalletSetupState || showSourcesWalletState
-              ? "Reconnect wallet."
-              : activePage === "sources"
-                ? "Add sources."
-                : activePage === "connections"
-                  ? "Connections."
-                  : activePage === "chat"
-                    ? "Ask your transcripts."
-                    : hasUsableInbox
-                      ? "Everything you've said."
-                      : "Connect what you already have.";
+        : showBackendOfflineState
+          ? "Backend offline."
+          : needsFirefliesAccess
+            ? "Finish Fireflies access."
+            : needsGranolaAccess
+              ? "Finish Granola access."
+              : showWalletSetupState || showSourcesWalletState
+                ? "Reconnect wallet."
+                : activePage === "sources"
+                  ? "Add sources."
+                  : activePage === "connections"
+                    ? "Connections."
+                    : activePage === "chat"
+                      ? "Ask your transcripts."
+                      : hasUsableInbox
+                        ? "Everything you've said."
+                        : "Connect what you already have.";
 
   const sourceItems: ShellSourceConfig[] = [
     { key: "fireflies", name: "Fireflies", count: null },
@@ -1327,9 +1447,11 @@ export function App() {
 
   const userInitials = address ? `${address.slice(2, 3)}${address.slice(-1)}`.toUpperCase() : "??";
   const userName = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "Signed in";
-  const userPlan = did
-    ? `CONNECTED · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`
-    : `RESTORED · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`;
+  const userPlan = backendUnavailable
+    ? "TINYCLOUD DIRECT"
+    : did
+      ? `CONNECTED · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`
+      : `RESTORED · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`;
 
   const handleTranscriptImportComplete = (conversationId: string) => {
     setHasExistingConversations(true);
@@ -1399,6 +1521,7 @@ export function App() {
           <span style={s.badge}>Deepgram key saved</span>
         )}
       {hasGoogleMeet && <span style={s.badge}>Google Meet</span>}
+      {backendUnavailable && <span style={s.badge}>Backend offline</span>}
       <span style={s.badgeSolid}>{did ? "Connected" : "Restored"}</span>
     </>
   );
@@ -1475,7 +1598,8 @@ export function App() {
     !showOnboarding &&
     !showWalletSetupState &&
     !showSourcesSetup &&
-    !showSourcesWalletState
+    !showSourcesWalletState &&
+    !showBackendOfflineState
   ) {
     return (
       <MobileExperience
@@ -1515,6 +1639,8 @@ export function App() {
       folders={[]}
     >
       {showWorkspaceLoading && <WorkspaceStatusPanel mode="checking" />}
+
+      {showBackendOfflineState && <WorkspaceStatusPanel mode="backend-offline" />}
 
       {needsFirefliesAccess && (
         <WorkspaceStatusPanel
@@ -1558,7 +1684,7 @@ export function App() {
 
       {showOnboarding && tcw && (
         <SourcesSetup
-          api={api}
+          api={api!}
           tcw={tcw}
           mode="onboarding"
           hasFirefliesKey={hasKey}
@@ -1611,7 +1737,7 @@ export function App() {
 
       {showSourcesSetup && tcw && (
         <SourcesSetup
-          api={api}
+          api={api!}
           tcw={tcw}
           mode="sources"
           hasFirefliesKey={hasKey}
@@ -1706,15 +1832,25 @@ export function App() {
 
       {hasUsableInbox && activePage === "inbox" && !selectedConversationId && (
         <>
-          <SyncControl
-            api={api}
-            backendUrl={BACKEND_URL}
-            getAccessToken={() => sessionStoreRef.current.getToken()}
-            onSyncComplete={() => setRefreshKey((k) => k + 1)}
-            hasFireflies={firefliesConnected}
-            hasGranola={granolaConnected}
-            hasGoogleMeet={hasGoogleMeet === true}
-          />
+          {backendUnavailable && (
+            <div style={s.pendingBanner}>
+              <span>
+                Backend offline. Sync and source setup are unavailable; inbox reads directly from
+                TinyCloud.
+              </span>
+            </div>
+          )}
+          {api && (
+            <SyncControl
+              api={api}
+              backendUrl={BACKEND_URL}
+              getAccessToken={() => sessionStoreRef.current.getToken()}
+              onSyncComplete={() => setRefreshKey((k) => k + 1)}
+              hasFireflies={firefliesConnected}
+              hasGranola={granolaConnected}
+              hasGoogleMeet={hasGoogleMeet === true}
+            />
+          )}
           {ENABLE_TINYCLOUD_HOOKS && liveWriteHost && (
             <LiveWriteEvents
               tcw={tcw}
@@ -1733,7 +1869,7 @@ export function App() {
 
       {hasUsableInbox &&
         activePage === "chat" &&
-        api &&
+        conversationApi &&
         (chatEnabled ? (
           <ChatScreen
             api={activeConversationApi}
