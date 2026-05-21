@@ -410,9 +410,23 @@ async function main() {
 
   // 8. OpenAPI docs
   const __dirname = dirname(fileURLToPath(import.meta.url));
-  const spec = loadYaml(readFileSync(resolve(__dirname, "../openapi.yaml"), "utf-8")) as object;
-  app.get("/api/openapi.json", (_req, res) => res.json(spec));
-  app.use("/api/docs", apiReference({ spec: { content: spec } }));
+  const spec = loadYaml(readFileSync(resolve(__dirname, "../openapi.yaml"), "utf-8")) as Record<
+    string,
+    unknown
+  >;
+  const firstHeaderValue = (value: string | undefined) => value?.split(",")[0]?.trim() || undefined;
+
+  app.get("/api/openapi.json", (req, res) => {
+    const host =
+      firstHeaderValue(req.get("x-forwarded-host")) ?? req.get("host") ?? `localhost:${PORT}`;
+    const protocol = firstHeaderValue(req.get("x-forwarded-proto")) ?? req.protocol;
+
+    res.json({
+      ...spec,
+      servers: [{ url: `${protocol}://${host}`, description: "Current request" }],
+    });
+  });
+  app.use("/api/docs", apiReference({ spec: { url: "/api/openapi.json" } }));
 
   // 9. Start server
   const server = app.listen(PORT, () => {
