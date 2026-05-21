@@ -1,4 +1,4 @@
-import OpenKey from "@openkey/sdk";
+import OpenKey, { type OpenKeyMode } from "@openkey/sdk";
 import { providers } from "ethers";
 
 // ── Configuration ────────────────────────────────────────────────────
@@ -6,6 +6,8 @@ import { providers } from "ethers";
 export interface ConnectWalletConfig {
   host?: string;
   appName?: string;
+  /** UI mode for the initial OpenKey authentication. Defaults to the OpenKey SDK default. */
+  mode?: OpenKeyMode;
   /** EIP-155 chain ID in hex, defaults to "0x1" (Ethereum mainnet) */
   chainId?: string;
 }
@@ -79,9 +81,9 @@ export async function connectWallet(config?: ConnectWalletConfig): Promise<Conne
     appName: config?.appName ?? "Listen",
   });
 
-  // Passkey authentication via iframe — user authenticates, we get signing capability
+  // Passkey authentication via OpenKey — user authenticates, we get signing capability
   console.log("[openkey] Calling openkey.connect()...");
-  const authResult = await openkey.connect();
+  const authResult = await openkey.connect(config?.mode ? { mode: config.mode } : undefined);
   console.log("[openkey] connect() done. Address:", authResult.address);
 
   // Create EIP-1193 provider for SIWE signing

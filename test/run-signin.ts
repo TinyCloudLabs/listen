@@ -1,4 +1,4 @@
-import { chromium } from "playwright";
+import { chromium, type Frame, type Page } from "playwright";
 import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,7 +53,8 @@ const log = (line: string) => {
   console.log(line);
   lines.push(line);
 };
-const clickedFrameButtons = new Set<string>();
+const clickedOpenKeyButtons = new Set<string>();
+const openKeyPopups = new Set<Page>();
 
 const shouldLogNetwork = (url: string) =>
   /\/(delegate|api\/delegations|api\/manifest|api\/server-info|nonce|verify)/.test(url);
@@ -67,8 +68,10 @@ const formatResponseBody = (url: string, body: string, status: number) => {
 };
 
 context.on("page", (p) => {
+  openKeyPopups.add(p);
   log(`[popup] ${p.url()}`);
   p.on("console", (msg) => log(`[popup console ${msg.type()}] ${msg.text()}`));
+  p.on("close", () => openKeyPopups.delete(p));
 });
 
 page.on("console", (msg) => log(`[console ${msg.type()}] ${msg.text()}`));
@@ -90,43 +93,60 @@ page.on("response", async (res) => {
   }
 });
 
-async function driveOpenKeyFrames(): Promise<void> {
+const openKeyButtonCandidates = [
+  /sign in with passkey/i,
+  /^key\s*\d+/i,
+  /^sign$/i,
+  /sign message/i,
+  /approve/i,
+  /confirm/i,
+  /^continue$/i,
+];
+
+async function driveOpenKeySurface(surface: Frame | Page, label: "frame" | "popup") {
+  const url = surface.url();
+  if (!url.startsWith("https://openkey.so/")) return false;
+
+  const bodyText = await surface
+    .locator("body")
+    .innerText({ timeout: 750 })
+    .catch(() => "");
+  if (bodyText) {
+    log(`[openkey ${label}] ${url} :: ${bodyText.replace(/\s+/g, " ").slice(0, 180)}`);
+  }
+
+  for (const pattern of openKeyButtonCandidates) {
+    const button = surface.getByRole("button", { name: pattern }).first();
+    const key = `${label}::${url}::${pattern.source}`;
+    if (clickedOpenKeyButtons.has(key)) continue;
+    if (await button.isVisible({ timeout: 250 }).catch(() => false)) {
+      clickedOpenKeyButtons.add(key);
+      log(`[openkey ${label}] clicking ${pattern}`);
+      await button.click({ timeout: 2_000 }).catch((error) => {
+        log(
+          `[openkey ${label}] click failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      });
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function driveOpenKeySurfaces(): Promise<void> {
   for (const frame of page.frames()) {
-    if (!frame.url().startsWith("https://openkey.so/")) continue;
+    if (await driveOpenKeySurface(frame, "frame")) return;
+  }
 
-    const bodyText = await frame
-      .locator("body")
-      .innerText({ timeout: 750 })
-      .catch(() => "");
-    if (bodyText) {
-      log(`[openkey frame] ${frame.url()} :: ${bodyText.replace(/\s+/g, " ").slice(0, 180)}`);
+  for (const popup of openKeyPopups) {
+    if (popup.isClosed()) {
+      openKeyPopups.delete(popup);
+      continue;
     }
-
-    const candidates = [
-      /sign in with passkey/i,
-      /^key\s*\d+/i,
-      /^sign$/i,
-      /sign message/i,
-      /approve/i,
-      /confirm/i,
-      /^continue$/i,
-    ];
-
-    for (const pattern of candidates) {
-      const button = frame.getByRole("button", { name: pattern }).first();
-      const key = `${frame.url()}::${pattern.source}`;
-      if (clickedFrameButtons.has(key)) continue;
-      if (await button.isVisible({ timeout: 250 }).catch(() => false)) {
-        clickedFrameButtons.add(key);
-        log(`[openkey frame] clicking ${pattern}`);
-        await button.click({ timeout: 2_000 }).catch((error) => {
-          log(
-            `[openkey frame] click failed: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        });
-        return;
-      }
-    }
+    if (await driveOpenKeySurface(popup, "popup")) return;
   }
 }
 
@@ -139,8 +159,8 @@ log("Clicking Open app");
 await signInBtn.click();
 
 const frameDriver = setInterval(() => {
-  driveOpenKeyFrames().catch((error) => {
-    log(`[openkey frame] driver error: ${error instanceof Error ? error.message : String(error)}`);
+  driveOpenKeySurfaces().catch((error) => {
+    log(`[openkey] driver error: ${error instanceof Error ? error.message : String(error)}`);
   });
 }, 750);
 

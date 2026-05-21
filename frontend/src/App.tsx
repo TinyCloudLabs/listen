@@ -37,6 +37,9 @@ import { createTinyCloudConversationApi } from "./lib/tinycloudConversations";
 // ── Environment ─────────────────────────────────────────────────────
 
 const OPENKEY_HOST = import.meta.env.VITE_OPENKEY_HOST || "https://openkey.so";
+// OpenKey's iframe connection backdrop uses backdrop-filter inside a closed
+// shadow root, which creates artifacts around native passkey overlays.
+const OPENKEY_MODE = "popup";
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
 const AGENT_ENDPOINT = import.meta.env.VITE_AGENT_ENDPOINT || "http://localhost:4097";
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
@@ -1078,7 +1081,10 @@ export function App() {
       setAuthError(null);
       setWorkspaceActionError(null);
       try {
-        const { address: addr, web3Provider } = await connectWallet({ host: OPENKEY_HOST });
+        const { address: addr, web3Provider } = await connectWallet({
+          host: OPENKEY_HOST,
+          mode: OPENKEY_MODE,
+        });
         if (!options?.forceWallet) {
           const restored = await restoreStoredSession(addr);
           if (restored) return;
