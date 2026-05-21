@@ -2,6 +2,16 @@ import type { DelegatedAccess } from "@listen/server";
 import type { NormalizedConversation } from "../adapters/types.js";
 import { conversationSql } from "../schema.js";
 
+export async function persistTranscriptBlob(
+  access: DelegatedAccess,
+  conversationId: string,
+  transcript: unknown,
+): Promise<void> {
+  const kvKey = `transcript/${conversationId}`;
+  const transcriptJson = JSON.stringify(transcript);
+  await access.kv.put(kvKey, transcriptJson);
+}
+
 /**
  * Persist a normalized conversation to SQL + KV.
  * Inserts conversation row, participant rows, and writes transcript blob.
@@ -49,7 +59,5 @@ export async function persistConversation(
   }
 
   // 3. Write transcript blob to KV
-  const kvKey = `transcript/${normalized.conversation.id}`;
-  const transcriptJson = JSON.stringify(normalized.transcript);
-  await access.kv.put(kvKey, transcriptJson);
+  await persistTranscriptBlob(access, normalized.conversation.id, normalized.transcript);
 }

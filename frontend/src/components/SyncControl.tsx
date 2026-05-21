@@ -5,6 +5,7 @@ const LAST_SYNC_KEY = "lastSyncTimestamp";
 
 interface SyncResult {
   synced: number;
+  repaired: number;
   skipped: number;
   failed: number;
   errors: string[];
@@ -216,6 +217,7 @@ export const SyncControl: FC<SyncControlProps> = ({
               case "complete": {
                 setResult({
                   synced: data.synced,
+                  repaired: data.repaired ?? 0,
                   skipped: data.skipped,
                   failed: data.failed,
                   errors: data.errors,
@@ -416,6 +418,12 @@ export const SyncControl: FC<SyncControlProps> = ({
               <div style={s.resultStat}>
                 <span style={s.resultNum}>{result.skipped}</span>
                 <span style={s.resultLabel}>skipped</span>
+              </div>
+            )}
+            {result.repaired > 0 && (
+              <div style={s.resultStat}>
+                <span style={s.resultNum}>{result.repaired}</span>
+                <span style={s.resultLabel}>repaired</span>
               </div>
             )}
             {result.failed > 0 && (

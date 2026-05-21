@@ -283,14 +283,17 @@ describe("FirefliesClient", () => {
       expect(result.earlyExit).toBe(false);
     });
 
-    it("incremental mode stops when hitting known IDs", async () => {
+    it("incremental mode scans past known IDs so partial imports can recover", async () => {
       // Batch 1: all new
       mockFetch.mockResolvedValueOnce(
         jsonResponse({ data: { transcripts: [makeTranscript("t3"), makeTranscript("t4")] } }),
       );
-      // Batch 2: t2 is known — should stop here, only add t5
+      // Batch 2: t2 is known, but older pages may still contain unsynced history.
       mockFetch.mockResolvedValueOnce(
         jsonResponse({ data: { transcripts: [makeTranscript("t5"), makeTranscript("t2")] } }),
+      );
+      mockFetch.mockResolvedValueOnce(
+        jsonResponse({ data: { transcripts: [makeTranscript("t6")] } }),
       );
 
       const result = await client.listAllTranscripts({
@@ -300,10 +303,9 @@ describe("FirefliesClient", () => {
         delayMs: 0,
       });
 
-      expect(result.earlyExit).toBe(true);
-      expect(result.batchCount).toBe(2);
-      // t3, t4 from batch 1, t5 from batch 2 (t2 excluded)
-      expect(result.transcripts.map((t) => t.id)).toEqual(["t3", "t4", "t5"]);
+      expect(result.earlyExit).toBe(false);
+      expect(result.batchCount).toBe(3);
+      expect(result.transcripts.map((t) => t.id)).toEqual(["t3", "t4", "t5", "t2", "t6"]);
     });
 
     it("full mode ignores known IDs and fetches everything", async () => {

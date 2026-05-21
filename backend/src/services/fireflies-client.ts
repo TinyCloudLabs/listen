@@ -167,9 +167,9 @@ const GET_TRANSCRIPT_QUERY = `query GetTranscript($id: String!) {
 export interface PaginationOptions {
   /** Transcripts per API call (default 25, max 50). */
   batchSize?: number;
-  /** "incremental" stops at already-known IDs; "full" fetches everything. */
+  /** Caller sync mode. Pagination still scans every page so partial imports can recover. */
   mode?: "incremental" | "full";
-  /** Known transcript IDs for incremental early-exit. */
+  /** Retained for callers that dedupe after listing. */
   knownIds?: Set<string>;
   /** Delay between API calls in ms (default 800). */
   delayMs?: number;
@@ -236,40 +236,24 @@ export class FirefliesClient {
   /**
    * Paginate through all transcripts.
    *
-   * In "incremental" mode (default), stops early when it encounters
-   * transcripts already in `knownIds` — assumes newest-first API ordering.
-   * In "full" mode, fetches every page until exhausted.
+   * Incremental callers still need a complete list of transcript IDs. Earlier
+   * versions stopped when a known ID appeared, but that hides older unsynced
+   * meetings after any partial import.
    */
   async listAllTranscripts(options?: PaginationOptions): Promise<PaginationResult> {
     const batchSize = Math.min(Math.max(options?.batchSize ?? 25, 1), 50);
-    const mode = options?.mode ?? "incremental";
-    const knownIds = options?.knownIds;
     const delayMs = options?.delayMs ?? 800;
     const onProgress = options?.onProgress;
 
     const all: FullTranscript[] = [];
     let skip = 0;
     let batchCount = 0;
-    let earlyExit = false;
 
     while (true) {
       if (skip > 0) await sleep(delayMs);
 
       const page = await this.listTranscripts(batchSize, skip);
       batchCount++;
-
-      // Incremental: stop when we hit already-known transcripts
-      if (mode === "incremental" && knownIds) {
-        const seenInBatch = page.some((t) => knownIds.has(t.id));
-        if (seenInBatch) {
-          for (const t of page) {
-            if (!knownIds.has(t.id)) all.push(t);
-          }
-          earlyExit = true;
-          onProgress?.({ batch: batchCount, totalSoFar: all.length });
-          break;
-        }
-      }
 
       all.push(...page);
       onProgress?.({ batch: batchCount, totalSoFar: all.length });
@@ -278,7 +262,7 @@ export class FirefliesClient {
       skip += batchSize;
     }
 
-    return { transcripts: all, batchCount, earlyExit };
+    return { transcripts: all, batchCount, earlyExit: false };
   }
 
   // ── Private ───────────────────────────────────────────────────
