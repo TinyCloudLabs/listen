@@ -46,29 +46,15 @@ function secretVaultKey(secretName: string): string {
   return `secrets/${secretName}`;
 }
 
-function secretGrantPath(backendDid: string, secretName: string): string {
-  return `grants/${backendDid}/${secretVaultKey(secretName)}`;
-}
-
-function backendSecretPermissions(backendDid: string): ServerInfoPermission[] {
-  return BACKEND_SECRET_NAMES.flatMap((secretName) => [
-    {
-      service: "tinycloud.kv",
-      space: "secrets",
-      path: `vault/${secretVaultKey(secretName)}`,
-      actions: ["get"],
-      skipPrefix: true,
-      description: `Read the encrypted ${secretName} payload for backend workflows.`,
-    },
-    {
-      service: "tinycloud.kv",
-      space: "secrets",
-      path: secretGrantPath(backendDid, secretName),
-      actions: ["get"],
-      skipPrefix: true,
-      description: `Read the ${secretName} vault grant shared with this backend.`,
-    },
-  ]);
+function backendSecretPermissions(): ServerInfoPermission[] {
+  return BACKEND_SECRET_NAMES.map((secretName) => ({
+    service: "tinycloud.kv",
+    space: "secrets",
+    path: `vault/${secretVaultKey(secretName)}`,
+    actions: ["get"],
+    skipPrefix: true,
+    description: `Read the encrypted ${secretName} payload for backend workflows.`,
+  }));
 }
 
 function backendDelegationPermissions(backendDid: string): ServerInfoPermission[] {
@@ -86,19 +72,12 @@ function backendDelegationPermissions(backendDid: string): ServerInfoPermission[
       actions: ["read", "write"],
       description: "Read and write normalized conversation records created from transcript sync.",
     },
-    ...backendSecretPermissions(backendDid),
+    ...backendSecretPermissions(),
   ];
 }
 
-function runtimeGrantPermissions(backendDid: string): DescribedPermissionEntry[] {
-  return BACKEND_SECRET_NAMES.map((secretName) => ({
-    service: "tinycloud.kv",
-    space: "secrets",
-    path: secretGrantPath(backendDid, secretName),
-    actions: ["get", "put"],
-    skipPrefix: true,
-    description: `Share ${secretName} with the Listen backend.`,
-  }));
+function runtimeGrantPermissions(_backendDid: string): DescribedPermissionEntry[] {
+  return [];
 }
 
 function validateConversationManifest(manifest: Manifest): ConversationManifest {

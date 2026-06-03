@@ -23,9 +23,56 @@ export async function loadAppManifest(url: string): Promise<Manifest> {
 
 // ── Composition ───────────────────────────────────────────────────────
 
+export interface ComposeDelegateOptions {
+  /** User principal DID, e.g. did:pkh:eip155:1:0xabc... */
+  principalDid?: string;
+  /** Delegate DID that should receive the broad decrypt grant. */
+  decryptDelegateDid?: string;
+  /** Encryption network name. Defaults to "default". */
+  networkName?: string;
+}
+
+export function defaultEncryptionNetworkId(principalDid: string, networkName = "default"): string {
+  return `urn:tinycloud:encryption:${principalDid}:${networkName}`;
+}
+
+function defaultNetworkDecryptPermission(
+  principalDid: string,
+  networkName?: string,
+): ServerInfoPermission {
+  return {
+    service: "tinycloud.encryption",
+    space: "encryption",
+    path: defaultEncryptionNetworkId(principalDid, networkName),
+    actions: ["decrypt"],
+    skipPrefix: true,
+    description: "Decrypt Listen secrets through the user's default encryption network.",
+  };
+}
+
+function permissionsForDelegate(
+  info: ServerInfo,
+  options: ComposeDelegateOptions,
+): ServerInfoPermission[] {
+  const permissions = [...(info.permissions ?? [])];
+  if (
+    options.principalDid &&
+    options.decryptDelegateDid &&
+    info.did === options.decryptDelegateDid
+  ) {
+    permissions.push(defaultNetworkDecryptPermission(options.principalDid, options.networkName));
+  }
+  return permissions;
+}
+
 /** Turn backend-advertised permissions into a delegate manifest. */
-export function backendManifestFromServerInfo(appManifest: Manifest, info: ServerInfo): Manifest {
-  if (!info.permissions || info.permissions.length === 0) {
+export function backendManifestFromServerInfo(
+  appManifest: Manifest,
+  info: ServerInfo,
+  options: ComposeDelegateOptions = {},
+): Manifest {
+  const permissions = permissionsForDelegate(info, options);
+  if (permissions.length === 0) {
     throw new Error("Backend did not advertise any permissions to delegate");
   }
   return {
@@ -36,7 +83,7 @@ export function backendManifestFromServerInfo(appManifest: Manifest, info: Serve
     did: info.did,
     expiry: info.expiry,
     defaults: false,
-    permissions: info.permissions.map((p) => ({
+    permissions: permissions.map((p) => ({
       service: p.service,
       ...(p.space !== undefined ? { space: p.space } : {}),
       path: p.path,
@@ -51,8 +98,12 @@ export function backendManifestFromServerInfo(appManifest: Manifest, info: Serve
 export function composeManifestWithBackend(
   appManifest: Manifest,
   info: ServerInfo,
+  options: ComposeDelegateOptions = {},
 ): ComposedManifestRequest {
-  return composeManifestWithDelegatees(appManifest, [info]);
+  return composeManifestWithDelegatees(appManifest, [info], {
+    decryptDelegateDid: info.did,
+    ...options,
+  });
 }
 
 /**
@@ -64,10 +115,11 @@ export function composeManifestWithBackend(
 export function composeManifestWithDelegatees(
   appManifest: Manifest,
   infos: readonly ServerInfo[],
+  options: ComposeDelegateOptions = {},
 ): ComposedManifestRequest {
   return composeManifestRequest([
     appManifest,
-    ...infos.map((info) => backendManifestFromServerInfo(appManifest, info)),
+    ...infos.map((info) => backendManifestFromServerInfo(appManifest, info, options)),
   ]);
 }
 

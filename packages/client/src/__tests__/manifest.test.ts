@@ -10,6 +10,7 @@ import { describe, expect, test } from "bun:test";
 
 const {
   composeManifestWithBackend,
+  defaultEncryptionNetworkId,
   resolveManifestPermissions,
   resolveManifestDelegationPermissions,
   resolveManifestPermissionPath,
@@ -44,6 +45,48 @@ describe("resolveManifestPermissions", () => {
     );
     expect(request.delegationTargets[0]?.permissions[0]?.description).toBe("Store transcript rows");
     expect(request.resources.some((permission) => permission.space === "account")).toBe(true);
+  });
+
+  test("injects the user's default network decrypt grant for the backend delegate", () => {
+    const principalDid = "did:pkh:eip155:1:0x71C7656EC7ab88b098defB751B7401B5f6d8976F";
+    const request = composeManifestWithBackend(
+      {
+        app_id: "com.example.app",
+        name: "Example App",
+        defaults: false,
+      },
+      {
+        did: "did:key:backend",
+        status: "ok",
+        name: "Backend",
+        permissions: [
+          {
+            service: "tinycloud.kv",
+            space: "secrets",
+            path: "vault/secrets/FIREFLIES_API_KEY",
+            actions: ["get"],
+            skipPrefix: true,
+          },
+        ],
+      },
+      { principalDid },
+    );
+
+    const networkId = defaultEncryptionNetworkId(principalDid);
+    expect(request.delegationTargets[0]?.permissions).toContainEqual({
+      service: "tinycloud.encryption",
+      space: "encryption",
+      path: networkId,
+      actions: ["tinycloud.encryption/decrypt"],
+      description: "Decrypt Listen secrets through the user's default encryption network.",
+    });
+    expect(request.resources).toContainEqual({
+      service: "tinycloud.encryption",
+      space: "encryption",
+      path: networkId,
+      actions: ["tinycloud.encryption/decrypt"],
+      description: "Decrypt Listen secrets through the user's default encryption network.",
+    });
   });
 
   test("resolves app-logic delegation requests with the manifest prefix", () => {
