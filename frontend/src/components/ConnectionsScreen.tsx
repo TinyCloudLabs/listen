@@ -21,16 +21,10 @@ interface ConnectionsScreenProps {
 
 type SourceId = "fireflies" | "granola" | "google-meet" | "assemblyai" | "deepgram";
 
+const LOCAL_IMPORTER_INSTRUCTIONS_URL = "https://listen.xyz/importer";
 const LOCAL_IMPORTER_REFERENCE_URL = "https://github.com/TinyCloudLabs/listen-importer";
-const LOCAL_IMPORTER_RUN_COMMAND = "npx --yes github:TinyCloudLabs/listen-importer";
-const LOCAL_IMPORTER_GET_STARTED_COMMAND = `${LOCAL_IMPORTER_RUN_COMMAND} init && ${LOCAL_IMPORTER_RUN_COMMAND} doctor`;
-const LOCAL_IMPORTER_WORKFLOW = `${LOCAL_IMPORTER_RUN_COMMAND} auth
-${LOCAL_IMPORTER_RUN_COMMAND} scan /Volumes/MIC\\ MINI
-${LOCAL_IMPORTER_RUN_COMMAND} scan-source voice-memos --since yesterday
-${LOCAL_IMPORTER_RUN_COMMAND} scan-source voxterm
-${LOCAL_IMPORTER_RUN_COMMAND} preprocess --source all
-${LOCAL_IMPORTER_RUN_COMMAND} transcribe --source all --provider assemblyai
-${LOCAL_IMPORTER_RUN_COMMAND} upload --publish --use-downsampled --source all`;
+const LOCAL_IMPORTER_AGENT_PROMPT =
+  "Go to https://listen.xyz/importer and follow the Listen importer skill. Help me pull local audio or transcripts into Listen with listen-importer, then preprocess/downsample, transcribe if needed, and upload with --publish. Ask me for the source, path or time window, and transcription provider before making changes.";
 
 interface SourceRow {
   id: SourceId;
@@ -126,7 +120,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
   const availableCount = available.length + 2;
 
   const copyLocalImporterCommand = async () => {
-    await navigator.clipboard?.writeText(LOCAL_IMPORTER_GET_STARTED_COMMAND);
+    await navigator.clipboard?.writeText(LOCAL_IMPORTER_AGENT_PROMPT);
     setLocalImporterCopied(true);
     window.setTimeout(() => setLocalImporterCopied(false), 1600);
   };
@@ -287,8 +281,8 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
           <div>
             <div style={s.sourceName}>Import local</div>
             <p style={s.availableDesc}>
-              Use listen-importer for recorder disks, Apple Voice Memos, VoxTerm transcripts, local
-              preprocessing, transcription, and publishing.
+              Send an agent to the Listen importer skill for recorder disks, Apple Voice Memos,
+              VoxTerm transcripts, preprocessing, transcription, and publishing.
             </p>
           </div>
           <button
@@ -304,25 +298,34 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
           <div style={s.importerPanel}>
             <div style={s.importerHeader}>
               <div>
-                <div style={s.sourceName}>listen-importer</div>
+                <div style={s.sourceName}>listen-importer skill</div>
                 <p style={s.availableDesc}>
-                  Runs on your Mac, scans local audio or transcript sources, keeps a local cache,
-                  downsampled media, and transcripts, then writes conversations into the same Listen
-                  TinyCloud space. Requires Bun and TinyCloud CLI auth.
+                  Copy this prompt into an LLM or coding agent. It points the agent at the canonical
+                  importer skill and asks it to pull local audio or transcripts into Listen.
                 </p>
               </div>
-              <a
-                href={LOCAL_IMPORTER_REFERENCE_URL}
-                target="_blank"
-                rel="noreferrer"
-                style={s.referenceLink}
-              >
-                Reference
-              </a>
+              <div style={s.importerLinks}>
+                <a
+                  href={LOCAL_IMPORTER_INSTRUCTIONS_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={s.referenceLink}
+                >
+                  Skill
+                </a>
+                <a
+                  href={LOCAL_IMPORTER_REFERENCE_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={s.referenceLink}
+                >
+                  Repo
+                </a>
+              </div>
             </div>
 
             <div style={s.commandHeader}>
-              <span style={s.sourceMeta}>GET STARTED COMMAND</span>
+              <span style={s.sourceMeta}>AGENT PROMPT</span>
               <button
                 type="button"
                 style={s.btnGhostSm}
@@ -332,29 +335,25 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
               </button>
             </div>
             <pre style={s.commandBlock}>
-              <code>{LOCAL_IMPORTER_GET_STARTED_COMMAND}</code>
+              <code>{LOCAL_IMPORTER_AGENT_PROMPT}</code>
             </pre>
 
             <div style={s.importerGrid}>
               <div>
-                <div style={s.sourceMeta}>SUPPORTED LOCAL SOURCES</div>
+                <div style={s.sourceMeta}>SKILL URL</div>
                 <p style={s.availableDesc}>
-                  MIC MINI and generic recorder volumes, Apple Voice Memos, and VoxTerm markdown
-                  transcripts.
+                  The instructions are published at <code>listen.xyz/importer</code> for agents to
+                  fetch directly.
                 </p>
               </div>
               <div>
-                <div style={s.sourceMeta}>WORKFLOW</div>
+                <div style={s.sourceMeta}>COVERS</div>
                 <p style={s.availableDesc}>
-                  Scan, preprocess or downsample, transcribe with AssemblyAI or Deepgram, then
-                  upload with <code>--publish</code>.
+                  Pulling in the importer, local source scans, downsampling, transcription, and
+                  publishing to Listen.
                 </p>
               </div>
             </div>
-
-            <pre style={s.commandBlock}>
-              <code>{LOCAL_IMPORTER_WORKFLOW}</code>
-            </pre>
           </div>
         )}
 
@@ -486,6 +485,12 @@ const s: Record<string, React.CSSProperties> = {
     gap: 14,
     alignItems: "start",
     marginBottom: 14,
+  },
+  importerLinks: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
   },
   importerGrid: {
     display: "grid",
