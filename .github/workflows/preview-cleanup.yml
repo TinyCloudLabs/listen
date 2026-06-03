@@ -30,23 +30,69 @@ jobs:
             echo "can_cleanup=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Install Railway CLI
-        if: steps.cleanup_config.outputs.can_cleanup == 'true'
-        run: npm install -g @railway/cli
-
       - name: Delete preview backend environment
         if: steps.cleanup_config.outputs.can_cleanup == 'true'
         env:
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
-          RAILWAY_BASE_ENVIRONMENT: ${{ vars.RAILWAY_BASE_ENVIRONMENT || 'production' }}
-          RAILWAY_SERVICE: ${{ vars.RAILWAY_SERVICE || 'listen-backend' }}
         run: |
-          railway link \
-            --project "$RAILWAY_PROJECT_ID" \
-            --environment "$RAILWAY_BASE_ENVIRONMENT" \
-            --service "$RAILWAY_SERVICE"
-          railway environment delete "pr-${{ github.event.pull_request.number }}" --yes
+          set -euo pipefail
+
+          railway_graphql() {
+            local query="$1"
+            local variables="$2"
+            local response
+
+            response=$(jq -n \
+              --arg query "$query" \
+              --argjson variables "$variables" \
+              '{query: $query, variables: $variables}' | \
+              curl -fsS https://backboard.railway.com/graphql/v2 \
+                -H "Authorization: Bearer ${RAILWAY_API_TOKEN}" \
+                -H "Content-Type: application/json" \
+                --data-binary @-)
+
+            if [ "$(printf '%s' "$response" | jq '.errors | length')" != "0" ]; then
+              printf '%s\n' "$response" | jq -r '.errors[].message' >&2
+              return 1
+            fi
+
+            printf '%s' "$response"
+          }
+
+          PROJECT_QUERY=$(cat <<'GRAPHQL'
+          query Project($id: String!) {
+            project(id: $id) {
+              environments {
+                edges {
+                  node {
+                    id
+                    name
+                    deletedAt
+                  }
+                }
+              }
+            }
+          }
+          GRAPHQL
+          )
+          PROJECT_JSON=$(railway_graphql "$PROJECT_QUERY" "$(jq -n --arg id "$RAILWAY_PROJECT_ID" '{id: $id}')")
+          ENVIRONMENT_ID=$(printf '%s' "$PROJECT_JSON" | jq -r \
+            --arg env "pr-${{ github.event.pull_request.number }}" \
+            '[.data.project.environments.edges[].node | select(.deletedAt == null and .name == $env)][0].id // empty')
+
+          if [ -z "$ENVIRONMENT_ID" ]; then
+            echo "Railway preview environment already absent."
+            exit 0
+          fi
+
+          ENVIRONMENT_DELETE_MUTATION=$(cat <<'GRAPHQL'
+          mutation EnvironmentDelete($id: String!) {
+            environmentDelete(id: $id)
+          }
+          GRAPHQL
+          )
+          railway_graphql "$ENVIRONMENT_DELETE_MUTATION" "$(jq -n --arg id "$ENVIRONMENT_ID" '{id: $id}')" >/dev/null
 
       - name: Comment cleanup
         if: always()
