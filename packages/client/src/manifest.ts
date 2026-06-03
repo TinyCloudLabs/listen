@@ -36,13 +36,22 @@ export function defaultEncryptionNetworkId(principalDid: string, networkName = "
   return `urn:tinycloud:encryption:${principalDid}:${networkName}`;
 }
 
+function sdkManifestSpaceForPermission(permission: ServerInfoPermission): string | undefined {
+  if (permission.space !== undefined) {
+    return permission.space;
+  }
+  if (permission.service === "tinycloud.encryption") {
+    return "encryption";
+  }
+  return undefined;
+}
+
 function defaultNetworkDecryptPermission(
   principalDid: string,
   networkName?: string,
 ): ServerInfoPermission {
   return {
     service: "tinycloud.encryption",
-    space: "encryption",
     path: defaultEncryptionNetworkId(principalDid, networkName),
     actions: ["decrypt"],
     skipPrefix: true,
@@ -85,7 +94,9 @@ export function backendManifestFromServerInfo(
     defaults: false,
     permissions: permissions.map((p) => ({
       service: p.service,
-      ...(p.space !== undefined ? { space: p.space } : {}),
+      ...(sdkManifestSpaceForPermission(p) !== undefined
+        ? { space: sdkManifestSpaceForPermission(p) }
+        : {}),
       path: p.path,
       actions: [...p.actions],
       ...(p.skipPrefix !== undefined ? { skipPrefix: p.skipPrefix } : {}),
