@@ -9,6 +9,7 @@ export {
   backendManifestFromServerInfo,
   composeManifestWithBackend,
   composeManifestWithDelegatees,
+  defaultEncryptionNetworkId,
   resolveManifestPermissions,
   resolveManifestDelegationPermissions,
   resolveManifestPermissionPath,

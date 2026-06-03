@@ -20,10 +20,7 @@ import {
 
 import { createAuthMiddleware } from "./middleware/auth.js";
 import { createDelegationMiddleware } from "./middleware/delegation.js";
-import {
-  activatePortableDelegation,
-  ensureBackendSecretsPrivateIdentity,
-} from "./delegation-activation.js";
+import { activatePortableDelegation } from "./delegation-activation.js";
 import { backendDelegationPolicyHash, resolveAppPath } from "./manifest.js";
 import { createAuthRouter } from "./routes/auth.js";
 import { createHealthRouter } from "./routes/health.js";
@@ -72,10 +69,6 @@ async function main() {
     privateKey: BACKEND_PRIVATE_KEY,
     host: TINYCLOUD_HOST,
   });
-  const secretsUnlock = await ensureBackendSecretsPrivateIdentity(node);
-  if (!secretsUnlock.ok) {
-    console.warn("[secrets] backend vault unlock failed:", secretsUnlock.error.message);
-  }
 
   // 1b. Initialize Google Meet webhook infrastructure (Pub/Sub topic + subscription)
   // Gracefully skipped if GOOGLE_SERVICE_ACCOUNT_KEY / GOOGLE_PUBSUB_PUSH_URL are not set

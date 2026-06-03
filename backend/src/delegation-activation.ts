@@ -17,7 +17,6 @@ type ServiceResult =
     };
 
 const DELEGATION_BUNDLE_FORMAT = "listen.delegation-bundle";
-const VAULT_PUBLIC_KEY_PATH = ".well-known/vault-pubkey";
 
 interface DelegationBundle {
   format: typeof DELEGATION_BUNDLE_FORMAT;
@@ -43,8 +42,6 @@ interface ActivatableResource {
   resource: PortableResource;
 }
 
-let backendSecretsUnlock: Promise<ServiceResult> | null = null;
-
 export function deserializePortableDelegationSet(serialized: string): PortableDelegationSet {
   try {
     const parsed = JSON.parse(serialized) as unknown;
@@ -69,28 +66,6 @@ export function portableDelegationExpiry(input: PortableDelegationSet): Date | n
 
   if (expiries.length === 0) return null;
   return new Date(Math.min(...expiries.map((expiry) => expiry.getTime())));
-}
-
-export async function ensureBackendSecretsPrivateIdentity(
-  node: TinyCloudNode,
-): Promise<ServiceResult> {
-  if (hasPrivateEncryptionIdentity(node)) {
-    return { ok: true, data: undefined };
-  }
-
-  if (!backendSecretsUnlock) {
-    backendSecretsUnlock = unlockBackendSecretsPrivateIdentity(node).finally(() => {
-      backendSecretsUnlock = null;
-    });
-  }
-
-  const unlock = await backendSecretsUnlock;
-  if (!unlock.ok) return unlock;
-  if (hasPrivateEncryptionIdentity(node)) {
-    return { ok: true, data: undefined };
-  }
-
-  return secretError("Backend vault unlock did not produce a private encryption identity");
 }
 
 export async function activatePortableDelegation(
@@ -227,7 +202,6 @@ function attachDelegatedSecrets(
 
   if (secretResources.length === 0) return;
 
-  const kv = createFullPathSecretsKV(secretResources);
   const secrets = {
     get vault() {
       return node.secrets.vault;
@@ -242,14 +216,7 @@ function attachDelegatedSecrets(
         return secretError(`Invalid secret name: ${name}`);
       }
 
-      const unlock = await ensureBackendSecretsPrivateIdentity(node);
-      if (!unlock.ok) return unlock;
-
-      const result = await node.secrets.vault.getShared<{ value?: unknown }>(
-        "",
-        `secrets/${name}`,
-        { kv },
-      );
+      const result = await node.secrets.vault.get<{ value?: unknown }>(`secrets/${name}`);
 
       if (!result.ok) return result;
 
@@ -266,63 +233,6 @@ function attachDelegatedSecrets(
   };
 
   Object.defineProperty(combined, "secrets", { value: secrets, configurable: true });
-}
-
-function hasPrivateEncryptionIdentity(node: TinyCloudNode): boolean {
-  const vault = node.secrets.vault as unknown as {
-    encryptionIdentity?: { privateKey?: Uint8Array };
-  };
-  return node.secrets.isUnlocked && vault.encryptionIdentity?.privateKey?.length === 32;
-}
-
-async function unlockBackendSecretsPrivateIdentity(node: TinyCloudNode): Promise<ServiceResult> {
-  const vault = node.secrets.vault as unknown as {
-    config?: { tc?: { readPublicSpace?: (...args: unknown[]) => Promise<unknown> } };
-  };
-  const tc = vault.config?.tc;
-  const readPublicSpace = tc?.readPublicSpace;
-
-  if (!tc || typeof readPublicSpace !== "function") {
-    node.secrets.lock();
-    return node.secrets.unlock() as Promise<ServiceResult>;
-  }
-
-  node.secrets.lock();
-  tc.readPublicSpace = async (...args: unknown[]) => {
-    if (args[2] === VAULT_PUBLIC_KEY_PATH) {
-      return { ok: true, data: null };
-    }
-    return readPublicSpace.apply(tc, args);
-  };
-
-  try {
-    return (await node.secrets.unlock()) as ServiceResult;
-  } finally {
-    tc.readPublicSpace = readPublicSpace;
-  }
-}
-
-function createFullPathSecretsKV(secretResources: ActivatedResource[]) {
-  return {
-    get: async <V>(key: string, options?: { raw?: boolean }) => {
-      const match = findSecretResource(secretResources, key, "tinycloud.kv/get");
-      if (!match) return secretError(`No delegated secret read permission for ${key}`);
-      return match.access.kv.get<V>(key, { ...options, prefix: "" });
-    },
-  };
-}
-
-function findSecretResource(
-  resources: ActivatedResource[],
-  key: string,
-  action: string,
-): ActivatedResource | null {
-  return (
-    resources.find(({ resource }) => {
-      if (!resource.actions.includes(action)) return false;
-      return key === resource.path || key.startsWith(`${resource.path.replace(/\/$/, "")}/`);
-    }) ?? null
-  );
 }
 
 function isSecretsSpace(space: string | undefined): boolean {
