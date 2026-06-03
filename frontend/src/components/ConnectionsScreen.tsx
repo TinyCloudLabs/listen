@@ -21,6 +21,17 @@ interface ConnectionsScreenProps {
 
 type SourceId = "fireflies" | "granola" | "google-meet" | "assemblyai" | "deepgram";
 
+const LOCAL_IMPORTER_REFERENCE_URL = "https://github.com/TinyCloudLabs/listen-importer";
+const LOCAL_IMPORTER_RUN_COMMAND = "npx --yes github:TinyCloudLabs/listen-importer";
+const LOCAL_IMPORTER_GET_STARTED_COMMAND = `${LOCAL_IMPORTER_RUN_COMMAND} init && ${LOCAL_IMPORTER_RUN_COMMAND} doctor`;
+const LOCAL_IMPORTER_WORKFLOW = `${LOCAL_IMPORTER_RUN_COMMAND} auth
+${LOCAL_IMPORTER_RUN_COMMAND} scan /Volumes/MIC\\ MINI
+${LOCAL_IMPORTER_RUN_COMMAND} scan-source voice-memos --since yesterday
+${LOCAL_IMPORTER_RUN_COMMAND} scan-source voxterm
+${LOCAL_IMPORTER_RUN_COMMAND} preprocess --source all
+${LOCAL_IMPORTER_RUN_COMMAND} transcribe --source all --provider assemblyai
+${LOCAL_IMPORTER_RUN_COMMAND} upload --publish --use-downsampled --source all`;
+
 interface SourceRow {
   id: SourceId;
   name: string;
@@ -52,6 +63,8 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
   const [busySource, setBusySource] = useState<SourceId | "all" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showLocalImporter, setShowLocalImporter] = useState(false);
+  const [localImporterCopied, setLocalImporterCopied] = useState(false);
   const openTranscriptImport = onAddTranscript ?? onAddSource;
 
   const sources: SourceRow[] = [
@@ -110,6 +123,13 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
   const connected = sources.filter((source) => source.connected);
   const available = sources.filter((source) => !source.connected);
   const syncableConnected = connected.filter((source) => source.ready && source.syncable);
+  const availableCount = available.length + 2;
+
+  const copyLocalImporterCommand = async () => {
+    await navigator.clipboard?.writeText(LOCAL_IMPORTER_GET_STARTED_COMMAND);
+    setLocalImporterCopied(true);
+    window.setTimeout(() => setLocalImporterCopied(false), 1600);
+  };
 
   const syncSource = async (source: SourceId) => {
     setBusySource(source);
@@ -245,7 +265,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
         )}
 
         <div style={{ ...s.sectionLabelRow, marginTop: 28 }}>
-          <span style={s.sectionLabel}>— available · {available.length + 1}</span>
+          <span style={s.sectionLabel}>— available · {availableCount}</span>
           <span style={s.sectionRule} />
         </div>
 
@@ -261,6 +281,82 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
             Import
           </button>
         </div>
+
+        <div style={s.availableCard}>
+          <span style={s.markIdle} />
+          <div>
+            <div style={s.sourceName}>Import local</div>
+            <p style={s.availableDesc}>
+              Use listen-importer for recorder disks, Apple Voice Memos, VoxTerm transcripts, local
+              preprocessing, transcription, and publishing.
+            </p>
+          </div>
+          <button
+            type="button"
+            style={s.btnGhostSm}
+            onClick={() => setShowLocalImporter((open) => !open)}
+          >
+            Get started
+          </button>
+        </div>
+
+        {showLocalImporter && (
+          <div style={s.importerPanel}>
+            <div style={s.importerHeader}>
+              <div>
+                <div style={s.sourceName}>listen-importer</div>
+                <p style={s.availableDesc}>
+                  Runs on your Mac, scans local audio or transcript sources, keeps a local cache,
+                  downsampled media, and transcripts, then writes conversations into the same Listen
+                  TinyCloud space. Requires Bun and TinyCloud CLI auth.
+                </p>
+              </div>
+              <a
+                href={LOCAL_IMPORTER_REFERENCE_URL}
+                target="_blank"
+                rel="noreferrer"
+                style={s.referenceLink}
+              >
+                Reference
+              </a>
+            </div>
+
+            <div style={s.commandHeader}>
+              <span style={s.sourceMeta}>GET STARTED COMMAND</span>
+              <button
+                type="button"
+                style={s.btnGhostSm}
+                onClick={() => void copyLocalImporterCommand()}
+              >
+                {localImporterCopied ? "Copied" : "Copy"}
+              </button>
+            </div>
+            <pre style={s.commandBlock}>
+              <code>{LOCAL_IMPORTER_GET_STARTED_COMMAND}</code>
+            </pre>
+
+            <div style={s.importerGrid}>
+              <div>
+                <div style={s.sourceMeta}>SUPPORTED LOCAL SOURCES</div>
+                <p style={s.availableDesc}>
+                  MIC MINI and generic recorder volumes, Apple Voice Memos, and VoxTerm markdown
+                  transcripts.
+                </p>
+              </div>
+              <div>
+                <div style={s.sourceMeta}>WORKFLOW</div>
+                <p style={s.availableDesc}>
+                  Scan, preprocess or downsample, transcribe with AssemblyAI or Deepgram, then
+                  upload with <code>--publish</code>.
+                </p>
+              </div>
+            </div>
+
+            <pre style={s.commandBlock}>
+              <code>{LOCAL_IMPORTER_WORKFLOW}</code>
+            </pre>
+          </div>
+        )}
 
         {available.length === 0 ? (
           <div style={s.empty}>All provider sources are connected.</div>
@@ -377,6 +473,56 @@ const s: Record<string, React.CSSProperties> = {
     gap: 14,
     alignItems: "center",
     marginBottom: 8,
+  },
+  importerPanel: {
+    border: "var(--lst-border)",
+    padding: "16px 18px",
+    marginBottom: 8,
+    background: "var(--lst-ink-08)",
+  },
+  importerHeader: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) auto",
+    gap: 14,
+    alignItems: "start",
+    marginBottom: 14,
+  },
+  importerGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+    gap: 14,
+    margin: "14px 0",
+  },
+  commandHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 8,
+  },
+  commandBlock: {
+    margin: 0,
+    padding: "12px 14px",
+    overflowX: "auto",
+    border: "var(--lst-border)",
+    background: "var(--lst-bg)",
+    color: "var(--lst-blue)",
+    fontFamily: MONO,
+    fontSize: 11,
+    lineHeight: 1.6,
+    whiteSpace: "pre",
+  },
+  referenceLink: {
+    fontFamily: FONT,
+    border: "var(--lst-border)",
+    background: "transparent",
+    color: "var(--lst-blue)",
+    borderRadius: 999,
+    padding: "6px 12px",
+    fontSize: 12.5,
+    fontWeight: 500,
+    textDecoration: "none",
+    whiteSpace: "nowrap",
   },
   sourceName: {
     fontSize: 15,

@@ -33,6 +33,7 @@ function createMockKV() {
 interface MockSQLConfig {
   conversationRows?: Record<string, unknown>[];
   totalCount?: number;
+  sourceCounts?: Record<string, unknown>[];
   participantRows?: Record<string, unknown>[];
   detailRow?: Record<string, unknown>;
 }
@@ -53,6 +54,11 @@ function createMockSQL(config: MockSQLConfig = {}) {
     // List conversations (has participant_count subquery) — check before COUNT
     if (sql.includes("participant_count") && sql.includes("ORDER BY")) {
       return { ok: true, data: toArrayRows(config.conversationRows ?? []) };
+    }
+
+    // Source counts
+    if (sql.includes("GROUP BY source")) {
+      return { ok: true, data: toArrayRows(config.sourceCounts ?? []) };
     }
 
     // COUNT query for total
@@ -209,6 +215,7 @@ describe("Conversations Routes — GET /api/conversations", () => {
         },
       ],
       totalCount: 2,
+      sourceCounts: [{ source: "fireflies", total: 2 }],
     });
     const app = createApp(mockKV, mockSQL);
     ({ server, port } = await startServer(app));
@@ -222,6 +229,7 @@ describe("Conversations Routes — GET /api/conversations", () => {
     expect(body.conversations[0].id).toBe("conv-1");
     expect(body.conversations[0].participant_count).toBe(3);
     expect(body.conversations[0].title).toBe("Sprint Planning");
+    expect(body.source_counts).toEqual([{ source: "fireflies", total: 2 }]);
   });
 
   it("uses default limit=20 and offset=0", async () => {

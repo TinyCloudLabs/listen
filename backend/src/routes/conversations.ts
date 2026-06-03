@@ -51,6 +51,11 @@ interface TranscribeBody {
   startedAt?: unknown;
 }
 
+interface SourceCount {
+  source: string;
+  total: number;
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────
 
 /**
@@ -67,6 +72,15 @@ function rowToObject(row: unknown[], columns: string[]): Record<string, unknown>
 
 function rowsToObjects(rows: unknown[][], columns: string[]): Record<string, unknown>[] {
   return rows.map((row) => rowToObject(row, columns));
+}
+
+function normalizeSourceCounts(rows: Record<string, unknown>[]): SourceCount[] {
+  return rows
+    .map((row) => ({
+      source: typeof row.source === "string" ? row.source : "",
+      total: Number(row.total) || 0,
+    }))
+    .filter((row) => row.source.length > 0 && row.total > 0);
 }
 
 function cleanRequiredString(value: unknown, field: string): string {
@@ -397,6 +411,21 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         total = Number(countRow.total) || 0;
       }
 
+      const sourceCountsResult = await sqlDb.query(
+        `SELECT source, COUNT(*) AS total
+         FROM conversation
+         GROUP BY source`,
+      );
+      const sourceCounts =
+        sourceCountsResult.ok && sourceCountsResult.data.rows
+          ? normalizeSourceCounts(
+              rowsToObjects(
+                sourceCountsResult.data.rows as unknown[][],
+                sourceCountsResult.data.columns,
+              ),
+            )
+          : [];
+
       // Paginated list with participant_count subquery
       const listSql = source
         ? `SELECT c.id, c.title, c.source, c.source_url, c.started_at, c.duration_secs, c.summary, c.created_at,
@@ -417,7 +446,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         ? rowsToObjects(listResult.data.rows as unknown[][], listResult.data.columns)
         : [];
 
-      res.json({ conversations, total });
+      res.json({ conversations, total, source_counts: sourceCounts });
     } catch (err) {
       console.error("[conversations] list failed:", err);
       const message = err instanceof Error ? err.message : String(err);

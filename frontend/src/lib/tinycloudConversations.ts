@@ -44,12 +44,18 @@ interface ConversationDetailPath {
 interface ConversationsResponse {
   conversations: Record<string, unknown>[];
   total: number;
+  source_counts: SourceCount[];
 }
 
 interface DetailResponse {
   conversation: Record<string, unknown>;
   participants: Record<string, unknown>[];
   transcript: unknown;
+}
+
+interface SourceCount {
+  source: string;
+  total: number;
 }
 
 function resultErrorMessage(result: unknown, fallback: string): string {
@@ -92,6 +98,15 @@ function rowsToObjects(result: unknown): Record<string, unknown>[] {
     : [];
 
   return rows.map((row) => rowToObject(row, columns));
+}
+
+function normalizeSourceCounts(rows: Record<string, unknown>[]): SourceCount[] {
+  return rows
+    .map((row) => ({
+      source: typeof row.source === "string" ? row.source : "",
+      total: Number(row.total) || 0,
+    }))
+    .filter((row) => row.source.length > 0 && row.total > 0);
 }
 
 function kvData(result: unknown): unknown {
@@ -373,6 +388,15 @@ async function listConversations(
   const countParams = source ? [source] : [];
   const countRows = rowsToObjects(await access.sql.query(countSql, countParams));
   const total = Number(countRows[0]?.total) || 0;
+  const source_counts = normalizeSourceCounts(
+    rowsToObjects(
+      await access.sql.query(
+        `SELECT source, COUNT(*) AS total
+         FROM conversation
+         GROUP BY source`,
+      ),
+    ),
+  );
 
   const listSql = source
     ? `SELECT c.id, c.title, c.source, c.source_url, c.started_at, c.duration_secs, c.summary, c.created_at,
@@ -391,7 +415,7 @@ async function listConversations(
     normalizeConversationRow,
   );
 
-  return { conversations, total };
+  return { conversations, total, source_counts };
 }
 
 async function getConversationDetail(

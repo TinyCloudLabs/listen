@@ -85,6 +85,12 @@ const CONVERSATIONS = [
 ];
 
 const PAGE_SIZE = 20;
+const IMPORTED_SOURCE_COUNTS = [
+  { source: "fireflies", total: 3 },
+  { source: "recorder", total: 1 },
+  { source: "voice_memos", total: 1 },
+  { source: "voxterm", total: 1 },
+];
 
 describe("ConversationList", () => {
   let api: ApiClient;
@@ -159,6 +165,7 @@ describe("ConversationList", () => {
       get: vi.fn().mockResolvedValue({
         conversations: CONVERSATIONS,
         total: CONVERSATIONS.length,
+        source_counts: IMPORTED_SOURCE_COUNTS,
       }),
     });
 
@@ -426,18 +433,54 @@ describe("ConversationList", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /all sources/i })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /^fireflies$/i })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /^meet$/i })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /^recorder$/i })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /^voice memos$/i })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /^voxterm$/i })).toBeInTheDocument();
     });
+    expect(screen.queryByRole("button", { name: /^meet$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^granola$/i })).not.toBeInTheDocument();
   });
 
-  it("filters by source locally without refetching or showing the loading state", async () => {
+  it("hides imported source filters when that source has no loaded conversations", async () => {
+    api = mockApi({
+      get: vi.fn().mockResolvedValue({
+        conversations: CONVERSATIONS.slice(0, 3),
+        total: 3,
+        source_counts: [{ source: "fireflies", total: 3 }],
+      }),
+    });
+    render(<ConversationList api={api} onSelectConversation={onSelectConversation} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /all sources/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^fireflies$/i })).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole("button", { name: /^recorder$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^voice memos$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^voxterm$/i })).not.toBeInTheDocument();
+  });
+
+  it("filters by source with a filtered conversations request", async () => {
     const allConversations = CONVERSATIONS;
+    const recorderConversations = [CONVERSATIONS[3]];
     const getMock = vi
       .fn()
-      .mockResolvedValue({ conversations: allConversations, total: allConversations.length });
+      .mockResolvedValueOnce({
+        conversations: allConversations,
+        total: allConversations.length,
+        source_counts: IMPORTED_SOURCE_COUNTS,
+      })
+      .mockResolvedValueOnce({
+        conversations: recorderConversations,
+        total: recorderConversations.length,
+        source_counts: IMPORTED_SOURCE_COUNTS,
+      })
+      .mockResolvedValueOnce({
+        conversations: allConversations,
+        total: allConversations.length,
+        source_counts: IMPORTED_SOURCE_COUNTS,
+      });
     api = mockApi({ get: getMock });
 
     render(<ConversationList api={api} onSelectConversation={onSelectConversation} />);
@@ -449,20 +492,26 @@ describe("ConversationList", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /^recorder$/i }));
 
-    expect(screen.getByText("Recorder Memo")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("Recorder Memo")).toBeInTheDocument();
+      expect(screen.getByText("showing 1 of 1")).toBeInTheDocument();
+    });
     expect(screen.queryByText("Sprint Planning")).not.toBeInTheDocument();
     expect(screen.queryByText("Voice Memo")).not.toBeInTheDocument();
-    expect(screen.queryByText("Loading conversations")).not.toBeInTheDocument();
-    expect(screen.getByText(`showing 1 of ${allConversations.length}`)).toBeInTheDocument();
-    expect(getMock).toHaveBeenCalledTimes(1);
+    expect(getMock).toHaveBeenCalledTimes(2);
     expect(getMock).toHaveBeenCalledWith("/api/conversations?limit=20&offset=0");
+    expect(getMock).toHaveBeenCalledWith("/api/conversations?limit=20&offset=0&source=recorder");
 
     fireEvent.click(screen.getByRole("button", { name: /all sources/i }));
 
-    expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
-    expect(screen.getByText("Recorder Memo")).toBeInTheDocument();
-    expect(screen.getByText("Voice Memo")).toBeInTheDocument();
-    expect(getMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
+      expect(screen.getByText("Recorder Memo")).toBeInTheDocument();
+      expect(screen.getByText("Voice Memo")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(getMock).toHaveBeenCalledTimes(3);
+    });
   });
 
   it("shows source badge on conversation rows", async () => {

@@ -57,6 +57,26 @@ describe("ConnectionsScreen", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows local importer instructions from the available section", () => {
+    renderConnections();
+
+    expect(screen.getByText("Import local")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /get started/i }));
+
+    expect(screen.getByText("listen-importer")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /reference/i })).toHaveAttribute(
+      "href",
+      "https://github.com/TinyCloudLabs/listen-importer",
+    );
+    expect(
+      screen.getByText(
+        "npx --yes github:TinyCloudLabs/listen-importer init && npx --yes github:TinyCloudLabs/listen-importer doctor",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/MIC MINI and generic recorder volumes/i)).toBeInTheDocument();
+  });
+
   it("runs finish setup when a transcription key exists without backend access", async () => {
     const onFinish = vi.fn().mockResolvedValue(undefined);
     renderConnections({

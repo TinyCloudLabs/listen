@@ -54,6 +54,9 @@ describe("createTinyCloudConversationApi", () => {
     const backendGet = vi.fn();
     const api = mockApi({ get: backendGet });
     const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      if (sql.includes("GROUP BY source")) {
+        return { ok: true, data: toArrayRows([{ source: "fireflies", total: 1 }]) };
+      }
       if (sql.includes("COUNT(*) AS total")) {
         return { ok: true, data: toArrayRows([{ total: 1 }]) };
       }
@@ -80,12 +83,15 @@ describe("createTinyCloudConversationApi", () => {
     });
     const client = createTinyCloudConversationApi(api, mockTinyCloud(query));
 
-    const result = await client.get<{ conversations: Array<{ id: string }>; total: number }>(
-      "/api/conversations?limit=20&offset=0",
-    );
+    const result = await client.get<{
+      conversations: Array<{ id: string }>;
+      total: number;
+      source_counts: Array<{ source: string; total: number }>;
+    }>("/api/conversations?limit=20&offset=0");
 
     expect(result.total).toBe(1);
     expect(result.conversations[0]?.id).toBe("01ABC");
+    expect(result.source_counts).toEqual([{ source: "fireflies", total: 1 }]);
     expect(backendGet).not.toHaveBeenCalled();
   });
 
