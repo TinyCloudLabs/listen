@@ -238,6 +238,37 @@ describe("ConversationDetail", () => {
     });
   });
 
+  it("renders recorder conversations with nullable timestamps safely", async () => {
+    const nullTimingResponse = {
+      ...DETAIL_RESPONSE,
+      conversation: {
+        ...DETAIL_RESPONSE.conversation,
+        source: "recorder",
+        started_at: null,
+        ended_at: null,
+        duration_secs: null,
+      },
+      transcript: [
+        {
+          speakerName: "Ada",
+          text: "Let's start the sprint planning.",
+          startTime: null,
+          endTime: null,
+          languageCode: "en",
+        },
+      ],
+    };
+    api = mockApi({ get: vi.fn().mockResolvedValue(nullTimingResponse) });
+
+    render(<ConversationDetail api={api} conversationId="01ABC" onBack={onBack} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("RECORDER")).toBeInTheDocument();
+      expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+      expect(screen.getByText(/let's start the sprint planning/i)).toBeInTheDocument();
+    });
+  });
+
   it("shows 'View on Fireflies' link when source_url is present", async () => {
     api = mockApi({ get: vi.fn().mockResolvedValue(DETAIL_RESPONSE) });
 

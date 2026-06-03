@@ -2,7 +2,7 @@ import { useState, type CSSProperties, type FC } from "react";
 
 export interface MobileDetailSentence {
   speakerName: string;
-  startTime: number; // seconds
+  startTime: number | null; // seconds
   text: string;
 }
 
@@ -10,8 +10,8 @@ export interface MobileDetailData {
   id: string;
   title: string;
   source: string;
-  startedAt: string; // ISO
-  durationSecs: number;
+  startedAt: string | null; // ISO
+  durationSecs: number | null;
   summary: string | null;
 }
 
@@ -26,10 +26,14 @@ type DetailTab = "summary" | "transcript";
 function srcLabel(s: string): string {
   if (s === "google-meet") return "MEET";
   if (s === "manual") return "MANUAL";
+  if (s === "recorder") return "RECORDER";
+  if (s === "voice_memos") return "VOICE MEMOS";
+  if (s === "voxterm") return "VOXTERM";
   return s.toUpperCase();
 }
 
-function formatTimestamp(secs: number): string {
+function formatTimestamp(secs: number | null): string {
+  if (secs == null || Number.isNaN(secs)) return "—";
   const h = Math.floor(secs / 3600);
   const m = Math.floor((secs % 3600) / 60);
   const s = Math.floor(secs % 60);
@@ -37,8 +41,10 @@ function formatTimestamp(secs: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function formatDateMono(iso: string): string {
+function formatDateMono(iso: string | null): string {
+  if (!iso) return "—";
   const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
   return d
     .toLocaleDateString("en-US", { month: "short", day: "2-digit" })
     .toUpperCase()

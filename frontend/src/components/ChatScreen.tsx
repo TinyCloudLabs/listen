@@ -11,7 +11,7 @@ interface ConversationSummary {
   id: string;
   title: string;
   source: string;
-  started_at: string;
+  started_at: string | null;
   summary: string | null;
 }
 
@@ -23,7 +23,7 @@ interface ConversationsResponse {
 interface TranscriptSentence {
   speaker_name: string;
   text: string;
-  start_time: number;
+  start_time: number | null;
 }
 
 interface DetailResponse {
@@ -90,13 +90,22 @@ function sourceLabel(source: string): string {
       return "GRANOLA";
     case "manual":
       return "MANUAL";
+    case "recorder":
+      return "RECORDER";
+    case "voice_memos":
+      return "VOICE MEMOS";
+    case "voxterm":
+      return "VOXTERM";
     default:
       return source.toUpperCase();
   }
 }
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+function formatDate(iso: string | null): string {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 function cleanText(text: string): string {

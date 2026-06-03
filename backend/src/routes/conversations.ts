@@ -5,6 +5,12 @@ import type { NormalizedConversation } from "../adapters/types.js";
 import { conversationSql, ensureSchema } from "../schema.js";
 import { persistConversation } from "../services/persist-conversation.js";
 import {
+  isBase64AudioStorage,
+  normalizeConversationMetadata,
+  normalizeTranscript,
+  resolveAudioKey,
+} from "../services/conversation-normalization.js";
+import {
   TRANSCRIPTION_SECRET_NAMES,
   createTranscriptionProvider,
   parseTranscriptionProvider,
@@ -25,7 +31,6 @@ interface ConversationsRoutesConfig {
 
 const DEFAULT_LIMIT = 20;
 const DEFAULT_OFFSET = 0;
-const BASE64_AUDIO_STORAGE_ENCODING = "base64-string-kv";
 
 interface ManualTranscriptImportBody {
   title?: unknown;
@@ -98,17 +103,24 @@ async function resolveAudioPlaybackMetadata(
   id: string,
   metadata: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  const audioKey =
-    typeof metadata.audio_data_kv_key === "string" ? metadata.audio_data_kv_key : null;
-  if (!audioKey) return metadata;
+  const normalized = normalizeConversationMetadata(metadata);
+  const audioKey = resolveAudioKey(normalized);
+  if (!audioKey) return normalized;
+
+  if (
+    typeof normalized.audio_playback_url === "string" &&
+    normalized.audio_playback_url.length > 0
+  ) {
+    return normalized;
+  }
 
   const fallback = {
-    ...metadata,
+    ...normalized,
     audio_playback_url: audioFallbackUrl(id),
     audio_playback_url_source: "backend-kv-fallback",
   };
 
-  if (metadata.audio_storage_encoding === BASE64_AUDIO_STORAGE_ENCODING) {
+  if (isBase64AudioStorage(normalized)) {
     return fallback;
   }
 
@@ -121,7 +133,7 @@ async function resolveAudioPlaybackMetadata(
     const signedResult = await createSignedReadUrl.call(access.kv, audioKey);
     if (signedResult.ok && signedResult.data?.url) {
       return {
-        ...metadata,
+        ...normalized,
         audio_playback_url: signedResult.data.url,
         audio_signed_url_expires_at: signedResult.data.expiresAt,
         audio_playback_url_source: "tinycloud-signed-kv",
@@ -523,15 +535,11 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
 
       const row = rowToObject(convoResult.data.rows[0] as unknown[], convoResult.data.columns);
 
-      // Parse metadata from JSON string
-      let metadata: Record<string, unknown> = {};
-      try {
-        metadata = row.metadata ? JSON.parse(String(row.metadata)) : {};
-      } catch {
-        metadata = {};
-      }
-
-      metadata = await resolveAudioPlaybackMetadata(access, id, metadata);
+      const metadata = await resolveAudioPlaybackMetadata(
+        access,
+        id,
+        normalizeConversationMetadata(row.metadata),
+      );
 
       const conversation = { ...row, metadata };
 
@@ -558,15 +566,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
       if (kvResult.ok && kvResult.data.data) {
         const raw = kvResult.data.data;
         // KV may return already-parsed object or a JSON string
-        if (typeof raw === "string") {
-          try {
-            transcript = JSON.parse(raw);
-          } catch {
-            transcript = null;
-          }
-        } else {
-          transcript = raw;
-        }
+        transcript = normalizeTranscript(raw);
       }
 
       res.json({ conversation, participants, transcript });
@@ -596,18 +596,24 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         ? convoResult.data.rows[0][0]
         : (convoResult.data.rows[0] as any).metadata;
 
-      let metadata: Record<string, unknown> = {};
-      try {
-        metadata = rawMetadata ? JSON.parse(String(rawMetadata)) : {};
-      } catch {
-        metadata = {};
-      }
-
-      const audioKey =
-        typeof metadata.audio_data_kv_key === "string" ? metadata.audio_data_kv_key : null;
+      const metadata = normalizeConversationMetadata(rawMetadata);
+      const audioKey = resolveAudioKey(metadata);
       if (!audioKey) {
         res.status(404).json({ error: "audio_not_found", message: "No audio is available" });
         return;
+      }
+
+      if (!isBase64AudioStorage(metadata) && typeof access.kv.createSignedReadUrl === "function") {
+        try {
+          const signedResult = await access.kv.createSignedReadUrl.call(access.kv, audioKey);
+          const signedData = signedResult as { ok?: boolean; data?: { url?: unknown } } | null;
+          if (signedData?.ok && typeof signedData.data?.url === "string") {
+            res.redirect(302, signedData.data.url);
+            return;
+          }
+        } catch {
+          // Fall back to direct KV read below.
+        }
       }
 
       const kvResult = await access.kv.get(audioKey);
@@ -616,17 +622,34 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         return;
       }
 
-      const base64Audio = typeof kvResult.data.data === "string" ? kvResult.data.data : null;
-      if (!base64Audio) {
-        res.status(404).json({ error: "audio_not_found", message: "Stored audio is invalid" });
-        return;
-      }
-
       const contentType =
         typeof metadata.audio_content_type === "string"
           ? metadata.audio_content_type
           : "audio/mpeg";
-      const buffer = Buffer.from(base64Audio, "base64");
+
+      let buffer: Buffer | null = null;
+      const rawAudio = kvResult.data.data;
+      if (isBase64AudioStorage(metadata)) {
+        if (typeof rawAudio !== "string") {
+          res.status(404).json({ error: "audio_not_found", message: "Stored audio is invalid" });
+          return;
+        }
+        buffer = Buffer.from(rawAudio, "base64");
+      } else if (typeof rawAudio === "string") {
+        buffer = Buffer.from(rawAudio);
+      } else if (Buffer.isBuffer(rawAudio)) {
+        buffer = rawAudio;
+      } else if (rawAudio instanceof ArrayBuffer) {
+        buffer = Buffer.from(rawAudio);
+      } else if (ArrayBuffer.isView(rawAudio)) {
+        buffer = Buffer.from(rawAudio.buffer, rawAudio.byteOffset, rawAudio.byteLength);
+      }
+
+      if (!buffer) {
+        res.status(404).json({ error: "audio_not_found", message: "Stored audio is invalid" });
+        return;
+      }
+
       const contentLength =
         typeof metadata.audio_size_bytes === "number" &&
         Number.isFinite(metadata.audio_size_bytes) &&

@@ -4,8 +4,8 @@ export interface InboxRowConversation {
   id: string;
   title: string;
   source: string;
-  started_at: string;
-  duration_secs: number;
+  started_at: string | null;
+  duration_secs: number | null;
   summary: string | null;
   participant_count: number;
 }
@@ -26,14 +26,20 @@ const SOURCE_LABEL: Record<string, string> = {
   otter: "OTTER",
   audio: "AUDIO",
   manual: "MANUAL",
+  recorder: "RECORDER",
+  voice_memos: "VOICE MEMOS",
+  voxterm: "VOXTERM",
 };
 
-function formatTime(iso: string): string {
+function formatTime(iso: string | null): string {
+  if (!iso) return "—";
   const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
-function formatDuration(secs: number): string {
+function formatDuration(secs: number | null): string {
+  if (secs == null || Number.isNaN(secs)) return "—";
   if (secs >= 3600) return `${Math.round(secs / 3600)} hr`;
   return `${Math.round(secs / 60)} min`;
 }

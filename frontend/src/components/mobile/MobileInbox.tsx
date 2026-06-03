@@ -4,8 +4,8 @@ export interface MobileInboxItem {
   id: string;
   title: string;
   source: string;
-  startedAt: string; // ISO
-  durationSecs: number;
+  startedAt: string | null; // ISO
+  durationSecs: number | null;
   preview: string | null;
 }
 
@@ -22,7 +22,8 @@ interface MobileInboxProps {
   error?: string | null;
 }
 
-function formatDuration(secs: number): string {
+function formatDuration(secs: number | null): string {
+  if (secs == null || Number.isNaN(secs)) return "—";
   const h = Math.floor(secs / 3600);
   const m = Math.floor((secs % 3600) / 60);
   const s = Math.floor(secs % 60);
@@ -30,16 +31,21 @@ function formatDuration(secs: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString("en-US", {
+function formatTime(iso: string | null): string {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleTimeString("en-US", {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
   });
 }
 
-function dayBucket(iso: string): string {
+function dayBucket(iso: string | null): string {
+  if (!iso) return "unknown";
   const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "unknown";
   const now = new Date();
   const day = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -52,6 +58,9 @@ function dayBucket(iso: string): string {
 
 function srcLabel(s: string): string {
   if (s === "google-meet") return "MEET";
+  if (s === "recorder") return "RECORDER";
+  if (s === "voice_memos") return "VOICE MEMOS";
+  if (s === "voxterm") return "VOXTERM";
   return s.toUpperCase();
 }
 

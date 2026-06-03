@@ -10,8 +10,8 @@ interface Conversation {
   title: string;
   source: string;
   source_url: string | null;
-  started_at: string;
-  duration_secs: number;
+  started_at: string | null;
+  duration_secs: number | null;
   summary: string | null;
   created_at: string;
   participant_count: number;
@@ -35,8 +35,11 @@ function conversationPagePath(page: number): string {
   return `/api/conversations?limit=${PAGE_SIZE}&offset=${offset}`;
 }
 
-function formatGroupDate(isoString: string): string {
-  return new Date(isoString).toLocaleDateString("en-US", {
+function formatGroupDate(isoString: string | null): string {
+  if (!isoString) return "Unknown date";
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return "Unknown date";
+  return date.toLocaleDateString("en-US", {
     weekday: "short",
     month: "short",
     day: "numeric",

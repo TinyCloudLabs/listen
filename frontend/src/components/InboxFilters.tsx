@@ -1,6 +1,14 @@
 import type { FC } from "react";
 
-export type SourceFilter = "all" | "fireflies" | "granola" | "google-meet" | "manual";
+export type SourceFilter =
+  | "all"
+  | "fireflies"
+  | "granola"
+  | "google-meet"
+  | "manual"
+  | "recorder"
+  | "voice_memos"
+  | "voxterm";
 
 interface InboxFiltersProps {
   total: number;
@@ -15,6 +23,9 @@ const SOURCE_CHIPS: Array<{ key: SourceFilter; label: string }> = [
   { key: "granola", label: "Granola" },
   { key: "google-meet", label: "Meet" },
   { key: "manual", label: "Manual" },
+  { key: "recorder", label: "Recorder" },
+  { key: "voice_memos", label: "Voice Memos" },
+  { key: "voxterm", label: "VoxTerm" },
 ];
 
 export const InboxFilters: FC<InboxFiltersProps> = ({

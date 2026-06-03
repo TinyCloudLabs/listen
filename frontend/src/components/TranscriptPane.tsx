@@ -1,22 +1,16 @@
 import { useMemo, useState, type FC } from "react";
+import type { NormalizedTranscriptSentence } from "../lib/tinycloudConversations";
 
 // ── Transcript pane ──────────────────────────────────────────────────
 // Per l-app-screens.jsx line 51: find-in-transcript + speaker filter
 // tools, then the transcript blocks. Audio controls stay hidden until
 // the backend exposes playable audio URLs.
 
-export interface TranscriptSentence {
-  index: number;
-  speaker_id: string;
-  speaker_name: string;
-  text: string;
-  start_time: number;
-  end_time: number;
-}
+export type TranscriptSentence = NormalizedTranscriptSentence;
 
 interface TranscriptBlock {
   speakerName: string;
-  startTime: number;
+  startTime: number | null;
   text: string;
 }
 
@@ -24,7 +18,8 @@ interface TranscriptPaneProps {
   transcript: TranscriptSentence[] | null;
 }
 
-function formatTimestamp(seconds: number): string {
+function formatTimestamp(seconds: number | null): string {
+  if (seconds == null || Number.isNaN(seconds)) return "—";
   const hrs = Math.floor(seconds / 3600);
   const mins = Math.floor((seconds % 3600) / 60);
   const secs = Math.floor(seconds % 60);
@@ -41,7 +36,7 @@ function groupSentences(sentences: TranscriptSentence[]): TranscriptBlock[] {
     } else {
       blocks.push({
         speakerName: sentence.speaker_name || "",
-        startTime: sentence.start_time,
+        startTime: sentence.start_time ?? null,
         text: sentence.text,
       });
     }
