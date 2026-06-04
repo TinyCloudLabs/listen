@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties, type FC } from "react";
 import type { ApiClient } from "@listen/client";
+import type { TranscriptSentence } from "../TranscriptPane";
 import {
   readConversationDetailCache,
   readConversationPageCache,
@@ -12,26 +13,25 @@ import { MobileChat, type MobileChatCitation, type MobileChatMessage } from "./M
 import { MobileDetail, type MobileDetailData, type MobileDetailSentence } from "./MobileDetail";
 import { MobileInbox, type MobileInboxItem } from "./MobileInbox";
 import { MobileShell, type MobileTab } from "./MobileShell";
+import {
+  normalizeConversationMetadata,
+  normalizeTranscript,
+} from "../../lib/tinycloudConversations";
 
 interface ConversationSummary {
   id: string;
   title: string;
   source: string;
   source_url: string | null;
-  started_at: string;
-  duration_secs: number;
+  started_at: string | null;
+  duration_secs: number | null;
   summary: string | null;
+  metadata?: Record<string, unknown>;
 }
 
 interface ConversationsResponse {
   conversations: ConversationSummary[];
   total: number;
-}
-
-interface TranscriptSentence {
-  speaker_name: string;
-  text: string;
-  start_time: number;
 }
 
 interface DetailResponse {
@@ -97,13 +97,22 @@ function sourceLabel(source: string): string {
       return "GOOGLE MEET";
     case "manual":
       return "MANUAL";
+    case "recorder":
+      return "RECORDER";
+    case "voice_memos":
+      return "VOICE MEMOS";
+    case "voxterm":
+      return "VOXTERM";
     default:
       return source.toUpperCase();
   }
 }
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+function formatDate(iso: string | null): string {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 function cleanText(text: string): string {
@@ -159,6 +168,17 @@ function toMobileTranscript(transcript: TranscriptSentence[] | null): MobileDeta
     startTime: line.start_time,
     text: line.text,
   }));
+}
+
+function normalizeDetailResponse(response: DetailResponse): DetailResponse {
+  return {
+    ...response,
+    conversation: {
+      ...response.conversation,
+      metadata: normalizeConversationMetadata(response.conversation.metadata),
+    },
+    transcript: normalizeTranscript(response.transcript),
+  };
 }
 
 function MobileState({
@@ -240,9 +260,13 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
       .get<ConversationsResponse>(MOBILE_CONVERSATIONS_PATH)
       .then((res) => {
         if (cancelled) return;
-        setConversations(res.conversations);
-        setTotal(res.total);
-        writeConversationPageCache(MOBILE_CONVERSATIONS_PATH, res);
+        const next = {
+          conversations: Array.isArray(res.conversations) ? res.conversations : [],
+          total: Number.isFinite(res.total) ? res.total : 0,
+        };
+        setConversations(next.conversations);
+        setTotal(next.total);
+        writeConversationPageCache(MOBILE_CONVERSATIONS_PATH, next);
         setConversationError(null);
       })
       .catch((err) => {
@@ -270,7 +294,7 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
     setDetailError(null);
 
     if (cached) {
-      setDetail(cached.data);
+      setDetail(normalizeDetailResponse(cached.data));
       setLoadingDetail(false);
     } else {
       setDetail(null);
@@ -281,8 +305,9 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
       .get<DetailResponse>(`/api/conversations/${selectedConversationId}`)
       .then((res) => {
         if (cancelled) return;
-        setDetail(res);
-        writeConversationDetailCache(selectedConversationId, res);
+        const normalized = normalizeDetailResponse(res);
+        setDetail(normalized);
+        writeConversationDetailCache(selectedConversationId, normalized);
       })
       .catch((err) => {
         if (!cancelled && !cached) {

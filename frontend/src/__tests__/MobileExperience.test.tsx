@@ -132,8 +132,10 @@ describe("MobileExperience", () => {
     const conversations = [
       CONVERSATION,
       { ...CONVERSATION, id: "02GRN", title: "Granola Review", source: "granola" },
+      { ...CONVERSATION, id: "03VM", title: "Voice Memo", source: "voice_memos" },
+      { ...CONVERSATION, id: "04VX", title: "VoxTerm Session", source: "voxterm" },
     ];
-    const getMock = vi.fn().mockResolvedValue({ conversations, total: 2 });
+    const getMock = vi.fn().mockResolvedValue({ conversations, total: conversations.length });
     api = mockApi({ get: getMock });
 
     renderMobile(api);
@@ -141,6 +143,10 @@ describe("MobileExperience", () => {
     await waitFor(() => {
       expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
       expect(screen.getByText("Granola Review")).toBeInTheDocument();
+      expect(screen.getByText("Voice Memo")).toBeInTheDocument();
+      expect(screen.getByText("VoxTerm Session")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "VOICE MEMOS" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "VOXTERM" })).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole("button", { name: "FIREFLIES" }));
@@ -152,7 +158,42 @@ describe("MobileExperience", () => {
 
     expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
     expect(screen.getByText("Granola Review")).toBeInTheDocument();
+    expect(screen.getByText("Voice Memo")).toBeInTheDocument();
     expect(getMock).toHaveBeenCalledTimes(1);
     expect(getMock).toHaveBeenCalledWith(MOBILE_CONVERSATIONS_PATH);
+  });
+
+  it("renders mobile detail with nullable timestamps and partner source labels", async () => {
+    const detail = {
+      conversation: {
+        ...CONVERSATION,
+        source: "voxterm",
+        started_at: null,
+        duration_secs: null,
+        metadata: {},
+      },
+      transcript: [
+        {
+          speakerName: "Ada",
+          text: "Let's review the transcript.",
+          startTime: null,
+          endTime: null,
+          languageCode: "en",
+        },
+      ],
+    };
+    const getMock = vi.fn().mockResolvedValue(detail);
+    api = mockApi({ get: getMock });
+
+    renderMobile(api, "01ABC");
+
+    await waitFor(() => {
+      expect(screen.getByText(/VOXTERM/)).toBeInTheDocument();
+      expect(screen.getByText(/—/)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Transcript\s+1/i }));
+
+    expect(screen.getByText(/let's review the transcript/i)).toBeInTheDocument();
   });
 });

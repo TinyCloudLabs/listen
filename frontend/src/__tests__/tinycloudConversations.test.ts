@@ -54,6 +54,9 @@ describe("createTinyCloudConversationApi", () => {
     const backendGet = vi.fn();
     const api = mockApi({ get: backendGet });
     const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      if (sql.includes("GROUP BY source")) {
+        return { ok: true, data: toArrayRows([{ source: "fireflies", total: 1 }]) };
+      }
       if (sql.includes("COUNT(*) AS total")) {
         return { ok: true, data: toArrayRows([{ total: 1 }]) };
       }
@@ -80,12 +83,15 @@ describe("createTinyCloudConversationApi", () => {
     });
     const client = createTinyCloudConversationApi(api, mockTinyCloud(query));
 
-    const result = await client.get<{ conversations: Array<{ id: string }>; total: number }>(
-      "/api/conversations?limit=20&offset=0",
-    );
+    const result = await client.get<{
+      conversations: Array<{ id: string }>;
+      total: number;
+      source_counts: Array<{ source: string; total: number }>;
+    }>("/api/conversations?limit=20&offset=0");
 
     expect(result.total).toBe(1);
     expect(result.conversations[0]?.id).toBe("01ABC");
+    expect(result.source_counts).toEqual([{ source: "fireflies", total: 1 }]);
     expect(backendGet).not.toHaveBeenCalled();
   });
 
@@ -107,7 +113,11 @@ describe("createTinyCloudConversationApi", () => {
               ended_at: "2026-05-14T14:20:00Z",
               duration_secs: 1200,
               summary: "Roadmap",
-              metadata: JSON.stringify({ audio_data_kv_key: "audio/01ABC/recording" }),
+              metadata: JSON.stringify({
+                audio_kv_key: "audio/01ABC/recording",
+                audio_metadata_kv_key: "audio/01ABC/recording.json",
+                audio_content_type: "audio/webm",
+              }),
               created_at: "2026-05-14T14:30:00Z",
               updated_at: "2026-05-14T14:30:00Z",
             },
@@ -125,7 +135,15 @@ describe("createTinyCloudConversationApi", () => {
     const client = createTinyCloudConversationApi(
       api,
       mockTinyCloud(query, {
-        transcript: JSON.stringify([{ speaker_name: "Ada", text: "Hello", start_time: 0 }]),
+        transcript: JSON.stringify([
+          {
+            speakerName: "Ada",
+            text: "Hello",
+            startTime: 0,
+            endTime: 1.5,
+            languageCode: "en",
+          },
+        ]),
         signedAudioUrl: "https://tinycloud.local/audio.mp3",
       }),
     );
@@ -138,9 +156,13 @@ describe("createTinyCloudConversationApi", () => {
 
     expect(result.participants[0]?.name).toBe("Ada");
     expect(result.transcript[0]?.text).toBe("Hello");
+    expect(result.transcript[0]?.speaker_id).toBe("ada");
+    expect(result.transcript[0]?.start_time).toBe(0);
     expect(result.conversation.metadata.audio_playback_url).toBe(
       "https://tinycloud.local/audio.mp3",
     );
+    expect(result.conversation.metadata.audio_data_kv_key).toBe("audio/01ABC/recording");
+    expect(result.conversation.metadata.audio_kv_key).toBe("audio/01ABC/recording");
     expect(backendGet).not.toHaveBeenCalled();
   });
 

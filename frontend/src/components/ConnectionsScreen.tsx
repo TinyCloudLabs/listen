@@ -21,6 +21,11 @@ interface ConnectionsScreenProps {
 
 type SourceId = "fireflies" | "granola" | "google-meet" | "assemblyai" | "deepgram";
 
+const LOCAL_IMPORTER_INSTRUCTIONS_URL = "https://listen.xyz/importer";
+const LOCAL_IMPORTER_REFERENCE_URL = "https://github.com/TinyCloudLabs/listen-importer";
+const LOCAL_IMPORTER_AGENT_PROMPT =
+  "Go to https://listen.xyz/importer and follow the Listen importer skill. Help me pull local audio or transcripts into Listen with listen-importer, then preprocess/downsample, transcribe if needed, and upload with --publish. Ask me for the source, path or time window, and transcription provider before making changes.";
+
 interface SourceRow {
   id: SourceId;
   name: string;
@@ -52,6 +57,8 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
   const [busySource, setBusySource] = useState<SourceId | "all" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showLocalImporter, setShowLocalImporter] = useState(false);
+  const [localImporterCopied, setLocalImporterCopied] = useState(false);
   const openTranscriptImport = onAddTranscript ?? onAddSource;
 
   const sources: SourceRow[] = [
@@ -110,6 +117,13 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
   const connected = sources.filter((source) => source.connected);
   const available = sources.filter((source) => !source.connected);
   const syncableConnected = connected.filter((source) => source.ready && source.syncable);
+  const availableCount = available.length + 2;
+
+  const copyLocalImporterCommand = async () => {
+    await navigator.clipboard?.writeText(LOCAL_IMPORTER_AGENT_PROMPT);
+    setLocalImporterCopied(true);
+    window.setTimeout(() => setLocalImporterCopied(false), 1600);
+  };
 
   const syncSource = async (source: SourceId) => {
     setBusySource(source);
@@ -245,7 +259,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
         )}
 
         <div style={{ ...s.sectionLabelRow, marginTop: 28 }}>
-          <span style={s.sectionLabel}>— available · {available.length + 1}</span>
+          <span style={s.sectionLabel}>— available · {availableCount}</span>
           <span style={s.sectionRule} />
         </div>
 
@@ -261,6 +275,87 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
             Import
           </button>
         </div>
+
+        <div style={s.availableCard}>
+          <span style={s.markIdle} />
+          <div>
+            <div style={s.sourceName}>Import local</div>
+            <p style={s.availableDesc}>
+              Send an agent to the Listen importer skill for recorder disks, Apple Voice Memos,
+              VoxTerm transcripts, preprocessing, transcription, and publishing.
+            </p>
+          </div>
+          <button
+            type="button"
+            style={s.btnGhostSm}
+            onClick={() => setShowLocalImporter((open) => !open)}
+          >
+            Get started
+          </button>
+        </div>
+
+        {showLocalImporter && (
+          <div style={s.importerPanel}>
+            <div style={s.importerHeader}>
+              <div>
+                <div style={s.sourceName}>listen-importer skill</div>
+                <p style={s.availableDesc}>
+                  Copy this prompt into an LLM or coding agent. It points the agent at the canonical
+                  importer skill and asks it to pull local audio or transcripts into Listen.
+                </p>
+              </div>
+              <div style={s.importerLinks}>
+                <a
+                  href={LOCAL_IMPORTER_INSTRUCTIONS_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={s.referenceLink}
+                >
+                  Skill
+                </a>
+                <a
+                  href={LOCAL_IMPORTER_REFERENCE_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={s.referenceLink}
+                >
+                  Repo
+                </a>
+              </div>
+            </div>
+
+            <div style={s.commandHeader}>
+              <span style={s.sourceMeta}>AGENT PROMPT</span>
+              <button
+                type="button"
+                style={s.btnGhostSm}
+                onClick={() => void copyLocalImporterCommand()}
+              >
+                {localImporterCopied ? "Copied" : "Copy"}
+              </button>
+            </div>
+            <pre style={s.commandBlock}>
+              <code>{LOCAL_IMPORTER_AGENT_PROMPT}</code>
+            </pre>
+
+            <div style={s.importerGrid}>
+              <div>
+                <div style={s.sourceMeta}>SKILL URL</div>
+                <p style={s.availableDesc}>
+                  The instructions are published at <code>listen.xyz/importer</code> for agents to
+                  fetch directly.
+                </p>
+              </div>
+              <div>
+                <div style={s.sourceMeta}>COVERS</div>
+                <p style={s.availableDesc}>
+                  Pulling in the importer, local source scans, downsampling, transcription, and
+                  publishing to Listen.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {available.length === 0 ? (
           <div style={s.empty}>All provider sources are connected.</div>
@@ -377,6 +472,62 @@ const s: Record<string, React.CSSProperties> = {
     gap: 14,
     alignItems: "center",
     marginBottom: 8,
+  },
+  importerPanel: {
+    border: "var(--lst-border)",
+    padding: "16px 18px",
+    marginBottom: 8,
+    background: "var(--lst-ink-08)",
+  },
+  importerHeader: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) auto",
+    gap: 14,
+    alignItems: "start",
+    marginBottom: 14,
+  },
+  importerLinks: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
+  },
+  importerGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+    gap: 14,
+    margin: "14px 0",
+  },
+  commandHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 8,
+  },
+  commandBlock: {
+    margin: 0,
+    padding: "12px 14px",
+    overflowX: "auto",
+    border: "var(--lst-border)",
+    background: "var(--lst-bg)",
+    color: "var(--lst-blue)",
+    fontFamily: MONO,
+    fontSize: 11,
+    lineHeight: 1.6,
+    whiteSpace: "pre",
+  },
+  referenceLink: {
+    fontFamily: FONT,
+    border: "var(--lst-border)",
+    background: "transparent",
+    color: "var(--lst-blue)",
+    borderRadius: 999,
+    padding: "6px 12px",
+    fontSize: 12.5,
+    fontWeight: 500,
+    textDecoration: "none",
+    whiteSpace: "nowrap",
   },
   sourceName: {
     fontSize: 15,

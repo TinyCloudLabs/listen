@@ -104,7 +104,7 @@ jobs:
 
       - name: Install Railway CLI
         if: steps.deploy_config.outputs.can_deploy == 'true'
-        run: npm install -g @railway/cli
+        run: npm install -g @railway/cli@4.66.1
 
       - name: Deploy preview backend to Railway
         if: steps.deploy_config.outputs.can_deploy == 'true'
@@ -119,65 +119,212 @@ jobs:
         run: |
           set -euo pipefail
 
-          railway link \
-            --project "$RAILWAY_PROJECT_ID" \
-            --environment "$RAILWAY_BASE_ENVIRONMENT" \
-            --service "$RAILWAY_SERVICE"
+          railway_graphql() {
+            local query="$1"
+            local variables="$2"
+            local response
 
-          railway environment new "${{ steps.preview.outputs.railway_environment }}" \
-            --duplicate "$RAILWAY_BASE_ENVIRONMENT" || \
-            railway environment "${{ steps.preview.outputs.railway_environment }}"
+            response=$(jq -n \
+              --arg query "$query" \
+              --argjson variables "$variables" \
+              '{query: $query, variables: $variables}' | \
+              curl -fsS https://backboard.railway.com/graphql/v2 \
+                -H "Authorization: Bearer ${RAILWAY_API_TOKEN}" \
+                -H "Content-Type: application/json" \
+                --data-binary @-)
 
-          railway link \
-            --project "$RAILWAY_PROJECT_ID" \
-            --environment "${{ steps.preview.outputs.railway_environment }}" \
-            --service "$RAILWAY_SERVICE"
-
-          DOMAIN_JSON=$(railway domain --service "$RAILWAY_SERVICE" --port 3001 --json 2>/tmp/railway-domain.err || true)
-          BACKEND_URL=$(printf '%s' "$DOMAIN_JSON" | jq -r '.domain // empty')
-          if [ -z "$BACKEND_URL" ]; then
-            EXISTING_DOMAIN=$(railway variables \
-              --service "$RAILWAY_SERVICE" \
-              --environment "${{ steps.preview.outputs.railway_environment }}" \
-              --json | jq -r '.RAILWAY_PUBLIC_DOMAIN // empty')
-            if [ -n "$EXISTING_DOMAIN" ]; then
-              BACKEND_URL="https://${EXISTING_DOMAIN#https://}"
+            if [ "$(printf '%s' "$response" | jq '.errors | length')" != "0" ]; then
+              printf '%s\n' "$response" | jq -r '.errors[].message' >&2
+              return 1
             fi
-          fi
-          if [ -z "$BACKEND_URL" ]; then
-            echo "Failed to resolve Railway public domain." >&2
-            cat /tmp/railway-domain.err >&2 || true
+
+            printf '%s' "$response"
+          }
+
+          PROJECT_QUERY=$(cat <<'GRAPHQL'
+          query Project($id: String!) {
+            project(id: $id) {
+              id
+              environments {
+                edges {
+                  node {
+                    id
+                    name
+                    canAccess
+                    deletedAt
+                  }
+                }
+              }
+              services {
+                edges {
+                  node {
+                    id
+                    name
+                  }
+                }
+              }
+            }
+          }
+          GRAPHQL
+          )
+          PROJECT_JSON=$(railway_graphql "$PROJECT_QUERY" "$(jq -n --arg id "$RAILWAY_PROJECT_ID" '{id: $id}')")
+
+          BASE_ENVIRONMENT_ID=$(printf '%s' "$PROJECT_JSON" | jq -r \
+            --arg env "$RAILWAY_BASE_ENVIRONMENT" \
+            '[.data.project.environments.edges[].node | select(.deletedAt == null and .canAccess == true and (.id == $env or .name == $env))][0].id // empty')
+          if [ -z "$BASE_ENVIRONMENT_ID" ]; then
+            echo "Railway base environment not found: ${RAILWAY_BASE_ENVIRONMENT}" >&2
             exit 1
           fi
 
-          railway variables \
-            --service "$RAILWAY_SERVICE" \
-            --environment "${{ steps.preview.outputs.railway_environment }}" \
-            --skip-deploys \
-            --set "RAILWAY_DOCKERFILE_PATH=backend/Dockerfile" \
-            --set "RAILPACK_CONFIG_FILE=railpack.json" \
-            --set "RAILPACK_START_CMD=if [ -d backend ]; then bun run --cwd backend start; else bun run start; fi" \
-            --set "NODE_ENV=production" \
-            --set "PORT=3001" \
-            --set "BACKEND_PRIVATE_KEY=${BACKEND_PRIVATE_KEY}" \
-            --set "TINYCLOUD_HOST=${TINYCLOUD_HOST}" \
-            --set "FRONTEND_URL=${{ steps.preview.outputs.frontend_url }}" \
-            --set "OPENKEY_ISSUER_URL=${OPENKEY_ISSUER_URL}" \
-            --set "GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}" \
-            --set "GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}" \
-            --set "GOOGLE_SERVICE_ACCOUNT_KEY=${GOOGLE_SERVICE_ACCOUNT_KEY}" \
-            --set "GOOGLE_PUBSUB_PUSH_URL=${BACKEND_URL}/api/webhooks/google-meet"
+          RAILWAY_SERVICE_ID=$(printf '%s' "$PROJECT_JSON" | jq -r \
+            --arg service "$RAILWAY_SERVICE" \
+            '[.data.project.services.edges[].node | select(.id == $service or .name == $service)][0].id // empty')
+          if [ -z "$RAILWAY_SERVICE_ID" ]; then
+            echo "Railway service not found: ${RAILWAY_SERVICE}" >&2
+            exit 1
+          fi
 
-          railway up \
-            --service "$RAILWAY_SERVICE" \
-            --environment "${{ steps.preview.outputs.railway_environment }}"
+          PREVIEW_ENVIRONMENT="${{ steps.preview.outputs.railway_environment }}"
+          RAILWAY_ENVIRONMENT_ID=$(printf '%s' "$PROJECT_JSON" | jq -r \
+            --arg env "$PREVIEW_ENVIRONMENT" \
+            '[.data.project.environments.edges[].node | select(.deletedAt == null and .canAccess == true and (.id == $env or .name == $env))][0].id // empty')
 
+          if [ -z "$RAILWAY_ENVIRONMENT_ID" ]; then
+            ENVIRONMENT_CREATE_MUTATION=$(cat <<'GRAPHQL'
+          mutation EnvironmentCreate($projectId: String!, $name: String!, $sourceId: String!, $applyChangesInBackground: Boolean) {
+            environmentCreate(input: {projectId: $projectId, name: $name, sourceEnvironmentId: $sourceId, applyChangesInBackground: $applyChangesInBackground}) {
+              id
+              name
+            }
+          }
+          GRAPHQL
+          )
+            ENVIRONMENT_JSON=$(railway_graphql "$ENVIRONMENT_CREATE_MUTATION" "$(jq -n \
+              --arg projectId "$RAILWAY_PROJECT_ID" \
+              --arg name "$PREVIEW_ENVIRONMENT" \
+              --arg sourceId "$BASE_ENVIRONMENT_ID" \
+              '{projectId: $projectId, name: $name, sourceId: $sourceId, applyChangesInBackground: false}')")
+            RAILWAY_ENVIRONMENT_ID=$(printf '%s' "$ENVIRONMENT_JSON" | jq -r '.data.environmentCreate.id // empty')
+          fi
+
+          if [ -z "$RAILWAY_ENVIRONMENT_ID" ]; then
+            echo "Failed to resolve Railway preview environment." >&2
+            exit 1
+          fi
+
+          DOMAINS_QUERY=$(cat <<'GRAPHQL'
+          query Domains($environmentId: String!, $projectId: String!, $serviceId: String!) {
+            domains(environmentId: $environmentId, projectId: $projectId, serviceId: $serviceId) {
+              serviceDomains {
+                domain
+              }
+              customDomains {
+                domain
+              }
+            }
+          }
+          GRAPHQL
+          )
+          DOMAINS_JSON=$(railway_graphql "$DOMAINS_QUERY" "$(jq -n \
+            --arg projectId "$RAILWAY_PROJECT_ID" \
+            --arg serviceId "$RAILWAY_SERVICE_ID" \
+            --arg environmentId "$RAILWAY_ENVIRONMENT_ID" \
+            '{projectId: $projectId, serviceId: $serviceId, environmentId: $environmentId}')")
+          BACKEND_DOMAIN=$(printf '%s' "$DOMAINS_JSON" | jq -r '.data.domains.serviceDomains[0].domain // .data.domains.customDomains[0].domain // empty')
+
+          if [ -z "$BACKEND_DOMAIN" ]; then
+            SERVICE_DOMAIN_CREATE_MUTATION=$(cat <<'GRAPHQL'
+          mutation ServiceDomainCreate($environmentId: String!, $serviceId: String!) {
+            serviceDomainCreate(input: {environmentId: $environmentId, serviceId: $serviceId}) {
+              domain
+            }
+          }
+          GRAPHQL
+          )
+            DOMAIN_JSON=$(railway_graphql "$SERVICE_DOMAIN_CREATE_MUTATION" "$(jq -n \
+              --arg serviceId "$RAILWAY_SERVICE_ID" \
+              --arg environmentId "$RAILWAY_ENVIRONMENT_ID" \
+              '{serviceId: $serviceId, environmentId: $environmentId}')")
+            BACKEND_DOMAIN=$(printf '%s' "$DOMAIN_JSON" | jq -r '.data.serviceDomainCreate.domain // empty')
+          fi
+
+          if [ -z "$BACKEND_DOMAIN" ]; then
+            echo "Failed to resolve Railway public domain." >&2
+            exit 1
+          fi
+          BACKEND_URL="https://${BACKEND_DOMAIN#https://}"
+
+          VARIABLES_MUTATION=$(cat <<'GRAPHQL'
+          mutation VariableCollectionUpsert($projectId: String!, $serviceId: String!, $environmentId: String!, $variables: EnvironmentVariables!, $skipDeploys: Boolean) {
+            variableCollectionUpsert(input: {projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId, variables: $variables, skipDeploys: $skipDeploys})
+          }
+          GRAPHQL
+          )
+          railway_graphql "$VARIABLES_MUTATION" "$(jq -n \
+            --arg projectId "$RAILWAY_PROJECT_ID" \
+            --arg serviceId "$RAILWAY_SERVICE_ID" \
+            --arg environmentId "$RAILWAY_ENVIRONMENT_ID" \
+            --arg backendPrivateKey "$BACKEND_PRIVATE_KEY" \
+            --arg tinycloudHost "$TINYCLOUD_HOST" \
+            --arg frontendUrl "${{ steps.preview.outputs.frontend_url }}" \
+            --arg openkeyIssuerUrl "$OPENKEY_ISSUER_URL" \
+            --arg googleClientId "$GOOGLE_CLIENT_ID" \
+            --arg googleClientSecret "$GOOGLE_CLIENT_SECRET" \
+            --arg googleServiceAccountKey "$GOOGLE_SERVICE_ACCOUNT_KEY" \
+            --arg googlePubsubPushUrl "${BACKEND_URL}/api/webhooks/google-meet" \
+            '{
+              projectId: $projectId,
+              serviceId: $serviceId,
+              environmentId: $environmentId,
+              skipDeploys: true,
+              variables: {
+                RAILWAY_DOCKERFILE_PATH: "backend/Dockerfile",
+                RAILPACK_CONFIG_FILE: "railpack.json",
+                RAILPACK_START_CMD: "if [ -d backend ]; then bun run --cwd backend start; else bun run start; fi",
+                NODE_ENV: "production",
+                PORT: "3001",
+                BACKEND_PRIVATE_KEY: $backendPrivateKey,
+                TINYCLOUD_HOST: $tinycloudHost,
+                FRONTEND_URL: $frontendUrl,
+                OPENKEY_ISSUER_URL: $openkeyIssuerUrl,
+                GOOGLE_CLIENT_ID: $googleClientId,
+                GOOGLE_CLIENT_SECRET: $googleClientSecret,
+                GOOGLE_SERVICE_ACCOUNT_KEY: $googleServiceAccountKey,
+                GOOGLE_PUBSUB_PUSH_URL: $googlePubsubPushUrl
+              }
+            }')" >/dev/null
+
+          UP_JSON=$(railway up \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" \
+            --detach \
+            --json \
+            --message "TC-1367 PR #${{ github.event.pull_request.number }} preview" \
+            2>/tmp/railway-up.err) || {
+            cat /tmp/railway-up.err >&2 || true
+            exit 1
+          }
+          DEPLOYMENT_ID=$(printf '%s' "$UP_JSON" | jq -r '.deploymentId // empty')
+          if [ -z "$DEPLOYMENT_ID" ]; then
+            echo "Railway upload did not return a deployment ID." >&2
+            cat /tmp/railway-up.err >&2 || true
+            printf '%s\n' "$UP_JSON" >&2
+            exit 1
+          fi
+
+          DEPLOYMENT_QUERY=$(cat <<'GRAPHQL'
+          query Deployment($id: String!) {
+            deployment(id: $id) {
+              id
+              status
+            }
+          }
+          GRAPHQL
+          )
           for attempt in $(seq 1 90); do
-            STATUS=$(railway deployment list \
-              --service "$RAILWAY_SERVICE" \
-              --environment "${{ steps.preview.outputs.railway_environment }}" \
-              --limit 1 \
-              --json | jq -r '.[0].status // "UNKNOWN"')
+            STATUS=$(railway_graphql "$DEPLOYMENT_QUERY" "$(jq -n --arg id "$DEPLOYMENT_ID" '{id: $id}')" | jq -r '.data.deployment.status // "UNKNOWN"')
             echo "Railway deployment status: ${STATUS}"
             case "$STATUS" in
               SUCCESS)

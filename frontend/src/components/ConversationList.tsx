@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback, useRef, type FC, type MouseEvent } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, type FC, type MouseEvent } from "react";
 import type { ApiClient } from "@listen/client";
 import { readConversationPageCache, writeConversationPageCache } from "../conversationPageCache";
-import { InboxFilters, type SourceFilter } from "./InboxFilters";
+import { InboxFilters, SOURCE_CHIPS, type SourceFilter } from "./InboxFilters";
 import { InboxBulkBar } from "./InboxBulkBar";
 import { InboxRow, InboxRowGrid } from "./InboxRow";
 
@@ -10,8 +10,8 @@ interface Conversation {
   title: string;
   source: string;
   source_url: string | null;
-  started_at: string;
-  duration_secs: number;
+  started_at: string | null;
+  duration_secs: number | null;
   summary: string | null;
   created_at: string;
   participant_count: number;
@@ -19,6 +19,12 @@ interface Conversation {
 
 interface ConversationsResponse {
   conversations: Conversation[];
+  total: number;
+  source_counts?: SourceCount[];
+}
+
+interface SourceCount {
+  source: string;
   total: number;
 }
 
@@ -30,13 +36,21 @@ interface ConversationListProps {
 
 const PAGE_SIZE = 20;
 
-function conversationPagePath(page: number): string {
+function conversationPagePath(page: number, sourceFilter: SourceFilter = "all"): string {
   const offset = (page - 1) * PAGE_SIZE;
-  return `/api/conversations?limit=${PAGE_SIZE}&offset=${offset}`;
+  const params = new URLSearchParams({
+    limit: String(PAGE_SIZE),
+    offset: String(offset),
+  });
+  if (sourceFilter !== "all") params.set("source", sourceFilter);
+  return `/api/conversations?${params.toString()}`;
 }
 
-function formatGroupDate(isoString: string): string {
-  return new Date(isoString).toLocaleDateString("en-US", {
+function formatGroupDate(isoString: string | null): string {
+  if (!isoString) return "Unknown date";
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return "Unknown date";
+  return date.toLocaleDateString("en-US", {
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -71,6 +85,7 @@ export const ConversationList: FC<ConversationListProps> = ({
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
+  const [sourceCounts, setSourceCounts] = useState<SourceCount[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -79,8 +94,8 @@ export const ConversationList: FC<ConversationListProps> = ({
   const refreshKeyRef = useRef(refreshKey);
 
   const fetchConversations = useCallback(
-    async (page: number) => {
-      const path = conversationPagePath(page);
+    async (page: number, source: SourceFilter) => {
+      const path = conversationPagePath(page, source);
       const cached = readConversationPageCache<Conversation>(path);
       const requestId = requestRef.current + 1;
       requestRef.current = requestId;
@@ -92,6 +107,7 @@ export const ConversationList: FC<ConversationListProps> = ({
       if (cached) {
         setConversations(cached.conversations);
         setTotal(cached.total);
+        setSourceCounts(cached.source_counts ?? null);
         setLoading(false);
         setRefreshing(true);
       } else {
@@ -106,6 +122,7 @@ export const ConversationList: FC<ConversationListProps> = ({
         if (requestRef.current !== requestId) return;
         setConversations(data.conversations);
         setTotal(data.total);
+        setSourceCounts(data.source_counts ?? null);
         writeConversationPageCache(path, data);
         setError(null);
       } catch (err) {
@@ -133,8 +150,8 @@ export const ConversationList: FC<ConversationListProps> = ({
         return;
       }
     }
-    void fetchConversations(currentPage);
-  }, [currentPage, fetchConversations, refreshKey]);
+    void fetchConversations(currentPage, sourceFilter);
+  }, [currentPage, fetchConversations, refreshKey, sourceFilter]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -153,8 +170,33 @@ export const ConversationList: FC<ConversationListProps> = ({
     return () => window.clearTimeout(timer);
   }, [notice]);
 
+  const availableSourceFilters = useMemo(() => {
+    if (sourceCounts) {
+      const availableSources = new Set(
+        sourceCounts.filter((count) => count.total > 0).map((count) => count.source),
+      );
+      return SOURCE_CHIPS.filter(
+        (chip) => chip.key !== "all" && availableSources.has(chip.key),
+      ).map((chip) => chip.key);
+    }
+
+    const loadedSources = new Set(conversations.map((conversation) => conversation.source));
+    return SOURCE_CHIPS.filter((chip) => chip.key !== "all" && loadedSources.has(chip.key)).map(
+      (chip) => chip.key,
+    );
+  }, [conversations, sourceCounts]);
+
+  useEffect(() => {
+    if (loading) return;
+    if (sourceFilter === "all" || availableSourceFilters.includes(sourceFilter)) return;
+    setSourceFilter("all");
+    setSelected(new Set());
+    setContextMenu(null);
+  }, [availableSourceFilters, loading, sourceFilter]);
+
   const handleSourceFilterChange = (next: SourceFilter) => {
     setSourceFilter((current) => (current === next || next === "all" ? "all" : next));
+    setCurrentPage(1);
     setSelected(new Set());
     setContextMenu(null);
   };
@@ -267,6 +309,7 @@ export const ConversationList: FC<ConversationListProps> = ({
       <InboxFilters
         total={total}
         sourceFilter={sourceFilter}
+        sourceOptions={availableSourceFilters}
         onSourceFilterChange={handleSourceFilterChange}
         showingCount={visibleConversations.length}
       />

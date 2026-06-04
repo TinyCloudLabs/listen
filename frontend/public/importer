@@ -1,0 +1,173 @@
+---
+name: listen-importer
+description: Use when importing local audio or transcript sources into Listen with the listen-importer CLI, including MIC MINI or generic recorder volumes, Apple Voice Memos, VoxTerm transcripts, preprocessing/downsampling, transcription, and upload/publish into Listen's TinyCloud storage.
+---
+
+# Listen Importer
+
+Use this skill when a user wants to bring local audio or transcripts into Listen. The importer scans local sources, caches files locally, optionally preprocesses/downsamples audio, optionally transcribes audio, and uploads/publishes Listen conversations.
+
+## Success Criteria
+
+- Local source data is scanned into `~/.listen-importer`.
+- Audio is preprocessed/downsampled when useful for transcription or upload size.
+- Audio without transcripts is transcribed with the chosen provider.
+- Imported conversations are uploaded with `--publish` so they appear in Listen.
+- Imported source labels match Listen: `recorder`, `voice_memos`, or `voxterm`.
+
+## Prerequisites
+
+- Bun installed.
+- TinyCloud CLI `tc` installed and authenticated for the user's Listen space.
+- For transcription: `ASSEMBLYAI_API_KEY` or `DEEPGRAM_API_KEY`.
+- For Apple Voice Memos: macOS and Full Disk Access for the terminal app may be required.
+- For recorder imports: the recorder volume must be mounted, for example `/Volumes/MIC MINI`.
+
+## Pull In The Importer
+
+Use the GitHub-backed npx command for one-off runs:
+
+```sh
+npx --yes github:TinyCloudLabs/listen-importer init
+npx --yes github:TinyCloudLabs/listen-importer doctor
+```
+
+For active development or repeated local work:
+
+```sh
+git clone https://github.com/TinyCloudLabs/listen-importer.git
+cd listen-importer
+bun install
+bun link
+listen-importer init
+listen-importer doctor
+```
+
+If `npx` cannot run the Bun shebang in the user's environment, use the clone/link workflow.
+
+## Storage Contract
+
+Local state defaults to:
+
+```text
+~/.listen-importer/
+  listen-importer.sqlite
+  media/
+  downsampled/
+  transcripts/
+```
+
+Remote Listen storage defaults to:
+
+```text
+SQL database: xyz.tinycloud.listen/conversations
+KV prefix:    xyz.tinycloud.listen
+```
+
+Use `LISTEN_IMPORTER_HOME=/path/to/state` to isolate a run. Use `--profile` or `--host` on upload/auth commands when the TinyCloud CLI profile or host must be explicit.
+
+## Agent Workflow
+
+1. Ask what source to import: recorder volume, Apple Voice Memos, VoxTerm transcripts, or all known local sources.
+2. Ask for path/time window when needed: recorder mount path, VoxTerm transcript directory, and Voice Memos `--since`.
+3. Run `doctor`, then a dry run if the command supports it.
+4. Scan source data.
+5. Run `status --json` and inspect counts.
+6. Preprocess/downsample audio before transcription or size-sensitive upload.
+7. Transcribe missing transcripts with AssemblyAI or Deepgram.
+8. Upload with `--publish`, usually with `--use-downsampled` after preprocessing.
+9. Run `status --json` again and report imported/published counts plus any failures.
+
+Do not import deleted Voice Memos unless the user explicitly asks for `--include-deleted`.
+
+## Source Commands
+
+Recorder volume:
+
+```sh
+listen-importer scan /Volumes/MIC\ MINI --recorder mic-mini
+listen-importer scan /path/to/recorder --recorder generic
+```
+
+Apple Voice Memos:
+
+```sh
+listen-importer scan-source voice-memos
+listen-importer scan-source voice-memos --since yesterday
+listen-importer scan-source voice-memos --since 2026-05-25
+listen-importer scan-source voice-memos --include-deleted
+```
+
+VoxTerm markdown transcripts:
+
+```sh
+listen-importer scan-source voxterm
+listen-importer scan-source voxterm --path ~/Documents/voxterm-transcripts
+```
+
+If `--since` is omitted for app-library sources, the importer defaults to local midnight seven calendar days ago.
+
+## Preprocess And Transcribe
+
+Downsampling is non-destructive. Originals stay in `media/`; derived files go to `downsampled/`.
+
+```sh
+listen-importer preprocess --source all
+listen-importer preprocess --source voice_memos --format mp3 --bitrate 64k --sample-rate 16000
+listen-importer status --source all --json
+```
+
+Transcription prefers downsampled audio when available:
+
+```sh
+ASSEMBLYAI_API_KEY=... listen-importer transcribe --source all --provider assemblyai
+DEEPGRAM_API_KEY=... listen-importer transcribe --source all --provider deepgram
+```
+
+Use `--api-key` only when the user wants to pass a key directly. Prefer environment variables so secrets do not get copied into shell history.
+
+## Upload And Publish
+
+Publish makes rows visible in Listen:
+
+```sh
+listen-importer upload --publish --use-downsampled --source all
+listen-importer upload --publish --transcripts-only --source voxterm
+```
+
+Use source-specific upload commands when keeping workflows separated:
+
+```sh
+listen-importer upload --publish --use-downsampled --source recorder
+listen-importer upload --publish --use-downsampled --source voice_memos
+listen-importer upload --publish --transcripts-only --source voxterm
+```
+
+## Useful Commands
+
+```text
+listen-importer init
+listen-importer auth [--profile name] [--host url]
+listen-importer permissions [--to did] [--expiry 30d]
+listen-importer scan <path> [--recorder mic-mini|generic] [--dry-run]
+listen-importer scan-source voice-memos|voxterm [--since yesterday|YYYY-MM-DD] [--path path] [--include-deleted] [--dry-run]
+listen-importer status [--source recorder|voice_memos|voxterm|all] [--json]
+listen-importer list [--limit n] [--source recorder|voice_memos|voxterm|all]
+listen-importer preprocess [--limit n] [--source recorder|voice_memos|voxterm|all] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
+listen-importer downsample [--limit n] [--source recorder|voice_memos|voxterm|all] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
+listen-importer transcribe [--limit n] [--source recorder|voice_memos|voxterm|all] [--provider deepgram|assemblyai] [--api-key key] [--force]
+listen-importer upload [--limit n] [--publish] [--use-downsampled] [--transcripts-only] [--source recorder|voice_memos|voxterm|all] [--profile name] [--host url]
+listen-importer doctor
+```
+
+## Final Report Format
+
+Report:
+
+- source imported
+- scan counts
+- downsample/preprocess counts
+- transcription counts and provider
+- upload/publish counts
+- local state path
+- any failed recordings and next command to retry

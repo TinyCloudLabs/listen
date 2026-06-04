@@ -49,6 +49,47 @@ const CONVERSATIONS = [
     created_at: "2026-03-18T09:10:00Z",
     participant_count: 6,
   },
+  {
+    id: "04JKL",
+    title: "Recorder Memo",
+    source: "recorder",
+    source_url: null,
+    started_at: "2026-03-17T10:00:00Z",
+    duration_secs: 600,
+    summary: "A short recording from the desktop app.",
+    created_at: "2026-03-17T10:10:00Z",
+    participant_count: 1,
+  },
+  {
+    id: "05MNO",
+    title: "Voice Memo",
+    source: "voice_memos",
+    source_url: null,
+    started_at: "2026-03-16T11:00:00Z",
+    duration_secs: 120,
+    summary: "Personal voice note.",
+    created_at: "2026-03-16T11:05:00Z",
+    participant_count: 1,
+  },
+  {
+    id: "06PQR",
+    title: "VoxTerm Session",
+    source: "voxterm",
+    source_url: null,
+    started_at: "2026-03-15T12:00:00Z",
+    duration_secs: 900,
+    summary: "Command line session transcription.",
+    created_at: "2026-03-15T12:15:00Z",
+    participant_count: 1,
+  },
+];
+
+const PAGE_SIZE = 20;
+const IMPORTED_SOURCE_COUNTS = [
+  { source: "fireflies", total: 3 },
+  { source: "recorder", total: 1 },
+  { source: "voice_memos", total: 1 },
+  { source: "voxterm", total: 1 },
 ];
 
 describe("ConversationList", () => {
@@ -69,7 +110,7 @@ describe("ConversationList", () => {
   it("fetches and renders conversations on mount", async () => {
     const getMock = vi.fn().mockResolvedValue({
       conversations: CONVERSATIONS,
-      total: 3,
+      total: CONVERSATIONS.length,
     });
     api = mockApi({ get: getMock });
 
@@ -79,6 +120,9 @@ describe("ConversationList", () => {
       expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
       expect(screen.getByText("Design Review")).toBeInTheDocument();
       expect(screen.getByText("Quick Standup")).toBeInTheDocument();
+      expect(screen.getByText("Recorder Memo")).toBeInTheDocument();
+      expect(screen.getByText("Voice Memo")).toBeInTheDocument();
+      expect(screen.getByText("VoxTerm Session")).toBeInTheDocument();
     });
 
     expect(getMock).toHaveBeenCalledWith("/api/conversations?limit=20&offset=0");
@@ -120,7 +164,8 @@ describe("ConversationList", () => {
     api = mockApi({
       get: vi.fn().mockResolvedValue({
         conversations: CONVERSATIONS,
-        total: 3,
+        total: CONVERSATIONS.length,
+        source_counts: IMPORTED_SOURCE_COUNTS,
       }),
     });
 
@@ -130,21 +175,25 @@ describe("ConversationList", () => {
       expect(screen.getByText("30 min")).toBeInTheDocument(); // 1800s
       expect(screen.getByText("1 hr")).toBeInTheDocument(); // 3600s
       expect(screen.getByText("5 min")).toBeInTheDocument(); // 300s
+      expect(screen.getByText("10 min")).toBeInTheDocument(); // 600s
+      expect(screen.getByText("2 min")).toBeInTheDocument(); // 120s
+      expect(screen.getByText("15 min")).toBeInTheDocument(); // 900s
     });
   });
 
   it("renders people avatars sized to participant count", async () => {
     api = mockApi({
       get: vi.fn().mockResolvedValue({
-        conversations: [CONVERSATIONS[0]], // participant_count: 4 (3 avatars + "+1")
-        total: 1,
+        conversations: CONVERSATIONS,
+        total: CONVERSATIONS.length,
       }),
     });
 
     render(<ConversationList api={api} onSelectConversation={onSelectConversation} />);
 
     await waitFor(() => {
-      expect(screen.getByText("+1")).toBeInTheDocument();
+      expect(screen.getByText("+1")).toBeInTheDocument(); // For Sprint Planning (4 participants)
+      expect(screen.queryByText("+0")).not.toBeInTheDocument(); // For single participant memos
     });
   });
 
@@ -187,7 +236,7 @@ describe("ConversationList", () => {
     api = mockApi({
       get: vi.fn().mockResolvedValue({
         conversations: CONVERSATIONS,
-        total: 3,
+        total: CONVERSATIONS.length,
       }),
     });
 
@@ -223,7 +272,7 @@ describe("ConversationList", () => {
     api = mockApi({
       get: vi.fn().mockResolvedValue({
         conversations: CONVERSATIONS,
-        total: 3,
+        total: CONVERSATIONS.length,
       }),
     });
 
@@ -233,51 +282,48 @@ describe("ConversationList", () => {
       expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
     });
 
-    expect(screen.getByText("Page 1 of 1")).toBeInTheDocument();
+    expect(screen.getByText(`Page 1 of 1`)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /next/i })).toBeDisabled();
   });
 
   it("loads the next fixed-size page when Next is clicked", async () => {
+    const firstPageConversations = Array(PAGE_SIZE)
+      .fill(null)
+      .map((_, i) => ({
+        ...CONVERSATIONS[i % CONVERSATIONS.length],
+        id: `dummy-conv-${i}`,
+        title: `Dummy Conversation ${i + 1}`,
+      }));
+
     const getMock = vi
       .fn()
       .mockResolvedValueOnce({
-        conversations: CONVERSATIONS,
-        total: 40,
+        conversations: firstPageConversations, // First page with PAGE_SIZE items
+        total: PAGE_SIZE + 1, // Total indicates two pages
       })
       .mockResolvedValueOnce({
-        conversations: [
-          {
-            id: "04JKL",
-            title: "Retro Meeting",
-            source: "fireflies",
-            source_url: null,
-            started_at: "2026-03-17T16:00:00Z",
-            duration_secs: 2400,
-            summary: "Discussed wins and improvements.",
-            created_at: "2026-03-17T17:00:00Z",
-            participant_count: 5,
-          },
-        ],
-        total: 40,
+        conversations: [CONVERSATIONS[3]], // Second page with Recorder Memo
+        total: PAGE_SIZE + 1,
       });
     api = mockApi({ get: getMock });
 
     render(<ConversationList api={api} onSelectConversation={onSelectConversation} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
+      expect(screen.getByText("Dummy Conversation 1")).toBeInTheDocument();
+      expect(screen.getByText(`Page 1 of 2`)).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
 
     await waitFor(() => {
-      expect(screen.getByText("Retro Meeting")).toBeInTheDocument();
+      expect(screen.getByText("Recorder Memo")).toBeInTheDocument();
     });
 
     expect(getMock).toHaveBeenCalledWith("/api/conversations?limit=20&offset=20");
 
-    expect(screen.getByText("Page 2 of 2")).toBeInTheDocument();
-    expect(screen.getByText("Retro Meeting")).toBeInTheDocument();
+    expect(screen.getByText(`Page 2 of 2`)).toBeInTheDocument();
+    expect(screen.getByText("Recorder Memo")).toBeInTheDocument();
   });
 
   it("renders cached page data immediately and refreshes it from the server", async () => {
@@ -333,14 +379,14 @@ describe("ConversationList", () => {
     api = mockApi({
       get: vi.fn().mockResolvedValue({
         conversations: CONVERSATIONS,
-        total: 3,
+        total: CONVERSATIONS.length,
       }),
     });
 
     render(<ConversationList api={api} onSelectConversation={onSelectConversation} />);
 
     await waitFor(() => {
-      expect(screen.getByText(/3 conversations/i)).toBeInTheDocument();
+      expect(screen.getByText(`${CONVERSATIONS.length} conversations`)).toBeInTheDocument();
     });
   });
 
@@ -348,7 +394,7 @@ describe("ConversationList", () => {
     const getMock = vi
       .fn()
       .mockResolvedValueOnce({
-        conversations: CONVERSATIONS,
+        conversations: CONVERSATIONS.slice(0, 3),
         total: 3,
       })
       .mockResolvedValueOnce({
@@ -380,71 +426,120 @@ describe("ConversationList", () => {
 
   it("shows source filter chips", async () => {
     api = mockApi({
-      get: vi.fn().mockResolvedValue({ conversations: CONVERSATIONS, total: 3 }),
+      get: vi.fn().mockResolvedValue({ conversations: CONVERSATIONS, total: CONVERSATIONS.length }),
     });
     render(<ConversationList api={api} onSelectConversation={onSelectConversation} />);
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /all sources/i })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /^fireflies$/i })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /^meet$/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^recorder$/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^voice memos$/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^voxterm$/i })).toBeInTheDocument();
     });
+    expect(screen.queryByRole("button", { name: /^meet$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^granola$/i })).not.toBeInTheDocument();
   });
 
-  it("filters by source locally without refetching or showing the loading state", async () => {
-    const mixedConversations = [
-      CONVERSATIONS[0],
-      { ...CONVERSATIONS[1], id: "02GRN", title: "Granola Review", source: "granola" },
-      { ...CONVERSATIONS[2], id: "03MEET", title: "Meet Standup", source: "google-meet" },
-    ];
-    const getMock = vi.fn().mockResolvedValue({ conversations: mixedConversations, total: 3 });
+  it("hides imported source filters when that source has no loaded conversations", async () => {
+    api = mockApi({
+      get: vi.fn().mockResolvedValue({
+        conversations: CONVERSATIONS.slice(0, 3),
+        total: 3,
+        source_counts: [{ source: "fireflies", total: 3 }],
+      }),
+    });
+    render(<ConversationList api={api} onSelectConversation={onSelectConversation} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /all sources/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^fireflies$/i })).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole("button", { name: /^recorder$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^voice memos$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^voxterm$/i })).not.toBeInTheDocument();
+  });
+
+  it("filters by source with a filtered conversations request", async () => {
+    const allConversations = CONVERSATIONS;
+    const recorderConversations = [CONVERSATIONS[3]];
+    const getMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        conversations: allConversations,
+        total: allConversations.length,
+        source_counts: IMPORTED_SOURCE_COUNTS,
+      })
+      .mockResolvedValueOnce({
+        conversations: recorderConversations,
+        total: recorderConversations.length,
+        source_counts: IMPORTED_SOURCE_COUNTS,
+      })
+      .mockResolvedValueOnce({
+        conversations: allConversations,
+        total: allConversations.length,
+        source_counts: IMPORTED_SOURCE_COUNTS,
+      });
     api = mockApi({ get: getMock });
 
     render(<ConversationList api={api} onSelectConversation={onSelectConversation} />);
 
     await waitFor(() => {
       expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
-      expect(screen.getByText("Granola Review")).toBeInTheDocument();
+      expect(screen.getByText("Recorder Memo")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /^granola$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^recorder$/i }));
 
-    expect(screen.getByText("Granola Review")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("Recorder Memo")).toBeInTheDocument();
+      expect(screen.getByText("showing 1 of 1")).toBeInTheDocument();
+    });
     expect(screen.queryByText("Sprint Planning")).not.toBeInTheDocument();
-    expect(screen.queryByText("Meet Standup")).not.toBeInTheDocument();
-    expect(screen.queryByText("Loading conversations")).not.toBeInTheDocument();
-    expect(screen.getByText(/showing 1 of 3/i)).toBeInTheDocument();
-    expect(getMock).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Voice Memo")).not.toBeInTheDocument();
+    expect(getMock).toHaveBeenCalledTimes(2);
     expect(getMock).toHaveBeenCalledWith("/api/conversations?limit=20&offset=0");
+    expect(getMock).toHaveBeenCalledWith("/api/conversations?limit=20&offset=0&source=recorder");
 
-    fireEvent.click(screen.getByRole("button", { name: /^granola$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /all sources/i }));
 
-    expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
-    expect(screen.getByText("Granola Review")).toBeInTheDocument();
-    expect(screen.getByText("Meet Standup")).toBeInTheDocument();
-    expect(getMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
+      expect(screen.getByText("Recorder Memo")).toBeInTheDocument();
+      expect(screen.getByText("Voice Memo")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(getMock).toHaveBeenCalledTimes(3);
+    });
   });
 
   it("shows source badge on conversation rows", async () => {
     const mixedConversations = [
-      ...CONVERSATIONS.slice(0, 1),
-      { ...CONVERSATIONS[1], source: "google-meet" },
+      CONVERSATIONS[0], // fireflies
+      { ...CONVERSATIONS[3], source: "recorder" }, // recorder
+      { ...CONVERSATIONS[4], source: "voice_memos" }, // voice_memos
+      { ...CONVERSATIONS[5], source: "voxterm" }, // voxterm
     ];
     api = mockApi({
-      get: vi.fn().mockResolvedValue({ conversations: mixedConversations, total: 2 }),
+      get: vi
+        .fn()
+        .mockResolvedValue({ conversations: mixedConversations, total: mixedConversations.length }),
     });
 
     render(<ConversationList api={api} onSelectConversation={onSelectConversation} />);
 
     await waitFor(() => {
       expect(screen.getByText("FIREFLIES")).toBeInTheDocument();
-      expect(screen.getByText("MEET")).toBeInTheDocument();
+      expect(screen.getByText("RECORDER")).toBeInTheDocument();
+      expect(screen.getByText("VOICE MEMOS")).toBeInTheDocument();
+      expect(screen.getByText("VOXTERM")).toBeInTheDocument();
     });
   });
 
   it("shows bulk action bar when a row is selected", async () => {
     api = mockApi({
-      get: vi.fn().mockResolvedValue({ conversations: CONVERSATIONS, total: 3 }),
+      get: vi.fn().mockResolvedValue({ conversations: CONVERSATIONS, total: CONVERSATIONS.length }),
     });
     render(<ConversationList api={api} onSelectConversation={onSelectConversation} />);
 
@@ -464,7 +559,7 @@ describe("ConversationList", () => {
 
   it("opens a right-click context menu on row", async () => {
     api = mockApi({
-      get: vi.fn().mockResolvedValue({ conversations: CONVERSATIONS, total: 3 }),
+      get: vi.fn().mockResolvedValue({ conversations: CONVERSATIONS, total: CONVERSATIONS.length }),
     });
     render(<ConversationList api={api} onSelectConversation={onSelectConversation} />);
 

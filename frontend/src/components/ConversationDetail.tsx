@@ -6,6 +6,7 @@ import {
   readConversationDetailCache,
   writeConversationDetailCache,
 } from "../conversationPageCache";
+import { normalizeConversationMetadata, normalizeTranscript } from "../lib/tinycloudConversations";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -21,8 +22,8 @@ interface ConversationData {
   title: string;
   source: string;
   source_url: string | null;
-  started_at: string;
-  duration_secs: number;
+  started_at: string | null;
+  duration_secs: number | null;
   summary: string | null;
   metadata: Record<string, unknown>;
 }
@@ -41,13 +42,15 @@ interface ConversationDetailProps {
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-function formatDurationClock(secs: number): string {
+function formatDurationClock(secs: number | null): string {
+  if (secs == null || Number.isNaN(secs)) return "—";
   const mins = Math.floor(secs / 60);
   const remainder = Math.floor(secs % 60);
   return `${mins}:${String(remainder).padStart(2, "0")}`;
 }
 
-function formatDurationLabel(secs: number): string {
+function formatDurationLabel(secs: number | null): string {
+  if (secs == null || Number.isNaN(secs)) return "—";
   const mins = Math.max(1, Math.round(secs / 60));
   if (mins < 60) return `${mins} min`;
   const hrs = Math.floor(mins / 60);
@@ -55,10 +58,11 @@ function formatDurationLabel(secs: number): string {
   return rem === 0 ? `${hrs} hr` : `${hrs} hr ${rem} min`;
 }
 
-function formatBreadcrumbDate(isoString: string): string {
-  return new Date(isoString)
-    .toLocaleDateString("en-US", { month: "short", day: "numeric" })
-    .toUpperCase();
+function formatBreadcrumbDate(isoString: string | null): string {
+  if (!isoString) return "—";
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" }).toUpperCase();
 }
 
 function sourceLabel(source: string): string {
@@ -69,6 +73,12 @@ function sourceLabel(source: string): string {
       return "FIREFLIES";
     case "manual":
       return "MANUAL";
+    case "recorder":
+      return "RECORDER";
+    case "voice_memos":
+      return "VOICE MEMOS";
+    case "voxterm":
+      return "VOXTERM";
     case "granola":
       return "GRANOLA";
     case "otter":
@@ -155,6 +165,17 @@ function audioPlaybackUrl(conversation: ConversationData): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+function normalizeDetailResponse(response: DetailResponse): DetailResponse {
+  return {
+    ...response,
+    conversation: {
+      ...response.conversation,
+      metadata: normalizeConversationMetadata(response.conversation.metadata),
+    },
+    transcript: normalizeTranscript(response.transcript),
+  };
+}
+
 function downloadText(filename: string, text: string): void {
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -186,7 +207,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
     setError(null);
     setNotice(null);
     if (cached) {
-      setData(cached.data);
+      setData(normalizeDetailResponse(cached.data));
       setLoading(false);
     } else {
       setData(null);
@@ -197,8 +218,9 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
       .get<DetailResponse>(`/api/conversations/${conversationId}`)
       .then((res) => {
         if (cancelled) return;
-        setData(res);
-        writeConversationDetailCache(conversationId, res);
+        const normalized = normalizeDetailResponse(res);
+        setData(normalized);
+        writeConversationDetailCache(conversationId, normalized);
       })
       .catch((err) => {
         if (cancelled) return;

@@ -57,6 +57,30 @@ describe("ConnectionsScreen", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows the local importer skill prompt from the available section", () => {
+    renderConnections();
+
+    expect(screen.getByText("Import local")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /get started/i }));
+
+    expect(screen.getByText("listen-importer skill")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /skill/i })).toHaveAttribute(
+      "href",
+      "https://listen.xyz/importer",
+    );
+    expect(screen.getByRole("link", { name: /repo/i })).toHaveAttribute(
+      "href",
+      "https://github.com/TinyCloudLabs/listen-importer",
+    );
+    expect(
+      screen.getByText(
+        /go to https:\/\/listen\.xyz\/importer and follow the Listen importer skill/i,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/pulling in the importer/i)).toBeInTheDocument();
+  });
+
   it("runs finish setup when a transcription key exists without backend access", async () => {
     const onFinish = vi.fn().mockResolvedValue(undefined);
     renderConnections({

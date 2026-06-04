@@ -182,4 +182,46 @@ describe("persistConversation", () => {
     const metadataParam = inserts[0].params![9]; // metadata is the 10th param
     expect(metadataParam).toBe(JSON.stringify({ key: "value", nested: { a: 1 } }));
   });
+
+  it("normalizes transcript blobs and audio metadata aliases before writing", async () => {
+    const normalized = createNormalized({
+      conversation: {
+        metadata: {
+          audio_kv_key: "audio/conv-123/recording",
+          source: "voice_memos",
+        },
+      },
+      transcript: [
+        {
+          speakerName: "Ada",
+          text: "Hello world",
+          startTime: null,
+          endTime: 1.25,
+          languageCode: "en",
+        },
+      ] as any,
+    });
+
+    await persistConversation(mockAccess as any, normalized);
+
+    const inserts = mockSQL._calls.filter(
+      (c) => c.method === "execute" && c.sql.includes("INSERT INTO conversation"),
+    );
+    const metadataParam = JSON.parse(inserts[0].params![9] as string);
+    expect(metadataParam.audio_kv_key).toBe("audio/conv-123/recording");
+    expect(metadataParam.audio_data_kv_key).toBe("audio/conv-123/recording");
+
+    const storedTranscript = JSON.parse(mockKV._data.get("transcript/conv-123")!);
+    expect(storedTranscript).toEqual([
+      {
+        index: 0,
+        speaker_id: "ada",
+        speaker_name: "Ada",
+        text: "Hello world",
+        start_time: null,
+        end_time: 1.25,
+        language: "en",
+      },
+    ]);
+  });
 });

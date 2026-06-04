@@ -1,6 +1,7 @@
 export interface ConversationPageCacheEntry<T> {
   conversations: T[];
   total: number;
+  source_counts?: Array<{ source: string; total: number }>;
   cachedAt: string;
 }
 
@@ -46,6 +47,7 @@ export function readConversationPageCache<T>(path: string): ConversationPageCach
     return {
       conversations: parsed.conversations,
       total: parsed.total,
+      source_counts: Array.isArray(parsed.source_counts) ? parsed.source_counts : undefined,
       cachedAt: typeof parsed.cachedAt === "string" ? parsed.cachedAt : "",
     };
   } catch {
@@ -56,7 +58,11 @@ export function readConversationPageCache<T>(path: string): ConversationPageCach
 
 export function writeConversationPageCache<T>(
   path: string,
-  data: { conversations: T[]; total: number },
+  data: {
+    conversations: T[];
+    total: number;
+    source_counts?: Array<{ source: string; total: number }>;
+  },
 ): void {
   const storage = getStorage();
   if (!storage) return;
@@ -67,6 +73,7 @@ export function writeConversationPageCache<T>(
       JSON.stringify({
         conversations: data.conversations,
         total: data.total,
+        source_counts: data.source_counts,
         cachedAt: new Date().toISOString(),
       }),
     );

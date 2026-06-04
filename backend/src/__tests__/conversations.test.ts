@@ -33,6 +33,7 @@ function createMockKV() {
 interface MockSQLConfig {
   conversationRows?: Record<string, unknown>[];
   totalCount?: number;
+  sourceCounts?: Record<string, unknown>[];
   participantRows?: Record<string, unknown>[];
   detailRow?: Record<string, unknown>;
 }
@@ -53,6 +54,11 @@ function createMockSQL(config: MockSQLConfig = {}) {
     // List conversations (has participant_count subquery) — check before COUNT
     if (sql.includes("participant_count") && sql.includes("ORDER BY")) {
       return { ok: true, data: toArrayRows(config.conversationRows ?? []) };
+    }
+
+    // Source counts
+    if (sql.includes("GROUP BY source")) {
+      return { ok: true, data: toArrayRows(config.sourceCounts ?? []) };
     }
 
     // COUNT query for total
@@ -209,6 +215,7 @@ describe("Conversations Routes — GET /api/conversations", () => {
         },
       ],
       totalCount: 2,
+      sourceCounts: [{ source: "fireflies", total: 2 }],
     });
     const app = createApp(mockKV, mockSQL);
     ({ server, port } = await startServer(app));
@@ -222,6 +229,7 @@ describe("Conversations Routes — GET /api/conversations", () => {
     expect(body.conversations[0].id).toBe("conv-1");
     expect(body.conversations[0].participant_count).toBe(3);
     expect(body.conversations[0].title).toBe("Sprint Planning");
+    expect(body.source_counts).toEqual([{ source: "fireflies", total: 2 }]);
   });
 
   it("uses default limit=20 and offset=0", async () => {
@@ -304,7 +312,15 @@ describe("Conversations Routes — GET /api/conversations/:id", () => {
 
   it("returns conversation with participants and transcript", async () => {
     mockKV = createMockKV();
-    const transcript = [{ speaker_name: "Alice", text: "Hello", start_time: 0.5, end_time: 2.1 }];
+    const transcript = [
+      {
+        speakerName: "Alice",
+        text: "Hello",
+        startTime: 0.5,
+        endTime: 2.1,
+        languageCode: "en",
+      },
+    ];
     mockKV._data.set("transcript/conv-1", JSON.stringify(transcript));
 
     mockSQL = createMockSQL({
@@ -348,6 +364,9 @@ describe("Conversations Routes — GET /api/conversations/:id", () => {
     expect(body.participants[0].name).toBe("Alice");
     expect(body.transcript).toHaveLength(1);
     expect(body.transcript[0].text).toBe("Hello");
+    expect(body.transcript[0].speaker_id).toBe("alice");
+    expect(body.transcript[0].start_time).toBe(0.5);
+    expect(body.transcript[0].language).toBe("en");
   });
 
   it("returns 404 when conversation not found", async () => {
@@ -452,7 +471,7 @@ describe("Conversations Routes — GET /api/conversations/:id", () => {
         duration_secs: null,
         summary: null,
         metadata: JSON.stringify({
-          audio_data_kv_key: "audio/conv-1/recording",
+          audio_kv_key: "audio/conv-1/recording",
           audio_metadata_kv_key: "audio/conv-1/recording.json",
           audio_content_type: "audio/webm",
           audio_size_bytes: 8,
@@ -497,7 +516,7 @@ describe("Conversations Routes — GET /api/conversations/:id", () => {
         duration_secs: null,
         summary: null,
         metadata: JSON.stringify({
-          audio_data_kv_key: "audio/conv-1/recording",
+          audio_kv_key: "audio/conv-1/recording",
           audio_metadata_kv_key: "audio/conv-1/recording.json",
         }),
         created_at: "2026-03-20T12:00:00Z",
@@ -544,7 +563,7 @@ describe("Conversations Routes — GET /api/conversations/:id", () => {
         duration_secs: null,
         summary: null,
         metadata: JSON.stringify({
-          audio_data_kv_key: "audio/conv-1/recording.base64",
+          audio_kv_key: "audio/conv-1/recording.base64",
           audio_storage_encoding: "base64-string-kv",
         }),
         created_at: "2026-03-20T12:00:00Z",
@@ -562,6 +581,48 @@ describe("Conversations Routes — GET /api/conversations/:id", () => {
     expect(signedUrlCalls).toEqual([]);
     expect(body.conversation.metadata.audio_playback_url).toBe("/api/conversations/conv-1/audio");
     expect(body.conversation.metadata.audio_playback_url_source).toBe("backend-kv-fallback");
+  });
+
+  it("redirects importer audio playback to a signed KV URL when available", async () => {
+    mockKV = createMockKV();
+    (mockKV as any).createSignedReadUrl = async (key: string) => ({
+      ok: true,
+      data: {
+        url: "https://node.example.com/signed/audio",
+        relativeUrl: "/signed/kv/ticket-1",
+        ticketId: "ticket-1",
+        expiresAt: "2026-05-13T13:45:00.000Z",
+      },
+    });
+    mockSQL = createMockSQL({
+      detailRow: {
+        id: "conv-1",
+        title: "Sprint Planning",
+        source: "fireflies",
+        source_id: "ff-123",
+        source_url: null,
+        started_at: "2026-03-20T10:00:00Z",
+        ended_at: null,
+        duration_secs: null,
+        summary: null,
+        metadata: JSON.stringify({
+          audio_kv_key: "audio/conv-1/recording",
+          audio_metadata_kv_key: "audio/conv-1/recording.json",
+          audio_content_type: "audio/webm",
+        }),
+        created_at: "2026-03-20T12:00:00Z",
+        updated_at: "2026-03-20T12:00:00Z",
+      },
+      participantRows: [],
+    });
+    const app = createApp(mockKV, mockSQL);
+    ({ server, port } = await startServer(app));
+
+    const res = await fetch(`http://localhost:${port}/api/conversations/conv-1/audio`, {
+      redirect: "manual",
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("https://node.example.com/signed/audio");
   });
 
   it("serves stored Fireflies audio from KV", async () => {
@@ -584,6 +645,7 @@ describe("Conversations Routes — GET /api/conversations/:id", () => {
           audio_metadata_kv_key: "audio/conv-1/recording.json",
           audio_content_type: "audio/mpeg",
           audio_size_bytes: 8,
+          audio_storage_encoding: "base64-string-kv",
         }),
         created_at: "2026-03-20T12:00:00Z",
         updated_at: "2026-03-20T12:00:00Z",
