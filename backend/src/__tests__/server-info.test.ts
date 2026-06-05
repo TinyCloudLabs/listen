@@ -72,6 +72,9 @@ describe("GET /api/server-info", () => {
     ).find((p) => p.service === "tinycloud.sql");
     expect(sqlPermission?.path).toBe("conversations");
     expect(sqlPermission?.description).toContain("conversation records");
+    expect(
+      (body.permissions as Array<{ path: string }>).some((p) => p.path.startsWith("grants/")),
+    ).toBe(false);
     expect(body.features.googleMeet).toEqual({
       available: false,
       reason: "google_client_not_configured",

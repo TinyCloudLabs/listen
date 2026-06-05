@@ -32,30 +32,16 @@ function fullPolicyResources(space = "applications") {
       path: "",
       actions: ["tinycloud.capabilities/read"],
     },
-    ...SECRET_NAMES.flatMap((secretName) => [
-      {
-        service: "tinycloud.kv",
-        space: "secrets",
-        path: `vault/secrets/${secretName}`,
-        actions: ["tinycloud.kv/get"],
-      },
-      {
-        service: "tinycloud.kv",
-        space: "secrets",
-        path: `grants/${TEST_DID}/secrets/${secretName}`,
-        actions: ["tinycloud.kv/get"],
-      },
-    ]),
+    ...SECRET_NAMES.map((secretName) => ({
+      service: "tinycloud.kv",
+      space: "secrets",
+      path: `vault/secrets/${secretName}`,
+      actions: ["tinycloud.kv/get"],
+    })),
     {
       service: "tinycloud.kv",
       space: "secrets",
       path: "vault/secrets/GRANOLA_API_KEY",
-      actions: ["tinycloud.kv/get"],
-    },
-    {
-      service: "tinycloud.kv",
-      space: "secrets",
-      path: `grants/${TEST_DID}/secrets/GRANOLA_API_KEY`,
       actions: ["tinycloud.kv/get"],
     },
     {
@@ -389,18 +375,14 @@ describe("Delegation Routes", () => {
         body: JSON.stringify({ serialized: "activatable" }),
       });
 
-      expect(mockUseDelegation).toHaveBeenCalledTimes(10);
+      expect(mockUseDelegation).toHaveBeenCalledTimes(6);
       expect(mockUseDelegation.mock.calls.map((call) => call[0].path)).toEqual([
         "xyz.tinycloud.listen/",
         "xyz.tinycloud.listen/conversations",
         "vault/secrets/FIREFLIES_API_KEY",
-        `grants/${TEST_DID}/secrets/FIREFLIES_API_KEY`,
         "vault/secrets/ASSEMBLYAI_API_KEY",
-        `grants/${TEST_DID}/secrets/ASSEMBLYAI_API_KEY`,
         "vault/secrets/DEEPGRAM_API_KEY",
-        `grants/${TEST_DID}/secrets/DEEPGRAM_API_KEY`,
         "vault/secrets/GRANOLA_API_KEY",
-        `grants/${TEST_DID}/secrets/GRANOLA_API_KEY`,
       ]);
     });
 
@@ -418,7 +400,7 @@ describe("Delegation Routes", () => {
       expect(stored!.actions).toContain("tinycloud.sql/write");
       expect(stored!.path).toContain("tinycloud.sql:xyz.tinycloud.listen/conversations");
       expect(stored!.policyHash).toBeDefined();
-      expect(stored!.resources?.length).toBe(12);
+      expect(stored!.resources?.length).toBe(8);
     });
 
     it("accepts SDK portable resources with short service names and fully qualified spaces", async () => {
@@ -470,30 +452,16 @@ describe("Delegation Routes", () => {
           path: "",
           actions: ["tinycloud.capabilities/read"],
         },
-        ...SECRET_NAMES.flatMap((secretName) => [
-          {
-            service: "tinycloud.kv",
-            space: "secrets",
-            path: `vault/secrets/${secretName}`,
-            actions: ["tinycloud.kv/get"],
-          },
-          {
-            service: "tinycloud.kv",
-            space: "secrets",
-            path: `grants/${TEST_DID}/secrets/${secretName}`,
-            actions: ["tinycloud.kv/get"],
-          },
-        ]),
+        ...SECRET_NAMES.map((secretName) => ({
+          service: "tinycloud.kv",
+          space: "secrets",
+          path: `vault/secrets/${secretName}`,
+          actions: ["tinycloud.kv/get"],
+        })),
         {
           service: "tinycloud.kv",
           space: "secrets",
           path: "vault/secrets/GRANOLA_API_KEY",
-          actions: ["tinycloud.kv/get"],
-        },
-        {
-          service: "tinycloud.kv",
-          space: "secrets",
-          path: `grants/${TEST_DID}/secrets/GRANOLA_API_KEY`,
           actions: ["tinycloud.kv/get"],
         },
         {

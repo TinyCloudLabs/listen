@@ -591,7 +591,7 @@ sequenceDiagram
   Frontend-&gt;&gt;Backend: GET /api/server-info
   Backend--&gt;&gt;Frontend: backend DID + delegation policy
   Frontend-&gt;&gt;Backend: GET /api/manifest
-  Backend--&gt;&gt;Frontend: runtime manifest with grant path
+  Backend--&gt;&gt;Frontend: app manifest
   Frontend-&gt;&gt;Frontend: composeManifestWithDelegatees(backend, agent)
   Frontend-&gt;&gt;TinyCloud: createAndSignIn(autoCreateSpace, manifest, capabilityRequest)
   TinyCloud--&gt;&gt;Frontend: TinyCloudWeb + SIWE session
@@ -604,9 +604,8 @@ sequenceDiagram
     Backend-&gt;&gt;TinyCloud: activatePortableDelegation()
     Backend--&gt;&gt;Frontend: status active
   end
-  opt Fireflies key is saved but not shared
-    Frontend-&gt;&gt;TinyCloud: secrets.unlock()
-    Frontend-&gt;&gt;TinyCloud: secrets.vault.reencrypt(secrets/FIREFLIES_API_KEY, backend DID)
+  opt Fireflies key is saved but backend delegation is missing
+    Frontend-&gt;&gt;TinyCloud: delegate backend KV read + default network decrypt
   end
   alt manual transcript import
     User-&gt;&gt;Frontend: paste or upload .txt/.md/.srt/.vtt
@@ -726,9 +725,9 @@ stateDiagram-v2
 stateDiagram-v2
   [*] --&gt; NoKey
   NoKey --&gt; KeyInSecrets: browser secrets.put(FIREFLIES_API_KEY)
-  KeyInSecrets --&gt; NeedsGrant: backend cannot read grant path
+  KeyInSecrets --&gt; NeedsGrant: backend lacks KV/decrypt delegation
   NeedsGrant --&gt; Granting: ensureBackendAccess()
-  Granting --&gt; SharedWithBackend: vault.reencrypt(secrets/FIREFLIES_API_KEY, backend DID)
+  Granting --&gt; SharedWithBackend: delegate per-secret KV read + default network decrypt
   SharedWithBackend --&gt; Verified: backend secrets.get succeeds
   Verified --&gt; SyncReady: Fireflies user test passes
   SyncReady --&gt; SyncReady: stream sync and webhooks
@@ -738,7 +737,7 @@ stateDiagram-v2
               >
             </div>
             <div class="text-stack">
-              <h3>Secret grant states</h3>
+              <h3>Secret access states</h3>
               <div class="rule-list">
                 <div class="rule-row">
                   <strong>No key</strong>
@@ -751,16 +750,15 @@ stateDiagram-v2
                   <strong>Key saved</strong>
                   <p>
                     The key exists in TinyCloud Secrets, but the backend may still be unable to read
-                    it. The app shows "Finish Fireflies access" when backend delegation or the
-                    secret grant is missing.
+                    it. The app shows "Finish Fireflies access" when backend delegation is missing.
                   </p>
                 </div>
                 <div class="rule-row">
                   <strong>Shared</strong>
                   <p>
-                    The browser calls <code>secrets.vault.reencrypt()</code> for
-                    <code>grants/{backendDid}/secrets/FIREFLIES_API_KEY</code>. After that,
-                    delegated backend routes can call <code>access.secrets.get()</code>.
+                    The browser delegates per-secret KV read plus
+                    <code>tinycloud.encryption/decrypt</code> on the user's default network. After
+                    that, delegated backend routes can call <code>access.secrets.get()</code>.
                   </p>
                 </div>
                 <div class="rule-row">
@@ -804,15 +802,14 @@ flowchart LR
 
   subgraph Secrets["TinyCloud Secrets space"]
     Vault["vault/secrets/FIREFLIES_API_KEY"]
-    Grant["grants/{backendDid}/secrets/FIREFLIES_API_KEY"]
   end
 
   Browser["Listen browser"] -- "manifest sign-in + secret writes" --&gt; UserSpace
-  Browser -- "unlock, put, delete, reencrypt" --&gt; Secrets
+  Browser -- "put, delete, delegate decrypt" --&gt; Secrets
   Backend["Listen backend"] -- "delegated kv get/put/list" --&gt; KV
   Backend -- "delegated sql read/write" --&gt; SQL
   Backend -- "backend session kv get/put" --&gt; Webhooks
-  Backend -- "delegated secrets.get after grant" --&gt; Grant
+  Backend -- "delegated secrets.get via KV + decrypt" --&gt; Vault
   Backend -- "SSE sync + webhooks" --&gt; Browser
   Agent["TinyCloud agent"] -. "optional delegatee" .-&gt; UserSpace</pre
             >

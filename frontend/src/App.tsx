@@ -44,9 +44,7 @@ const HAS_FRONTEND_GOOGLE_CLIENT_ID = Boolean(GOOGLE_CLIENT_ID);
 const ENABLE_AGENT = import.meta.env.VITE_ENABLE_AGENT === "true";
 const ENABLE_TINYCLOUD_HOOKS = import.meta.env.VITE_ENABLE_TINYCLOUD_HOOKS === "true";
 const FIREFLIES_SECRET_NAME = "FIREFLIES_API_KEY";
-const FIREFLIES_SECRET_VAULT_KEY = `secrets/${FIREFLIES_SECRET_NAME}`;
 const GRANOLA_SECRET_NAME = "GRANOLA_API_KEY";
-const GRANOLA_SECRET_VAULT_KEY = `secrets/${GRANOLA_SECRET_NAME}`;
 const ASSEMBLYAI_SECRET_NAME = "ASSEMBLYAI_API_KEY";
 const DEEPGRAM_SECRET_NAME = "DEEPGRAM_API_KEY";
 type ProviderSecretSource = "fireflies" | "granola" | "assemblyai" | "deepgram";
@@ -89,6 +87,10 @@ const LOCAL_APP_MANIFEST: Manifest = {
   ],
 };
 
+function principalDidFromAddress(address: string, chainId = 1): string {
+  return `did:pkh:eip155:${chainId}:${address}`;
+}
+
 function isChatEnabled(): boolean {
   return import.meta.env.VITE_ENABLE_CHAT === "true";
 }
@@ -103,7 +105,7 @@ async function fetchAgentInfo(endpoint: string): Promise<ServerInfo | null> {
   }
 }
 
-async function loadAppBootstrapContext(): Promise<AppBootstrapContext> {
+async function loadAppBootstrapContext(principalDid?: string): Promise<AppBootstrapContext> {
   const [info, agent] = await Promise.all([
     (async (): Promise<ServerInfo> => {
       const res = await fetch(`${BACKEND_URL}/api/server-info`);
@@ -117,7 +119,10 @@ async function loadAppBootstrapContext(): Promise<AppBootstrapContext> {
     ? resolveManifestPermissionPath(appManifest, "tinycloud.sql", "conversations/conversation")
     : null;
   const delegatees: ServerInfo[] = agent ? [info, agent] : [info];
-  const composedRequest = composeManifestWithDelegatees(appManifest, delegatees);
+  const composedRequest = composeManifestWithDelegatees(appManifest, delegatees, {
+    principalDid,
+    decryptDelegateDid: info.did,
+  });
 
   return {
     info,
@@ -723,9 +728,10 @@ export function App() {
     }
 
     const persistedSession = loadPersistedSession(addr);
+    const principalDid = persistedSession?.did ?? principalDidFromAddress(addr);
     let bootstrap: AppBootstrapContext;
     try {
-      bootstrap = await loadAppBootstrapContext();
+      bootstrap = await loadAppBootstrapContext(principalDid);
     } catch {
       return false;
     }
@@ -1085,7 +1091,9 @@ export function App() {
         }
 
         clearPersistedSession(addr);
-        const bootstrap = await loadAppBootstrapContext().catch(() => null);
+        const network = await web3Provider.getNetwork?.().catch(() => null);
+        const principalDid = principalDidFromAddress(addr, network?.chainId ?? 1);
+        const bootstrap = await loadAppBootstrapContext(principalDid).catch(() => null);
         if (!bootstrap) {
           await signInDirectTinyCloud(addr, web3Provider);
           return;
@@ -1185,18 +1193,6 @@ export function App() {
       else setHasGranolaBackendAccess(null);
       await ensureBackendAccess();
 
-      const unlockResult = await tcw.secrets.unlock();
-      if (!unlockResult.ok) {
-        throw new Error(unlockResult.error.message);
-      }
-
-      const vaultKey =
-        source === "fireflies" ? FIREFLIES_SECRET_VAULT_KEY : GRANOLA_SECRET_VAULT_KEY;
-      const shareResult = await tcw.secrets.vault.reencrypt(vaultKey, backendDid);
-      if (!shareResult.ok) {
-        throw new Error(shareResult.error.message);
-      }
-
       const backendCanRead = await checkSecretExistsFromBackend(api, source);
       if (!backendCanRead) {
         if (source === "fireflies") setHasFirefliesBackendAccess(false);
@@ -1237,16 +1233,6 @@ export function App() {
       }
 
       await ensureBackendAccess();
-
-      const unlockResult = await tcw.secrets.unlock();
-      if (!unlockResult.ok) {
-        throw new Error(unlockResult.error.message);
-      }
-
-      const shareResult = await tcw.secrets.vault.reencrypt(`secrets/${secretName}`, backendDid);
-      if (!shareResult.ok) {
-        throw new Error(shareResult.error.message);
-      }
 
       if (transcriptionProvider && api) {
         const backendCanRead = await checkSecretExistsFromBackend(api, transcriptionProvider);
