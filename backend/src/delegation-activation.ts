@@ -1,20 +1,12 @@
-import { deserializeDelegation, type TinyCloudNode } from "@tinycloud/node-sdk";
+import {
+  deserializeDelegation,
+  type InlineEncryptedEnvelope,
+  type TinyCloudNode,
+} from "@tinycloud/node-sdk";
 
 type PortableDelegation = Parameters<TinyCloudNode["useDelegation"]>[0];
 export type PortableDelegationSet = PortableDelegation | PortableDelegation[];
 type DelegatedAccess = Awaited<ReturnType<TinyCloudNode["useDelegation"]>>;
-type ServiceResult =
-  | { ok: true; data?: unknown }
-  | {
-      ok: false;
-      error: {
-        code: string;
-        service: string;
-        message: string;
-        cause?: unknown;
-        meta?: Record<string, unknown>;
-      };
-    };
 
 const DELEGATION_BUNDLE_FORMAT = "listen.delegation-bundle";
 
@@ -203,29 +195,48 @@ function attachDelegatedSecrets(
   if (secretResources.length === 0) return;
 
   const secrets = {
-    get vault() {
-      return node.secrets.vault;
-    },
-    get isUnlocked() {
-      return node.secrets.isUnlocked;
-    },
-    unlock: (signer?: unknown) => node.secrets.unlock(signer),
-    lock: () => node.secrets.lock(),
     get: async (name: string) => {
       if (!/^[A-Z][A-Z0-9_]*$/.test(name)) {
         return secretError(`Invalid secret name: ${name}`);
       }
 
-      const result = await node.secrets.vault.get<{ value?: unknown }>(`secrets/${name}`);
-
-      if (!result.ok) return result;
-
-      const value = result.data.value.value;
-      if (typeof value !== "string") {
-        return secretError(`Secret ${name} did not contain a string value`);
+      const secretKey = `vault/secrets/${name}`;
+      const match = findSecretResource(secretResources, secretKey, "tinycloud.kv/get");
+      if (!match) {
+        return secretError(`No delegated secret read permission for ${secretKey}`, "KEY_NOT_FOUND");
       }
 
-      return { ok: true, data: value };
+      const result = await match.access.kv.get<unknown>(secretKey, { raw: true, prefix: "" });
+      if (!result.ok) {
+        const code =
+          result.error?.code === "KV_NOT_FOUND"
+            ? "KEY_NOT_FOUND"
+            : result.error?.code ?? "SECRET_ACCESS_FAILED";
+        return secretError(
+          result.error?.message ?? `Failed to read ${secretKey}`,
+          code,
+        );
+      }
+
+      const envelopeResult = parseEncryptedEnvelope(result.data?.data, secretKey);
+      if (!envelopeResult.ok) return envelopeResult;
+
+      const proofCid = match.access.restorable?.delegationCid ?? match.access.delegation.cid;
+      if (!proofCid) {
+        return secretError(`No decrypt proof available for ${secretKey}`, "DECRYPT_DENIED");
+      }
+
+      const decrypted = await node.encryption.decryptEnvelope(envelopeResult.data, {
+        proofs: [proofCid],
+      });
+      if (!decrypted.ok) {
+        return secretError(decrypted.error.message, decrypted.error.code);
+      }
+
+      const valueResult = parseSecretPayload(decrypted.data, secretKey);
+      if (!valueResult.ok) return valueResult;
+
+      return { ok: true, data: valueResult.data };
     },
     put: async () => secretError("Delegated backend secret writes are not supported"),
     delete: async () => secretError("Delegated backend secret deletes are not supported"),
@@ -235,16 +246,79 @@ function attachDelegatedSecrets(
   Object.defineProperty(combined, "secrets", { value: secrets, configurable: true });
 }
 
+function parseEncryptedEnvelope(
+  rawEnvelope: unknown,
+  secretKey: string,
+): { ok: true; data: InlineEncryptedEnvelope } | ReturnType<typeof secretError> {
+  const parsed =
+    typeof rawEnvelope === "string"
+      ? tryParseJson(rawEnvelope)
+      : rawEnvelope;
+
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    typeof (parsed as Partial<InlineEncryptedEnvelope>).v !== "number" ||
+    typeof (parsed as Partial<InlineEncryptedEnvelope>).networkId !== "string" ||
+    typeof (parsed as Partial<InlineEncryptedEnvelope>).alg !== "string" ||
+    typeof (parsed as Partial<InlineEncryptedEnvelope>).encryptedSymmetricKey !== "string" ||
+    typeof (parsed as Partial<InlineEncryptedEnvelope>).encryptedSymmetricKeyHash !== "string" ||
+    typeof (parsed as Partial<InlineEncryptedEnvelope>).ciphertext !== "string" ||
+    typeof (parsed as Partial<InlineEncryptedEnvelope>).keyVersion !== "number"
+  ) {
+    return secretError(`Secret ${secretKey} did not contain an encrypted envelope`, "INVALID_ENVELOPE");
+  }
+
+  return { ok: true, data: parsed as InlineEncryptedEnvelope };
+}
+
+function findSecretResource(
+  resources: ActivatedResource[],
+  key: string,
+  action: string,
+): ActivatedResource | null {
+  return (
+    resources.find(({ resource }) => {
+      if (!resource.actions.includes(action)) return false;
+      return key === resource.path || key.startsWith(`${resource.path.replace(/\/$/, "")}/`);
+    }) ?? null
+  );
+}
+
 function isSecretsSpace(space: string | undefined): boolean {
   return space === "secrets" || space?.endsWith(":secrets") === true;
 }
 
-function secretError(message: string) {
+function parseSecretPayload(
+  plaintext: Uint8Array,
+  secretKey: string,
+): { ok: true; data: string } | ReturnType<typeof secretError> {
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(plaintext)) as {
+      value?: unknown;
+    };
+    if (typeof parsed.value !== "string") {
+      return secretError(`Secret ${secretKey} did not contain a string value`, "INVALID_ENVELOPE");
+    }
+    return { ok: true, data: parsed.value };
+  } catch {
+    return secretError(`Secret ${secretKey} did not contain valid JSON`, "INVALID_ENVELOPE");
+  }
+}
+
+function tryParseJson(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function secretError(message: string, code = "SECRET_ACCESS_FAILED") {
   return {
     ok: false as const,
     error: {
-      code: "SECRET_ACCESS_FAILED",
-      service: "secrets",
+      code,
       message,
     },
   };

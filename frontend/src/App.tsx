@@ -511,11 +511,6 @@ async function checkSecretExists(
   secretName: string,
   label: string,
 ): Promise<boolean> {
-  const unlockResult = await tcw.secrets.unlock();
-  if (!unlockResult.ok) {
-    throw new Error(unlockResult.error.message);
-  }
-
   const result = await tcw.secrets.get(secretName);
   if (result.ok) return Boolean(result.data);
 
@@ -1465,8 +1460,6 @@ export function App() {
     );
     if (!confirmed) return;
 
-    const unlockResult = await tcw.secrets.unlock();
-    if (!unlockResult.ok) throw new Error(unlockResult.error.message);
     const result = await tcw.secrets.delete(FIREFLIES_SECRET_NAME);
     if (!result.ok) throw new Error(result.error.message);
     setHasKey(false);
@@ -1550,8 +1543,6 @@ export function App() {
               type="button"
               style={s.userMenuAction}
               onClick={async () => {
-                const unlockResult = await tcw.secrets.unlock();
-                if (!unlockResult.ok) throw new Error(unlockResult.error.message);
                 const result = await tcw.secrets.delete(GRANOLA_SECRET_NAME);
                 if (!result.ok) throw new Error(result.error.message);
                 setHasGranolaKey(false);

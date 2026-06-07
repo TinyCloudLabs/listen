@@ -535,9 +535,9 @@
               <span class="cell-num mono">- browser</span>
               <h3>Wallet and Secrets owner</h3>
               <p>
-                Loads the manifest, signs in with OpenKey, unlocks TinyCloud Secrets, stores the
-                Fireflies key, starts Google OAuth, uploads or pastes transcripts, and reencrypts
-                the secret vault item for the backend DID.
+                Loads the manifest, signs in with OpenKey, stores the Fireflies key, starts
+                Google OAuth, uploads or pastes transcripts, and reads the encrypted secret vault
+                item through the backend's decrypt grant.
               </p>
             </article>
             <article class="cell">
@@ -698,7 +698,7 @@ stateDiagram-v2
   NeedsSource --&gt; GoogleConnect: connect Google Meet
   ManualImport --&gt; InboxReady: POST /api/conversations/import
   SavingFirefliesKey --&gt; NeedsFirefliesGrant: secrets.put complete
-  NeedsFirefliesGrant --&gt; InboxReady: backend delegation + vault grant
+  NeedsFirefliesGrant --&gt; InboxReady: backend delegation + per-secret KV/decrypt grants
   GoogleConnect --&gt; InboxReady: OAuth tokens saved
   InboxReady --&gt; Syncing: stream sync or pending webhooks
   Syncing --&gt; InboxReady: refresh conversations
@@ -782,8 +782,10 @@ stateDiagram-v2
             <p class="section-note">
               The manifest app id is <code>xyz.tinycloud.listen</code>. Defaults create the app
               space. <code>/api/server-info</code> supplies backend KV/SQL/secret-read delegation
-              permissions, while <code>/api/manifest</code> appends the Fireflies grant path at
-              runtime. The backend SQL helper opens
+              permissions, while <code>/api/manifest</code> appends the Fireflies grant path and
+              the separate default-network decrypt grant at runtime. That composition requires an
+              SDK release that already supports <code>tinycloud.encryption</code> manifest
+              entries. The backend SQL helper opens
               <code>xyz.tinycloud.listen/conversations</code> rather than the SDK default database.
             </p>
           </div>
@@ -837,7 +839,7 @@ flowchart LR
               <span class="mono">secrets</span>
               <p>
                 <code>FIREFLIES_API_KEY</code> is written by the browser and read by the backend
-                only after a vault grant exists.
+                only after the per-secret KV read and default-network decrypt grants exist.
               </p>
             </article>
             <article class="data-item">
