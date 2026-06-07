@@ -13,7 +13,7 @@
     "@listen/client": "workspace:*",
     "@listen/core": "workspace:*",
     "@openkey/sdk": "^0.8.4",
-    "@tinycloud/web-sdk": "2.2.0-beta.13",
+    "@tinycloud/web-sdk": "2.2.1-beta.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
