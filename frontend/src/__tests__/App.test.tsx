@@ -193,7 +193,9 @@ function mockTinyCloudConversationPage(
 function mockAuthFlow() {
   vi.mocked(connectWallet).mockResolvedValue({
     address: "0xabc123",
-    web3Provider: {},
+    web3Provider: {
+      getNetwork: vi.fn().mockResolvedValue({ chainId: 1 }),
+    },
   });
   vi.mocked(requestNonce).mockResolvedValue("mock-nonce");
   vi.mocked(createAndSignIn).mockResolvedValue({

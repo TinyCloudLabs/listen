@@ -207,9 +207,6 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
     setSaving(true);
     setTestError(null);
     try {
-      const unlockResult = await tcw.secrets.unlock();
-      if (!unlockResult.ok) throw new Error(unlockResult.error.message);
-
       const putResult = await tcw.secrets.put(FIREFLIES_SECRET_NAME, apiKey.trim());
       if (!putResult.ok) throw new Error(putResult.error.message);
 
@@ -245,9 +242,6 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
     setSaving(true);
     setTestError(null);
     try {
-      const unlockResult = await tcw.secrets.unlock();
-      if (!unlockResult.ok) throw new Error(unlockResult.error.message);
-
       const putResult = await tcw.secrets.put(GRANOLA_SECRET_NAME, granolaApiKey.trim());
       if (!putResult.ok) throw new Error(putResult.error.message);
 
@@ -282,9 +276,6 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
     setSaving(true);
     setTranscriptionError(null);
     try {
-      const unlockResult = await tcw.secrets.unlock();
-      if (!unlockResult.ok) throw new Error(unlockResult.error.message);
-
       const putResult = await tcw.secrets.put(secretName, transcriptionKey.trim());
       if (!putResult.ok) throw new Error(putResult.error.message);
 

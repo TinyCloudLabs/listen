@@ -59,6 +59,22 @@ listen/
 └── phala.toml
 ```
 
+## Secrets and encryption
+
+- Secret names are uppercase env-style identifiers such as `FIREFLIES_API_KEY`,
+  `GRANOLA_API_KEY`, `ASSEMBLYAI_API_KEY`, and `DEEPGRAM_API_KEY`.
+- Listen stores backend secret values as encrypted vault entries under
+  `vault/secrets/<NAME>`.
+- The frontend creates or discovers the default encryption network,
+  `urn:tinycloud:encryption:<principal>:default`, encrypts envelopes locally
+  against the network public key, and delegates `tinycloud.encryption/decrypt`
+  separately from the backend's KV and SQL reads.
+- The backend decrypts through the node with a `networkId`-scoped invocation.
+  This is the supported secret flow; the backend never sees payload plaintext.
+- If you consume Listen from a published SDK build, make sure the SDK release
+  already includes `tinycloud.encryption` manifest support before enabling this
+  flow.
+
 ## Environment
 
 Backend:
