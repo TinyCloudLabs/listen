@@ -43,12 +43,12 @@ describe("manifest", () => {
   });
 
   test("includes the owner default-network decrypt grant in concrete backend policy", () => {
-    const principalDid = "did:pkh:eip155:1:0xTEST";
+    const ownerDid = "did:pkh:eip155:1:0xTEST";
 
-    expect(backendDelegationResolvedPermissions("did:key:backend", principalDid)).toContainEqual({
+    expect(backendDelegationResolvedPermissions("did:key:backend", ownerDid)).toContainEqual({
       service: "tinycloud.encryption",
       space: "encryption",
-      path: `urn:tinycloud:encryption:${principalDid}:default`,
+      path: `urn:tinycloud:encryption:${ownerDid}:default`,
       actions: ["tinycloud.encryption/decrypt"],
       skipPrefix: true,
       description: "Decrypt Listen secrets through the user's default encryption network.",

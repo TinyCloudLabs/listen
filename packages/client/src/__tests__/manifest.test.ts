@@ -48,7 +48,7 @@ describe("resolveManifestPermissions", () => {
   });
 
   test("injects the user's default network decrypt grant for the backend delegate", () => {
-    const principalDid = "did:pkh:eip155:1:0x71C7656EC7ab88b098defB751B7401B5f6d8976F";
+    const ownerDid = "did:pkh:eip155:1:0x71C7656EC7ab88b098defB751B7401B5f6d8976F";
     const request = composeManifestWithBackend(
       {
         app_id: "com.example.app",
@@ -69,10 +69,10 @@ describe("resolveManifestPermissions", () => {
           },
         ],
       },
-      { principalDid },
+      { ownerDid },
     );
 
-    const networkId = defaultEncryptionNetworkId(principalDid);
+    const networkId = defaultEncryptionNetworkId(ownerDid);
     expect(request.delegationTargets[0]?.permissions).toContainEqual({
       service: "tinycloud.encryption",
       space: "encryption",

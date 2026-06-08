@@ -2,7 +2,7 @@ import type { Request, Response, NextFunction } from "express";
 import type { TinyCloudNode } from "@tinycloud/node-sdk";
 import type { DelegationStore, DelegationCache } from "@listen/server";
 import { withTimeout } from "./timeout.js";
-import { backendDelegationPolicyHash, principalDidFromAddress } from "../manifest.js";
+import { backendDelegationPolicyHash, ownerDidFromAddress } from "../manifest.js";
 import {
   activatePortableDelegation,
   deserializePortableDelegationSet,
@@ -57,7 +57,7 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
     }
 
     const { address } = user;
-    const principalDid = principalDidFromAddress(address);
+    const ownerDid = ownerDidFromAddress(address);
 
     try {
       // Check cache first
@@ -69,7 +69,7 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
           store,
           cache,
           backendDid,
-          principalDid,
+          ownerDid,
         );
         if (!validation.ok) {
           res.status(validation.error.status).json(validation.error.body);
@@ -102,7 +102,7 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
         return;
       }
 
-      if (stored.policyHash !== backendDelegationPolicyHash(backendDid, principalDid)) {
+      if (stored.policyHash !== backendDelegationPolicyHash(backendDid, ownerDid)) {
         await store.remove(address);
         cache.evict(address);
         res.status(403).json({
@@ -156,7 +156,7 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
             return;
           }
 
-          if (stored.policyHash !== backendDelegationPolicyHash(backendDid, principalDid)) {
+          if (stored.policyHash !== backendDelegationPolicyHash(backendDid, ownerDid)) {
             await store.remove(address);
             cache.evict(address);
             res.status(403).json({
@@ -200,7 +200,7 @@ async function validateStoredDelegation(
   store: DelegationStore,
   cache: DelegationCache,
   backendDid: string,
-  principalDid: string,
+  ownerDid: string,
 ): Promise<DelegationValidationResult> {
   const stored = await store.load(address);
 
@@ -233,7 +233,7 @@ async function validateStoredDelegation(
     };
   }
 
-  if (stored.policyHash !== backendDelegationPolicyHash(backendDid, principalDid)) {
+  if (stored.policyHash !== backendDelegationPolicyHash(backendDid, ownerDid)) {
     await store.remove(address);
     cache.evict(address);
     return {

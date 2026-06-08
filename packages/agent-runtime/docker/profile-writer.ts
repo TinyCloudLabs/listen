@@ -60,7 +60,7 @@ interface ProfileConfig {
   chainId: number;
   spaceName: string;
   did: string;
-  primaryDid: string;
+  ownerDid: string;
   spaceId: string;
   createdAt: string;
   authMethod: "openkey";
@@ -74,7 +74,7 @@ interface SessionData {
   jwk: object;
   address: string;
   chainId: number;
-  primaryDid: string;
+  ownerDid: string;
 }
 
 function profileDir(root: string, name: string): string {
@@ -122,7 +122,7 @@ export function writeInitialProfile(input: ProfileSynthesisInput): void {
     chainId: input.delegation.chainId,
     spaceName: input.profileName,
     did: input.restorable.verificationMethod,
-    primaryDid: agentDid,
+    ownerDid: agentDid,
     spaceId: input.delegation.spaceId,
     createdAt,
     authMethod: "openkey",
@@ -155,7 +155,7 @@ export function writeSessionOnly(input: ProfileSynthesisInput): void {
     jwk: input.restorable.jwk,
     address: input.delegation.ownerAddress,
     chainId: input.delegation.chainId,
-    primaryDid: ownerDid,
+    ownerDid: ownerDid,
   };
   writeJsonAtomic(join(dir, "session.json"), session);
 }

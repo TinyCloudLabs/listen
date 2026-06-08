@@ -86,7 +86,7 @@ const LOCAL_APP_MANIFEST: Manifest = {
   ],
 };
 
-function principalDidFromAddress(address: string, chainId = 1): string {
+function ownerDidFromAddress(address: string, chainId = 1): string {
   return `did:pkh:eip155:${chainId}:${address}`;
 }
 
@@ -114,7 +114,7 @@ async function fetchBackendInfo(): Promise<ServerInfo | null> {
   }
 }
 
-async function loadAppBootstrapContext(principalDid?: string): Promise<AppBootstrapContext> {
+async function loadAppBootstrapContext(ownerDid?: string): Promise<AppBootstrapContext> {
   const [info, agent] = await Promise.all([
     fetchBackendInfo(),
     ENABLE_AGENT ? fetchAgentInfo(AGENT_ENDPOINT) : Promise.resolve(null),
@@ -127,7 +127,7 @@ async function loadAppBootstrapContext(principalDid?: string): Promise<AppBootst
     (delegatee): delegatee is ServerInfo => delegatee !== null,
   );
   const composedRequest = composeManifestWithDelegatees(appManifest, delegatees, {
-    principalDid,
+    ownerDid,
     ...(info ? { decryptDelegateDid: info.did } : {}),
   });
 
@@ -730,10 +730,10 @@ export function App() {
     }
 
     const persistedSession = loadPersistedSession(addr);
-    const principalDid = persistedSession?.did ?? principalDidFromAddress(addr);
+    const ownerDid = persistedSession?.did ?? ownerDidFromAddress(addr);
     let bootstrap: AppBootstrapContext;
     try {
-      bootstrap = await loadAppBootstrapContext(principalDid);
+      bootstrap = await loadAppBootstrapContext(ownerDid);
     } catch {
       return false;
     }
@@ -1096,8 +1096,8 @@ export function App() {
 
         clearPersistedSession(addr);
         const network = await web3Provider.getNetwork?.().catch(() => null);
-        const principalDid = principalDidFromAddress(addr, network?.chainId ?? 1);
-        const bootstrap = await loadAppBootstrapContext(principalDid).catch(() => null);
+        const ownerDid = ownerDidFromAddress(addr, network?.chainId ?? 1);
+        const bootstrap = await loadAppBootstrapContext(ownerDid).catch(() => null);
         if (!bootstrap) {
           await signInDirectTinyCloud(addr, web3Provider);
           return;
