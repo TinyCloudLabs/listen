@@ -33,6 +33,7 @@
     "test:app:install": "bun run --cwd test install:browsers",
     "test:app:install:ci": "bun run --cwd test install:browsers:ci",
     "test:app": "bunx turbo run build --filter=@listen/client... && bun run --cwd test app:smoke",
+    "test:hooks:e2e": "bunx turbo run build --filter=@listen/core --filter=@listen/server --filter=@listen/client --filter=listen-backend --filter=listen-frontend && bun run --cwd test hooks:e2e",
     "lint": "turbo run lint",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",

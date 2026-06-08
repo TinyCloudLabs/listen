@@ -39,7 +39,8 @@ export class DelegationStore {
       resources: metadata.resources,
     };
 
-    await withSessionRefresh(this.node, () => this.node.kv.put(key, record));
+    const result = await withSessionRefresh(this.node, () => this.node.kv.put(key, record));
+    assertKvWriteSucceeded(result, `store delegation for ${identifier}`);
   }
 
   /**
@@ -112,5 +113,19 @@ export class DelegationStore {
       throw new Error("Invalid delegation identifier");
     }
     return `delegations/${identifier}`;
+  }
+}
+
+function assertKvWriteSucceeded(result: unknown, operation: string): void {
+  if (
+    typeof result === "object" &&
+    result !== null &&
+    "ok" in result &&
+    (result as { ok?: unknown }).ok === false
+  ) {
+    const error = (result as { error?: { message?: unknown } }).error;
+    const message =
+      typeof error?.message === "string" ? error.message : "TinyCloud KV write failed";
+    throw new Error(`Failed to ${operation}: ${message}`);
   }
 }

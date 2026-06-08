@@ -77,7 +77,7 @@ export function createAuthRouter(config: AuthRoutesConfig) {
       res.json({
         token,
         expiresIn,
-        address: address.toLowerCase(),
+        address,
       });
     } catch (err) {
       console.error("[auth] SIWE verification failed:", err);

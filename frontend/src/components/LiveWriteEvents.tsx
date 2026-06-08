@@ -5,7 +5,7 @@ import type { TinyCloudWeb, HookEvent } from "@tinycloud/web-sdk";
 
 interface LiveWriteEventsProps {
   tcw: TinyCloudWeb | null;
-  hooksHost: string;
+  spaceId?: string | null;
   pathPrefix: string | null;
   onWrite: () => void;
 }
@@ -69,23 +69,11 @@ function statusAccent(status: Status): string {
   }
 }
 
-async function hasHooksTicketEndpoint(host: string, signal: AbortSignal): Promise<boolean> {
-  const base = host.replace(/\/+$/, "");
-  const response = await fetch(`${base}/hooks/tickets`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ subscriptions: [] }),
-    signal,
-  });
-
-  return response.status !== 404;
-}
-
 // ── Component ────────────────────────────────────────────────────────
 
 export const LiveWriteEvents: FC<LiveWriteEventsProps> = ({
   tcw,
-  hooksHost,
+  spaceId,
   pathPrefix,
   onWrite,
 }) => {
@@ -119,7 +107,7 @@ export const LiveWriteEvents: FC<LiveWriteEventsProps> = ({
       return;
     }
 
-    const space = tcw.spaceId;
+    const space = spaceId ?? tcw.spaceId;
     if (!space) {
       // tcw exists but has no space yet. Stay idle until a valid instance
       // arrives; do NOT silently retry — if this keeps happening the caller
@@ -137,13 +125,6 @@ export const LiveWriteEvents: FC<LiveWriteEventsProps> = ({
 
     (async () => {
       try {
-        const endpointAvailable = await hasHooksTicketEndpoint(hooksHost, ctrl.signal);
-        if (!endpointAvailable) {
-          setStatus("error");
-          setError("TinyCloud hooks are not available on this host");
-          return;
-        }
-
         const stream = tcw.hooks.subscribe(
           [
             {
@@ -190,7 +171,7 @@ export const LiveWriteEvents: FC<LiveWriteEventsProps> = ({
     };
     // We intentionally depend only on `tcw` identity. status/events are
     // updated from within and must not retrigger the subscribe loop.
-  }, [tcw, hooksHost, pathPrefix]);
+  }, [tcw, pathPrefix, spaceId]);
 
   // ── Render ──────────────────────────────────────────────────────────
 

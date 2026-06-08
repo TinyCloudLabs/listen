@@ -82,6 +82,19 @@ describe("DelegationStore", () => {
       expect(parsed.grantedAt >= before).toBe(true);
       expect(parsed.grantedAt <= after).toBe(true);
     });
+
+    test("throws when TinyCloud KV reports a failed write", async () => {
+      mockNode.kv.put = mock(() =>
+        Promise.resolve({
+          ok: false,
+          error: { message: 'Failed to put key "delegations/0xABC": 404 - Space not found' },
+        }),
+      );
+
+      await expect(store.store("0xABC", "data", makeMetadata())).rejects.toThrow(
+        "Failed to store delegation for 0xABC",
+      );
+    });
   });
 
   describe("load", () => {
@@ -94,6 +107,23 @@ describe("DelegationStore", () => {
       expect(mockNode.kv.get).toHaveBeenCalledTimes(1);
       const [key] = mockNode.kv.get.mock.calls[0];
       expect(key).toBe("delegations/0xAbC123");
+
+      expect(result).toEqual(delegation);
+    });
+
+    test("parses real TinyCloud KV response envelopes", async () => {
+      const delegation = makeDelegation();
+      mockNode.kv.get = mock(() =>
+        Promise.resolve({
+          ok: true,
+          data: {
+            data: delegation,
+            headers: {},
+          },
+        }),
+      );
+
+      const result = await store.load("0xAbC123");
 
       expect(result).toEqual(delegation);
     });

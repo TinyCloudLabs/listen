@@ -6,6 +6,7 @@ import {
   requestNonce,
   verifySession,
   createAndSignIn,
+  restoreTinyCloudWeb,
   createApiClient,
   createManifestDelegation,
   sendDelegation,
@@ -15,7 +16,6 @@ import {
   loadPersistedSession,
   clearPersistedSession,
   composeManifestWithDelegatees,
-  resolveManifestPermissionPath,
   type ApiClient,
 } from "@listen/client";
 
@@ -37,11 +37,14 @@ import { createTinyCloudConversationApi } from "./lib/tinycloudConversations";
 
 const OPENKEY_HOST = import.meta.env.VITE_OPENKEY_HOST || "https://openkey.so";
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
+const TINYCLOUD_HOST = import.meta.env.VITE_TINYCLOUD_HOST;
+const TINYCLOUD_HOSTS = TINYCLOUD_HOST ? [TINYCLOUD_HOST] : undefined;
 const AGENT_ENDPOINT = import.meta.env.VITE_AGENT_ENDPOINT || "http://localhost:4097";
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const HAS_FRONTEND_GOOGLE_CLIENT_ID = Boolean(GOOGLE_CLIENT_ID);
 const ENABLE_AGENT = import.meta.env.VITE_ENABLE_AGENT === "true";
 const ENABLE_TINYCLOUD_HOOKS = import.meta.env.VITE_ENABLE_TINYCLOUD_HOOKS === "true";
+const CONVERSATION_HOOK_PATH_PREFIX = "conversations/conversation";
 const FIREFLIES_SECRET_NAME = "FIREFLIES_API_KEY";
 const GRANOLA_SECRET_NAME = "GRANOLA_API_KEY";
 const ASSEMBLYAI_SECRET_NAME = "ASSEMBLYAI_API_KEY";
@@ -77,7 +80,7 @@ const LOCAL_APP_MANIFEST: Manifest = {
   permissions: [
     {
       service: "tinycloud.hooks",
-      path: "sql/xyz.tinycloud.listen/conversations/conversation",
+      path: `sql/${CONVERSATION_HOOK_PATH_PREFIX}`,
       actions: ["subscribe"],
       skipPrefix: true,
       description:
@@ -120,9 +123,7 @@ async function loadAppBootstrapContext(principalDid?: string): Promise<AppBootst
     ENABLE_AGENT ? fetchAgentInfo(AGENT_ENDPOINT) : Promise.resolve(null),
   ]);
   const appManifest = LOCAL_APP_MANIFEST;
-  const conversationEventPathPrefix = ENABLE_TINYCLOUD_HOOKS
-    ? resolveManifestPermissionPath(appManifest, "tinycloud.sql", "conversations/conversation")
-    : null;
+  const conversationEventPathPrefix = ENABLE_TINYCLOUD_HOOKS ? CONVERSATION_HOOK_PATH_PREFIX : null;
   const delegatees: ServerInfo[] = [info, agent].filter(
     (delegatee): delegatee is ServerInfo => delegatee !== null,
   );
@@ -141,11 +142,7 @@ async function loadAppBootstrapContext(principalDid?: string): Promise<AppBootst
 
 function localConversationEventPathPrefix(): string | null {
   if (!ENABLE_TINYCLOUD_HOOKS) return null;
-  return resolveManifestPermissionPath(
-    LOCAL_APP_MANIFEST,
-    "tinycloud.sql",
-    "conversations/conversation",
-  );
+  return CONVERSATION_HOOK_PATH_PREFIX;
 }
 
 function LandingIcon({ name, size = 14 }: { name: "plus" | "minus"; size?: number }) {
@@ -672,6 +669,7 @@ export function App() {
   const [gmLapsedBanner, setGmLapsedBanner] = useState(false);
   const [liveWritePathPrefix, setLiveWritePathPrefix] = useState<string | null>(null);
   const [liveWriteHost, setLiveWriteHost] = useState<string | null>(null);
+  const [liveWriteSpaceId, setLiveWriteSpaceId] = useState<string | null>(null);
   const [agentInfo, setAgentInfo] = useState<ServerInfo | null>(null);
   const [backendDid, setBackendDid] = useState<string | null>(null);
   const [capabilityRequest, setCapabilityRequest] = useState<ComposedManifestRequest | null>(null);
@@ -697,6 +695,7 @@ export function App() {
     setServerGoogleMeetAvailable(false);
     setLiveWritePathPrefix(localConversationEventPathPrefix());
     setLiveWriteHost(tcwInstance.hosts[0] ?? null);
+    setLiveWriteSpaceId(tcwInstance.spaceId ?? null);
     setHasBackendDelegation(false);
     setHasFirefliesBackendAccess(null);
     setHasGranolaBackendAccess(null);
@@ -709,6 +708,7 @@ export function App() {
     async (addr: string, web3Provider: Parameters<typeof createAndSignIn>[0]) => {
       const { tcw: tcwInstance } = await createAndSignIn(web3Provider, {
         autoCreateSpace: true,
+        tinycloudHosts: TINYCLOUD_HOSTS,
         manifest: LOCAL_APP_MANIFEST,
       });
       applyDirectTinyCloudSession(addr, tcwInstance);
@@ -739,21 +739,29 @@ export function App() {
     }
     const { info, agent, composedRequest, conversationEventPathPrefix } = bootstrap;
     if (!info) return false;
+    const restoredTinyCloud = persistedSession
+      ? await restoreTinyCloudWeb(addr, {
+          autoCreateSpace: true,
+          tinycloudHosts: TINYCLOUD_HOSTS,
+          capabilityRequest: composedRequest,
+        }).catch(() => null)
+      : null;
 
     const apiClient = createApiClient(BACKEND_URL, {
       sessionStore: sessionStoreRef.current,
     });
 
     setAddress(addr);
-    setDid(persistedSession?.did ?? null);
-    setTcw(null);
+    setDid(restoredTinyCloud?.tcw.did ?? persistedSession?.did ?? null);
+    setTcw(restoredTinyCloud?.tcw ?? null);
     setApi(apiClient);
     setAgentInfo(agent);
     setBackendDid(info.did);
     setCapabilityRequest(composedRequest);
     setServerGoogleMeetAvailable(info.features?.googleMeet?.available ?? null);
     setLiveWritePathPrefix(conversationEventPathPrefix);
-    setLiveWriteHost(null);
+    setLiveWriteHost(restoredTinyCloud?.tcw.hosts[0] ?? null);
+    setLiveWriteSpaceId(restoredTinyCloud?.tcw.spaceId ?? persistedSession?.spaceId ?? null);
     return true;
   }, []);
 
@@ -1118,6 +1126,7 @@ export function App() {
         const { tcw: tcwInstance, session } = await createAndSignIn(web3Provider, {
           nonce,
           autoCreateSpace: true,
+          tinycloudHosts: TINYCLOUD_HOSTS,
           capabilityRequest: composedRequest,
         });
         const verified = await verifySession(BACKEND_URL, session.siwe, session.signature).catch(
@@ -1147,6 +1156,7 @@ export function App() {
         setServerGoogleMeetAvailable(info.features?.googleMeet?.available ?? null);
         setLiveWritePathPrefix(conversationEventPathPrefix);
         setLiveWriteHost(tcwInstance.hosts[0] ?? null);
+        setLiveWriteSpaceId(tcwInstance.spaceId ?? null);
       } catch (err) {
         setAuthError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -1172,6 +1182,7 @@ export function App() {
     setServerGoogleMeetAvailable(null);
     setLiveWritePathPrefix(null);
     setLiveWriteHost(null);
+    setLiveWriteSpaceId(null);
     setAuthError(null);
     setHasKey(null);
     setHasGranolaKey(null);
@@ -1845,7 +1856,7 @@ export function App() {
           {ENABLE_TINYCLOUD_HOOKS && liveWriteHost && (
             <LiveWriteEvents
               tcw={tcw}
-              hooksHost={liveWriteHost}
+              spaceId={liveWriteSpaceId}
               pathPrefix={liveWritePathPrefix}
               onWrite={() => setRefreshKey((k) => k + 1)}
             />
