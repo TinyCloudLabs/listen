@@ -215,20 +215,33 @@ Listen has one app manifest at:
 ./manifest.json
 ```
 
-The backend exposes an app-defined `/api/server-info` response with its DID and the permissions it needs. The frontend converts that response into a backend delegate manifest with the same `app_id`, composes it with the app manifest, signs one request, and then materializes the backend delegation:
+The browser imports the local app manifest and optionally fetches an app-defined
+`/api/server-info` response with the backend DID and backend-specific
+permissions. If the backend is reachable, the frontend converts that response
+into a backend delegate manifest with the same `app_id`, composes it with the
+app manifest, signs one request, and materializes the backend delegation:
 
 ```ts
-const appManifest = await loadAppManifest("/api/manifest");
-const info = await fetchServerInfo();
-const request = composeManifestWithBackend(appManifest, info);
+const appManifest = LISTEN_APP_MANIFEST;
+const info = await fetchServerInfo().catch(() => null);
+const request = composeManifestWithDelegatees(
+  appManifest,
+  info ? [info] : [],
+  {
+    principalDid,
+    ...(info ? { decryptDelegateDid: info.did } : {}),
+  },
+);
 
 const { tcw, session } = await createAndSignIn(provider, {
-  nonce,
+  ...(nonce ? { nonce } : {}),
   capabilityRequest: request,
 });
 
-const { serialized } = await createManifestDelegation(tcw, info.did, request);
-await sendDelegation(BACKEND_URL, serialized, token);
+if (info && token) {
+  const { serialized } = await createManifestDelegation(tcw, info.did, request);
+  await sendDelegation(BACKEND_URL, serialized, token);
+}
 ```
 
 Listen's backend delegate manifest also adds the user's default encryption

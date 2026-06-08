@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { runtimeManifest, resolveAppPath } from "../manifest.js";
+import {
+  backendDelegationResolvedPermissions,
+  runtimeManifest,
+  resolveAppPath,
+} from "../manifest.js";
 
 describe("manifest", () => {
   test("serves the v1 user-permission manifest without backend-only sections", () => {
@@ -36,5 +40,18 @@ describe("manifest", () => {
     expect(resolveAppPath("conversations", "tinycloud.sql")).toBe(
       "xyz.tinycloud.listen/conversations",
     );
+  });
+
+  test("includes the owner default-network decrypt grant in concrete backend policy", () => {
+    const principalDid = "did:pkh:eip155:1:0xTEST";
+
+    expect(backendDelegationResolvedPermissions("did:key:backend", principalDid)).toContainEqual({
+      service: "tinycloud.encryption",
+      space: "encryption",
+      path: `urn:tinycloud:encryption:${principalDid}:default`,
+      actions: ["tinycloud.encryption/decrypt"],
+      skipPrefix: true,
+      description: "Decrypt Listen secrets through the user's default encryption network.",
+    });
   });
 });

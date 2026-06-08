@@ -1,8 +1,4 @@
-import {
-  deserializeDelegation,
-  type InlineEncryptedEnvelope,
-  type TinyCloudNode,
-} from "@tinycloud/node-sdk";
+import { deserializeDelegation, type TinyCloudNode } from "@tinycloud/node-sdk";
 
 type PortableDelegation = Parameters<TinyCloudNode["useDelegation"]>[0];
 export type PortableDelegationSet = PortableDelegation | PortableDelegation[];
@@ -32,6 +28,29 @@ interface ActivatedResource {
 interface ActivatableResource {
   delegation: PortableDelegation;
   resource: PortableResource;
+}
+
+interface InlineEncryptedEnvelope {
+  v: number;
+  networkId: string;
+  alg: string;
+  encryptedSymmetricKey: string;
+  encryptedSymmetricKeyHash: string;
+  ciphertext: string;
+  keyVersion: number;
+}
+
+type DecryptEnvelopeResult =
+  | { ok: true; data: Uint8Array }
+  | { ok: false; error: { code: string; message: string } };
+
+interface EncryptionCapableNode {
+  encryption?: {
+    decryptEnvelope(
+      envelope: InlineEncryptedEnvelope,
+      options: { proofs: string[] },
+    ): Promise<DecryptEnvelopeResult>;
+  };
 }
 
 export function deserializePortableDelegationSet(serialized: string): PortableDelegationSet {
@@ -211,11 +230,8 @@ function attachDelegatedSecrets(
         const code =
           result.error?.code === "KV_NOT_FOUND"
             ? "KEY_NOT_FOUND"
-            : result.error?.code ?? "SECRET_ACCESS_FAILED";
-        return secretError(
-          result.error?.message ?? `Failed to read ${secretKey}`,
-          code,
-        );
+            : (result.error?.code ?? "SECRET_ACCESS_FAILED");
+        return secretError(result.error?.message ?? `Failed to read ${secretKey}`, code);
       }
 
       const envelopeResult = parseEncryptedEnvelope(result.data?.data, secretKey);
@@ -226,7 +242,12 @@ function attachDelegatedSecrets(
         return secretError(`No decrypt proof available for ${secretKey}`, "DECRYPT_DENIED");
       }
 
-      const decrypted = await node.encryption.decryptEnvelope(envelopeResult.data, {
+      const encryption = (node as TinyCloudNode & EncryptionCapableNode).encryption;
+      if (!encryption) {
+        return secretError("TinyCloud encryption service is not available", "DECRYPT_UNAVAILABLE");
+      }
+
+      const decrypted = await encryption.decryptEnvelope(envelopeResult.data, {
         proofs: [proofCid],
       });
       if (!decrypted.ok) {
@@ -250,10 +271,7 @@ function parseEncryptedEnvelope(
   rawEnvelope: unknown,
   secretKey: string,
 ): { ok: true; data: InlineEncryptedEnvelope } | ReturnType<typeof secretError> {
-  const parsed =
-    typeof rawEnvelope === "string"
-      ? tryParseJson(rawEnvelope)
-      : rawEnvelope;
+  const parsed = typeof rawEnvelope === "string" ? tryParseJson(rawEnvelope) : rawEnvelope;
 
   if (
     typeof parsed !== "object" ||
@@ -266,7 +284,10 @@ function parseEncryptedEnvelope(
     typeof (parsed as Partial<InlineEncryptedEnvelope>).ciphertext !== "string" ||
     typeof (parsed as Partial<InlineEncryptedEnvelope>).keyVersion !== "number"
   ) {
-    return secretError(`Secret ${secretKey} did not contain an encrypted envelope`, "INVALID_ENVELOPE");
+    return secretError(
+      `Secret ${secretKey} did not contain an encrypted envelope`,
+      "INVALID_ENVELOPE",
+    );
   }
 
   return { ok: true, data: parsed as InlineEncryptedEnvelope };

@@ -15,7 +15,6 @@ import {
   loadPersistedSession,
   clearPersistedSession,
   composeManifestWithDelegatees,
-  loadAppManifest,
   resolveManifestPermissionPath,
   type ApiClient,
 } from "@listen/client";
@@ -57,7 +56,7 @@ const EMPTY_TRANSCRIPTION_STATUS: TranscriptionProviderStatus = {
 };
 
 interface AppBootstrapContext {
-  info: ServerInfo;
+  info: ServerInfo | null;
   agent: ServerInfo | null;
   composedRequest: ComposedManifestRequest;
   conversationEventPathPrefix: string | null;
@@ -105,23 +104,31 @@ async function fetchAgentInfo(endpoint: string): Promise<ServerInfo | null> {
   }
 }
 
+async function fetchBackendInfo(): Promise<ServerInfo | null> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/server-info`);
+    if (!res.ok) return null;
+    return (await res.json()) as ServerInfo;
+  } catch {
+    return null;
+  }
+}
+
 async function loadAppBootstrapContext(principalDid?: string): Promise<AppBootstrapContext> {
   const [info, agent] = await Promise.all([
-    (async (): Promise<ServerInfo> => {
-      const res = await fetch(`${BACKEND_URL}/api/server-info`);
-      if (!res.ok) throw new Error(`Server info: ${res.statusText}`);
-      return res.json();
-    })(),
+    fetchBackendInfo(),
     ENABLE_AGENT ? fetchAgentInfo(AGENT_ENDPOINT) : Promise.resolve(null),
   ]);
-  const appManifest = await loadAppManifest(`${BACKEND_URL}/api/manifest`);
+  const appManifest = LOCAL_APP_MANIFEST;
   const conversationEventPathPrefix = ENABLE_TINYCLOUD_HOOKS
     ? resolveManifestPermissionPath(appManifest, "tinycloud.sql", "conversations/conversation")
     : null;
-  const delegatees: ServerInfo[] = agent ? [info, agent] : [info];
+  const delegatees: ServerInfo[] = [info, agent].filter(
+    (delegatee): delegatee is ServerInfo => delegatee !== null,
+  );
   const composedRequest = composeManifestWithDelegatees(appManifest, delegatees, {
     principalDid,
-    decryptDelegateDid: info.did,
+    ...(info ? { decryptDelegateDid: info.did } : {}),
   });
 
   return {
@@ -731,6 +738,8 @@ export function App() {
       return false;
     }
     const { info, agent, composedRequest, conversationEventPathPrefix } = bootstrap;
+    if (!info) return false;
+
     const apiClient = createApiClient(BACKEND_URL, {
       sessionStore: sessionStoreRef.current,
     });
@@ -1090,6 +1099,11 @@ export function App() {
         const principalDid = principalDidFromAddress(addr, network?.chainId ?? 1);
         const bootstrap = await loadAppBootstrapContext(principalDid).catch(() => null);
         if (!bootstrap) {
+          await signInDirectTinyCloud(addr, web3Provider);
+          return;
+        }
+
+        if (!bootstrap.info) {
           await signInDirectTinyCloud(addr, web3Provider);
           return;
         }

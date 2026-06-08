@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
 const TEST_ADDRESS = "0xTEST";
 const TEST_DID = "did:pkh:eip155:1:0xTEST";
 const SECRET_NAMES = ["FIREFLIES_API_KEY", "ASSEMBLYAI_API_KEY", "DEEPGRAM_API_KEY"];
+const DEFAULT_ENCRYPTION_NETWORK_ID = `urn:tinycloud:encryption:${TEST_DID}:default`;
 
 function fullPolicyResources(space = "applications") {
   return [
@@ -27,8 +28,20 @@ function fullPolicyResources(space = "applications") {
       actions: ["tinycloud.sql/read", "tinycloud.sql/write"],
     },
     {
+      service: "tinycloud.encryption",
+      space: "encryption",
+      path: DEFAULT_ENCRYPTION_NETWORK_ID,
+      actions: ["tinycloud.encryption/decrypt"],
+    },
+    {
       service: "tinycloud.capabilities",
       space: "applications",
+      path: "",
+      actions: ["tinycloud.capabilities/read"],
+    },
+    {
+      service: "tinycloud.capabilities",
+      space: "encryption",
       path: "",
       actions: ["tinycloud.capabilities/read"],
     },
@@ -375,10 +388,11 @@ describe("Delegation Routes", () => {
         body: JSON.stringify({ serialized: "activatable" }),
       });
 
-      expect(mockUseDelegation).toHaveBeenCalledTimes(6);
+      expect(mockUseDelegation).toHaveBeenCalledTimes(7);
       expect(mockUseDelegation.mock.calls.map((call) => call[0].path)).toEqual([
         "xyz.tinycloud.listen/",
         "xyz.tinycloud.listen/conversations",
+        DEFAULT_ENCRYPTION_NETWORK_ID,
         "vault/secrets/FIREFLIES_API_KEY",
         "vault/secrets/ASSEMBLYAI_API_KEY",
         "vault/secrets/DEEPGRAM_API_KEY",
@@ -400,7 +414,7 @@ describe("Delegation Routes", () => {
       expect(stored!.actions).toContain("tinycloud.sql/write");
       expect(stored!.path).toContain("tinycloud.sql:xyz.tinycloud.listen/conversations");
       expect(stored!.policyHash).toBeDefined();
-      expect(stored!.resources?.length).toBe(8);
+      expect(stored!.resources?.length).toBe(10);
     });
 
     it("accepts SDK portable resources with short service names and fully qualified spaces", async () => {
@@ -447,8 +461,20 @@ describe("Delegation Routes", () => {
           actions: ["tinycloud.sql/read", "tinycloud.sql/write"],
         },
         {
+          service: "tinycloud.encryption",
+          space: "encryption",
+          path: DEFAULT_ENCRYPTION_NETWORK_ID,
+          actions: ["tinycloud.encryption/decrypt"],
+        },
+        {
           service: "tinycloud.capabilities",
           space: "applications",
+          path: "",
+          actions: ["tinycloud.capabilities/read"],
+        },
+        {
+          service: "tinycloud.capabilities",
+          space: "encryption",
           path: "",
           actions: ["tinycloud.capabilities/read"],
         },

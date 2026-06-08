@@ -3,7 +3,11 @@ import type { Request, Response, RequestHandler } from "express";
 import type { TinyCloudNode } from "@tinycloud/node-sdk";
 import type { DelegationStore, DelegationCache } from "@listen/server";
 import { DEFAULT_DELEGATION_EXPIRY_MS, type ServerInfoPermission } from "@listen/core";
-import { backendDelegationPolicyHash, delegationCoversBackendPolicy } from "../manifest.js";
+import {
+  backendDelegationPolicyHash,
+  delegationCoversBackendPolicy,
+  principalDidFromAddress,
+} from "../manifest.js";
 import {
   activatePortableDelegation,
   deserializePortableDelegationSet,
@@ -53,8 +57,9 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
       // Deserialize and validate the delegation
       const delegation = deserializePortableDelegationSet(serialized);
       const resources = extractDelegationResources(delegation);
+      const principalDid = principalDidFromAddress(address);
 
-      if (!delegationCoversBackendPolicy(resources, config.did)) {
+      if (!delegationCoversBackendPolicy(resources, config.did, principalDid)) {
         throw new Error("Delegation does not cover the current backend permission policy");
       }
 
@@ -73,7 +78,7 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
         actions: resources.flatMap((resource) => resource.actions),
         path: resources.map((resource) => `${resource.service}:${resource.path}`).join(","),
         resources,
-        policyHash: backendDelegationPolicyHash(config.did),
+        policyHash: backendDelegationPolicyHash(config.did, principalDid),
       });
 
       // Cache the active DelegatedAccess keyed by address
@@ -131,6 +136,7 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
 
     try {
       const stored = await store.load(address);
+      const principalDid = principalDidFromAddress(address);
 
       if (!stored) {
         res.json({
@@ -154,7 +160,7 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
         return;
       }
 
-      if (stored.policyHash !== backendDelegationPolicyHash(config.did)) {
+      if (stored.policyHash !== backendDelegationPolicyHash(config.did, principalDid)) {
         await store.remove(address);
         cache.evict(address);
 
