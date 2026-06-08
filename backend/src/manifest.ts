@@ -42,12 +42,12 @@ const BACKEND_SECRET_NAMES = [
   ...TRANSCRIPTION_SECRET_NAMES,
 ] as const;
 
-export function principalDidFromAddress(address: string, chainId = 1): string {
+export function ownerDidFromAddress(address: string, chainId = 1): string {
   return `did:pkh:eip155:${chainId}:${address}`;
 }
 
-function defaultEncryptionNetworkId(principalDid: string): string {
-  return `urn:tinycloud:encryption:${principalDid}:default`;
+function defaultEncryptionNetworkId(ownerDid: string): string {
+  return `urn:tinycloud:encryption:${ownerDid}:default`;
 }
 
 function secretVaultKey(secretName: string): string {
@@ -65,14 +65,14 @@ function backendSecretPermissions(): ServerInfoPermission[] {
   }));
 }
 
-function backendEncryptionPermissions(principalDid?: string): ServerInfoPermission[] {
-  if (!principalDid) return [];
+function backendEncryptionPermissions(ownerDid?: string): ServerInfoPermission[] {
+  if (!ownerDid) return [];
 
   return [
     {
       service: "tinycloud.encryption",
       space: "encryption",
-      path: defaultEncryptionNetworkId(principalDid),
+      path: defaultEncryptionNetworkId(ownerDid),
       actions: ["decrypt"],
       skipPrefix: true,
       description: "Decrypt Listen secrets through the user's default encryption network.",
@@ -82,7 +82,7 @@ function backendEncryptionPermissions(principalDid?: string): ServerInfoPermissi
 
 function backendDelegationPermissions(
   backendDid: string,
-  principalDid?: string,
+  ownerDid?: string,
 ): ServerInfoPermission[] {
   return [
     {
@@ -99,15 +99,15 @@ function backendDelegationPermissions(
       description: "Read and write normalized conversation records created from transcript sync.",
     },
     ...backendSecretPermissions(),
-    ...backendEncryptionPermissions(principalDid),
+    ...backendEncryptionPermissions(ownerDid),
   ];
 }
 
 function runtimeGrantPermissions(
   _backendDid: string,
-  principalDid?: string,
+  ownerDid?: string,
 ): DescribedPermissionEntry[] {
-  return backendEncryptionPermissions(principalDid);
+  return backendEncryptionPermissions(ownerDid);
 }
 
 function validateConversationManifest(manifest: Manifest): ConversationManifest {
@@ -187,12 +187,12 @@ function resolveManifestPermissions(
 function validateBackendDelegationPolicy(
   manifest: ConversationManifest,
   backendDid: string,
-  principalDid?: string,
+  ownerDid?: string,
 ): void {
   const granted = resolveManifest(manifest).resources;
   const requested = resolveManifestPermissions(
     manifest,
-    backendDelegationPermissions(backendDid, principalDid),
+    backendDelegationPermissions(backendDid, ownerDid),
   );
   const { subset, missing } = isCapabilitySubset(requested, granted);
 
@@ -225,18 +225,15 @@ export function backendManifestConfig(backendDid: string): BackendDelegationConf
 
 export function backendDelegationResolvedPermissions(
   backendDid: string,
-  principalDid?: string,
+  ownerDid?: string,
 ): ServerInfoPermission[] {
-  const manifest = runtimeManifest(backendDid, principalDid);
-  validateBackendDelegationPolicy(manifest, backendDid, principalDid);
-  return resolveManifestPermissions(
-    manifest,
-    backendDelegationPermissions(backendDid, principalDid),
-  );
+  const manifest = runtimeManifest(backendDid, ownerDid);
+  validateBackendDelegationPolicy(manifest, backendDid, ownerDid);
+  return resolveManifestPermissions(manifest, backendDelegationPermissions(backendDid, ownerDid));
 }
 
-export function backendDelegationPolicyHash(backendDid: string, principalDid?: string): string {
-  const permissions = backendDelegationResolvedPermissions(backendDid, principalDid).map(
+export function backendDelegationPolicyHash(backendDid: string, ownerDid?: string): string {
+  const permissions = backendDelegationResolvedPermissions(backendDid, ownerDid).map(
     (permission) => ({
       service: permission.service,
       space: permission.space,
@@ -251,9 +248,9 @@ export function backendDelegationPolicyHash(backendDid: string, principalDid?: s
 export function delegationCoversBackendPolicy(
   permissions: readonly ServerInfoPermission[],
   backendDid: string,
-  principalDid?: string,
+  ownerDid?: string,
 ): boolean {
-  const requested = backendDelegationResolvedPermissions(backendDid, principalDid);
+  const requested = backendDelegationResolvedPermissions(backendDid, ownerDid);
   const granted = permissions.map((permission) => ({
     service: permission.service,
     ...(permission.space !== undefined ? { space: permission.space } : {}),
@@ -264,7 +261,7 @@ export function delegationCoversBackendPolicy(
   return isCapabilitySubset(requested, granted).subset;
 }
 
-export function runtimeManifest(backendDid?: string, principalDid?: string): Manifest {
+export function runtimeManifest(backendDid?: string, ownerDid?: string): Manifest {
   const manifest = loadConversationManifest();
   if (!backendDid) return manifest;
 
@@ -272,7 +269,7 @@ export function runtimeManifest(backendDid?: string, principalDid?: string): Man
     ...manifest,
     permissions: [
       ...(manifest.permissions ?? []),
-      ...runtimeGrantPermissions(backendDid, principalDid),
+      ...runtimeGrantPermissions(backendDid, ownerDid),
     ],
   };
 }

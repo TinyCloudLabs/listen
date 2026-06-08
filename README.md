@@ -66,7 +66,7 @@ listen/
 - Listen stores backend secret values as encrypted vault entries under
   `vault/secrets/<NAME>`.
 - The frontend creates or discovers the default encryption network,
-  `urn:tinycloud:encryption:<principal>:default`, encrypts envelopes locally
+  `urn:tinycloud:encryption:<ownerDid>:default`, encrypts envelopes locally
   against the network public key, and delegates `tinycloud.encryption/decrypt`
   separately from the backend's KV and SQL reads.
 - The backend decrypts through the node with a `networkId`-scoped invocation.

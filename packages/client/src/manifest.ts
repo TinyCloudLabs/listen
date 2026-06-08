@@ -24,16 +24,16 @@ export async function loadAppManifest(url: string): Promise<Manifest> {
 // ── Composition ───────────────────────────────────────────────────────
 
 export interface ComposeDelegateOptions {
-  /** User principal DID, e.g. did:pkh:eip155:1:0xabc... */
-  principalDid?: string;
+  /** User owner DID, e.g. did:pkh:eip155:1:0xabc... */
+  ownerDid?: string;
   /** Delegate DID that should receive the broad decrypt grant. */
   decryptDelegateDid?: string;
   /** Encryption network name. Defaults to "default". */
   networkName?: string;
 }
 
-export function defaultEncryptionNetworkId(principalDid: string, networkName = "default"): string {
-  return `urn:tinycloud:encryption:${principalDid}:${networkName}`;
+export function defaultEncryptionNetworkId(ownerDid: string, networkName = "default"): string {
+  return `urn:tinycloud:encryption:${ownerDid}:${networkName}`;
 }
 
 function sdkManifestSpaceForPermission(permission: ServerInfoPermission): string | undefined {
@@ -47,12 +47,12 @@ function sdkManifestSpaceForPermission(permission: ServerInfoPermission): string
 }
 
 function defaultNetworkDecryptPermission(
-  principalDid: string,
+  ownerDid: string,
   networkName?: string,
 ): ServerInfoPermission {
   return {
     service: "tinycloud.encryption",
-    path: defaultEncryptionNetworkId(principalDid, networkName),
+    path: defaultEncryptionNetworkId(ownerDid, networkName),
     actions: ["decrypt"],
     skipPrefix: true,
     description: "Decrypt Listen secrets through the user's default encryption network.",
@@ -64,12 +64,8 @@ function permissionsForDelegate(
   options: ComposeDelegateOptions,
 ): ServerInfoPermission[] {
   const permissions = [...(info.permissions ?? [])];
-  if (
-    options.principalDid &&
-    options.decryptDelegateDid &&
-    info.did === options.decryptDelegateDid
-  ) {
-    permissions.push(defaultNetworkDecryptPermission(options.principalDid, options.networkName));
+  if (options.ownerDid && options.decryptDelegateDid && info.did === options.decryptDelegateDid) {
+    permissions.push(defaultNetworkDecryptPermission(options.ownerDid, options.networkName));
   }
   return permissions;
 }

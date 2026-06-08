@@ -6,7 +6,7 @@ import { DEFAULT_DELEGATION_EXPIRY_MS, type ServerInfoPermission } from "@listen
 import {
   backendDelegationPolicyHash,
   delegationCoversBackendPolicy,
-  principalDidFromAddress,
+  ownerDidFromAddress,
 } from "../manifest.js";
 import {
   activatePortableDelegation,
@@ -57,9 +57,9 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
       // Deserialize and validate the delegation
       const delegation = deserializePortableDelegationSet(serialized);
       const resources = extractDelegationResources(delegation);
-      const principalDid = principalDidFromAddress(address);
+      const ownerDid = ownerDidFromAddress(address);
 
-      if (!delegationCoversBackendPolicy(resources, config.did, principalDid)) {
+      if (!delegationCoversBackendPolicy(resources, config.did, ownerDid)) {
         throw new Error("Delegation does not cover the current backend permission policy");
       }
 
@@ -78,7 +78,7 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
         actions: resources.flatMap((resource) => resource.actions),
         path: resources.map((resource) => `${resource.service}:${resource.path}`).join(","),
         resources,
-        policyHash: backendDelegationPolicyHash(config.did, principalDid),
+        policyHash: backendDelegationPolicyHash(config.did, ownerDid),
       });
 
       // Cache the active DelegatedAccess keyed by address
@@ -136,7 +136,7 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
 
     try {
       const stored = await store.load(address);
-      const principalDid = principalDidFromAddress(address);
+      const ownerDid = ownerDidFromAddress(address);
 
       if (!stored) {
         res.json({
@@ -160,7 +160,7 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
         return;
       }
 
-      if (stored.policyHash !== backendDelegationPolicyHash(config.did, principalDid)) {
+      if (stored.policyHash !== backendDelegationPolicyHash(config.did, ownerDid)) {
         await store.remove(address);
         cache.evict(address);
 

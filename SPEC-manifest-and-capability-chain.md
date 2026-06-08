@@ -228,7 +228,7 @@ const request = composeManifestWithDelegatees(
   appManifest,
   info ? [info] : [],
   {
-    principalDid,
+    ownerDid,
     ...(info ? { decryptDelegateDid: info.did } : {}),
   },
 );
@@ -246,7 +246,7 @@ if (info && token) {
 
 Listen's backend delegate manifest also adds the user's default encryption
 network grant as a separate `tinycloud.encryption/decrypt` permission on
-`urn:tinycloud:encryption:<principal>:default`. That grant stays distinct from
+`urn:tinycloud:encryption:<ownerDid>:default`. That grant stays distinct from
 the backend's KV and SQL reads. Secret names are env-style uppercase identifiers
 such as `FIREFLIES_API_KEY`, so the app's secret permissions stay explicit.
 
