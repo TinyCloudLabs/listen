@@ -78,6 +78,7 @@ function createMockDelegationCache() {
 
 const TEST_ADDRESS = "0xTEST";
 const TEST_DID = "did:pkh:eip155:1:0xTEST";
+const TEST_PRINCIPAL_DID = TEST_DID;
 
 function mockAuthMiddleware(req: Request, _res: Response, next: NextFunction) {
   req.user = { address: TEST_ADDRESS };
@@ -151,7 +152,7 @@ describe("Delegation Middleware", () => {
       expiresAt: new Date(Date.now() + 1000).toISOString(),
       actions: [],
       path: "",
-      policyHash: backendDelegationPolicyHash(TEST_DID),
+      policyHash: backendDelegationPolicyHash(TEST_DID, TEST_PRINCIPAL_DID),
     });
     cache.set(TEST_ADDRESS, { kv: {}, sql: {} });
 
@@ -188,7 +189,7 @@ describe("Delegation Middleware", () => {
       expiresAt: new Date(Date.now() - 1000).toISOString(),
       actions: [],
       path: "",
-      policyHash: backendDelegationPolicyHash(TEST_DID),
+      policyHash: backendDelegationPolicyHash(TEST_DID, TEST_PRINCIPAL_DID),
     });
     cache.set(TEST_ADDRESS, { kv: {}, sql: {} });
 

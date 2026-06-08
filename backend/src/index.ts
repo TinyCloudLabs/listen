@@ -21,7 +21,11 @@ import {
 import { createAuthMiddleware } from "./middleware/auth.js";
 import { createDelegationMiddleware } from "./middleware/delegation.js";
 import { activatePortableDelegation } from "./delegation-activation.js";
-import { backendDelegationPolicyHash, resolveAppPath } from "./manifest.js";
+import {
+  backendDelegationPolicyHash,
+  principalDidFromAddress,
+  resolveAppPath,
+} from "./manifest.js";
 import { createAuthRouter } from "./routes/auth.js";
 import { createHealthRouter } from "./routes/health.js";
 import { createManifestRouter } from "./routes/manifest.js";
@@ -96,6 +100,7 @@ async function main() {
   } as any;
 
   const cachedDelegationIsCurrent = async (address: string, label: string) => {
+    const principalDid = principalDidFromAddress(address);
     const stored = await delegationStore.load(address);
     if (!stored) {
       console.log(`${label} cached delegation has no stored record`);
@@ -108,7 +113,7 @@ async function main() {
       delegationCache.evict(address);
       return false;
     }
-    if (stored.policyHash !== backendDelegationPolicyHash(did)) {
+    if (stored.policyHash !== backendDelegationPolicyHash(did, principalDid)) {
       console.log(`${label} cached delegation policy is stale`);
       await delegationStore.remove(address);
       delegationCache.evict(address);
@@ -155,7 +160,7 @@ async function main() {
       console.log(`[webhook] delegation expired at ${stored.expiresAt}`);
       return null;
     }
-    if (stored.policyHash !== backendDelegationPolicyHash(did)) {
+    if (stored.policyHash !== backendDelegationPolicyHash(did, principalDidFromAddress(address))) {
       console.log("[webhook] delegation policy is stale — user needs to sign in again");
       await delegationStore.remove(address);
       delegationCache.evict(address);
@@ -215,7 +220,9 @@ async function main() {
       }
       const stored = await delegationStore.load(address);
       if (!stored || new Date(stored.expiresAt).getTime() <= Date.now()) return null;
-      if (stored.policyHash !== backendDelegationPolicyHash(did)) {
+      if (
+        stored.policyHash !== backendDelegationPolicyHash(did, principalDidFromAddress(address))
+      ) {
         await delegationStore.remove(address);
         delegationCache.evict(address);
         return null;

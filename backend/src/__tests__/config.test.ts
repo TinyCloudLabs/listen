@@ -152,6 +152,16 @@ describe("Config Routes", () => {
       expect(body.error).toBe("check_failed");
     });
 
+    it("returns 500 when decrypt access is denied", async () => {
+      mockKV._failNextGet("decrypt denied");
+
+      const res = await fetch(`http://localhost:${port}/api/config/fireflies-key/exists`);
+
+      expect(res.status).toBe(500);
+      const body = await res.json();
+      expect(body.error).toBe("check_failed");
+    });
+
     it("does not reveal the key value", async () => {
       mockKV._data.set(KV_KEY, "secret-api-key");
 
