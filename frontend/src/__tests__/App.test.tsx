@@ -11,6 +11,7 @@ import {
   loadPersistedSession,
   requestNonce,
   sendDelegation,
+  restoreTinyCloudWeb,
   verifySession,
 } from "@listen/client";
 
@@ -85,6 +86,7 @@ vi.mock("@listen/client", () => {
     requestNonce: vi.fn(),
     verifySession: vi.fn(),
     createAndSignIn: vi.fn(),
+    restoreTinyCloudWeb: vi.fn(() => Promise.resolve(null)),
     createApiClient: vi.fn(() => mockApiClient),
     createManifestDelegation: vi.fn(),
     clearPersistedSession: vi.fn(),
@@ -380,6 +382,7 @@ describe("App manual sign-in processing", () => {
       chainId: 1,
       did: "did:pkh:eip155:1:0xabc123",
       expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      spaceId: "tinycloud:pkh:eip155:1:0xabc123:applications",
     });
 
     render(<App />);
@@ -389,6 +392,17 @@ describe("App manual sign-in processing", () => {
     expect(requestNonce).not.toHaveBeenCalled();
     expect(createAndSignIn).not.toHaveBeenCalled();
     expect(verifySession).not.toHaveBeenCalled();
+    expect(restoreTinyCloudWeb).toHaveBeenCalledWith(
+      "0xabc123",
+      expect.objectContaining({
+        autoCreateSpace: true,
+        capabilityRequest: expect.objectContaining({
+          delegationTargets: expect.arrayContaining([
+            expect.objectContaining({ did: "did:key:backend" }),
+          ]),
+        }),
+      }),
+    );
     await waitFor(() => {
       expect(checkDelegationStatus).toHaveBeenCalledWith(
         "http://localhost:3001",

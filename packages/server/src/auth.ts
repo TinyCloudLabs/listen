@@ -119,9 +119,9 @@ export async function issueSessionToken(
   const secret = new TextEncoder().encode(privateKey);
   const expiresIn = 24 * 60 * 60; // 24 hours in seconds
 
-  const token = await new SignJWT({ address: address.toLowerCase() })
+  const token = await new SignJWT({ address })
     .setProtectedHeader({ alg: "HS256" })
-    .setSubject(address.toLowerCase())
+    .setSubject(address)
     .setIssuedAt()
     .setExpirationTime("24h")
     .sign(secret);

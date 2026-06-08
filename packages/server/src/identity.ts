@@ -1,4 +1,4 @@
-import { TinyCloudNode } from "@tinycloud/node-sdk";
+import { TinyCloudNode, type Manifest } from "@tinycloud/node-sdk";
 
 // ── Configuration ────────────────────────────────────────────────────
 
@@ -18,6 +18,24 @@ export interface BackendIdentity {
   did: string;
 }
 
+function backendIdentityManifest(spaceName: string): Manifest {
+  return {
+    manifest_version: 1,
+    app_id: "xyz.tinycloud.listen.backend",
+    name: "Listen Backend",
+    defaults: false,
+    permissions: [
+      {
+        service: "tinycloud.kv",
+        space: spaceName,
+        path: "delegations/",
+        actions: ["get", "put", "del", "list", "metadata"],
+        skipPrefix: true,
+      },
+    ],
+  };
+}
+
 // ── Create Backend Identity ──────────────────────────────────────────
 
 /**
@@ -30,11 +48,15 @@ export interface BackendIdentity {
 export async function createBackendIdentity(
   config: BackendIdentityConfig,
 ): Promise<BackendIdentity> {
+  const prefix = config.prefix ?? "listen-be";
   const node = new TinyCloudNode({
     privateKey: config.privateKey,
     host: config.host ?? "https://node.tinycloud.xyz",
-    prefix: config.prefix ?? "listen-be",
+    prefix,
     autoCreateSpace: config.autoCreateSpace ?? true,
+    enablePublicSpace: false,
+    manifest: backendIdentityManifest(prefix),
+    includeAccountRegistryPermissions: false,
   });
 
   await node.signIn();

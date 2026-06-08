@@ -24,7 +24,7 @@ describe("manifest", () => {
     expect(manifest.permissions).toEqual([
       {
         service: "tinycloud.hooks",
-        path: "sql/xyz.tinycloud.listen/conversations/conversation",
+        path: "sql/conversations/conversation",
         actions: ["subscribe"],
         skipPrefix: true,
         description:

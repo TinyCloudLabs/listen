@@ -56,6 +56,41 @@ export function createTinyCloudWeb(
 }
 
 /**
+ * Restore a persisted TinyCloud browser session without requiring a wallet.
+ *
+ * This is useful after an app reload: the backend JWT can restore API access,
+ * while the TinyCloud session restore rehydrates the SDK client needed for
+ * direct reads and hook subscriptions.
+ */
+export async function restoreTinyCloudWeb(
+  address: string,
+  config?: TinyCloudWebConfig,
+): Promise<{ tcw: TinyCloudWeb; session: ClientSession } | null> {
+  const manifest = config?.manifest ?? config?.capabilityRequest?.manifests;
+  const tcw = new (TinyCloudWeb as any)({
+    tinycloudHosts: config?.tinycloudHosts,
+    tinycloudRegistryUrl: config?.tinycloudRegistryUrl,
+    tinycloudFallbackHosts: config?.tinycloudFallbackHosts,
+    autoCreateSpace: config?.autoCreateSpace ?? true,
+    sessionStorage: new BrowserSessionStorage(),
+    siweConfig: config?.siweConfig,
+    manifest,
+    capabilityRequest: config?.capabilityRequest,
+    includeAccountRegistryPermissions: config?.includeAccountRegistryPermissions,
+  });
+
+  const restored = await tcw.restoreSession(address);
+  if (restored.status !== "restored" || !restored.session) {
+    return null;
+  }
+
+  return {
+    tcw,
+    session: restored.session,
+  };
+}
+
+/**
  * Create a TinyCloudWeb instance and sign in.
  *
  * Accepts an optional `nonce` to pass through to the SDK's SIWE message

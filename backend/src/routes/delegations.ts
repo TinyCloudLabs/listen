@@ -224,13 +224,17 @@ function extractSingleDelegationResources(delegation: {
     }
 
     const service = normalizeDelegationService(entry.service);
+    const space =
+      service === "tinycloud.encryption"
+        ? "encryption"
+        : typeof entry.space === "string"
+          ? normalizeDelegationSpace(entry.space)
+          : undefined;
 
     return [
       {
         service,
-        ...(typeof entry.space === "string"
-          ? { space: normalizeDelegationSpace(entry.space) }
-          : {}),
+        ...(space !== undefined ? { space } : {}),
         path: entry.path,
         actions: entry.actions.map((action) => normalizeDelegationAction(action, service)),
       },

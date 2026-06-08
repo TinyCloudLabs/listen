@@ -65,7 +65,7 @@ App delivers those delegations out of band
   "permissions": [
     {
       "service": "tinycloud.hooks",
-      "path": "sql/xyz.tinycloud.listen/conversations/conversation",
+      "path": "sql/conversations/conversation",
       "actions": ["subscribe"],
       "skipPrefix": true,
       "description": "Subscribe to conversation row write events for live updates."

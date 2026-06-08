@@ -67,6 +67,7 @@ describe("loadPersistedSession", () => {
     expect(result!.chainId).toBe(1);
     expect(result!.did).toBe(`did:pkh:eip155:1:${TEST_ADDRESS}`);
     expect(result!.expiresAt).toBe(session.expiresAt);
+    expect(result!.spaceId).toBe("space-123");
   });
 
   test("returns null when no session exists", () => {

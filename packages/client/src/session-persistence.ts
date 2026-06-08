@@ -9,6 +9,7 @@ export interface PersistedTinyCloudSession {
   chainId: number;
   did: string;
   expiresAt: string;
+  spaceId?: string;
 }
 
 /** localStorage key prefix used by BrowserSessionStorage. */
@@ -43,6 +44,10 @@ export function loadPersistedSession(address: string): PersistedTinyCloudSession
       chainId,
       did,
       expiresAt: data.expiresAt,
+      spaceId:
+        typeof data.tinycloudSession?.spaceId === "string"
+          ? data.tinycloudSession.spaceId
+          : undefined,
     };
   } catch {
     return null;

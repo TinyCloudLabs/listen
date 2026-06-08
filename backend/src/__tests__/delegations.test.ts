@@ -428,7 +428,13 @@ describe("Delegation Routes", () => {
                   service: resource.service.replace("tinycloud.", ""),
                   space: "tinycloud:pkh:eip155:1:0xTEST:secrets",
                 }
-              : { ...resource, service: resource.service.replace("tinycloud.", "") },
+              : resource.service === "tinycloud.encryption"
+                ? {
+                    ...resource,
+                    service: resource.service.replace("tinycloud.", ""),
+                    space: "tinycloud:pkh:eip155:1:0xTEST:applications",
+                  }
+                : { ...resource, service: resource.service.replace("tinycloud.", "") },
         ),
         _serialized: serialized,
       }));
