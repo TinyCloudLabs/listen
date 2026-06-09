@@ -3,10 +3,8 @@ import { createHash } from "crypto";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import {
-  buildNetworkId,
-  canonicalizeDid,
+  canonicalizeNetworkId,
   isCapabilitySubset,
-  parseNetworkId,
   resolveManifest,
   validateManifest,
   type Manifest,
@@ -306,8 +304,7 @@ function normalizePermissionPathForPolicyComparison(permission: {
     return permission.path;
   }
 
-  const parsed = parseNetworkId(permission.path);
-  return buildNetworkId(canonicalizeDid(parsed.ownerDid), parsed.name);
+  return canonicalizeNetworkId(permission.path);
 }
 
 export function runtimeManifest(backendDid?: string, ownerDid?: string): Manifest {

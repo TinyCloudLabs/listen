@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@listen/core": "workspace:*",
-    "@tinycloud/node-sdk": "2.3.0-beta.3",
+    "@tinycloud/node-sdk": "2.3.0-beta.4",
     "jose": "^5.0.0",
     "siwe": "^2.3.2"
   },
