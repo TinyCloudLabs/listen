@@ -9,10 +9,10 @@
     "test"
   ],
   "overrides": {
-    "@tinycloud/sdk-core": "2.2.1-beta.0",
-    "@tinycloud/sdk-services": "2.2.1-beta.0",
-    "@tinycloud/web-sdk": "2.2.1-beta.0",
-    "@tinycloud/node-sdk": "2.2.1-beta.0",
+    "@tinycloud/sdk-core": "2.3.0-beta.3",
+    "@tinycloud/sdk-services": "2.3.0-beta.2",
+    "@tinycloud/web-sdk": "2.3.0-beta.3",
+    "@tinycloud/node-sdk": "2.3.0-beta.3",
     "@tinycloud/web-core": "1.7.0",
     "@tinycloud/node-sdk-wasm": "1.7.4-beta.0",
     "@tinycloud/web-sdk-wasm": "1.7.4-beta.0"
@@ -46,7 +46,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@tinycloud/node-sdk": "2.2.1-beta.0",
+    "@tinycloud/node-sdk": "2.3.0-beta.3",
     "eslint": "^10.1.0",
     "husky": "^9.1.7",
     "portless": "^0.13.0",

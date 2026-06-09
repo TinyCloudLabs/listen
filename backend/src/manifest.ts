@@ -3,12 +3,15 @@ import { createHash } from "crypto";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import {
+  buildNetworkId,
+  canonicalizeDid,
   isCapabilitySubset,
+  parseNetworkId,
   resolveManifest,
   validateManifest,
   type Manifest,
   type PermissionEntry,
-} from "@tinycloud/node-sdk/core";
+} from "@tinycloud/sdk-core";
 import type { ServerInfoPermission } from "@listen/core";
 
 export interface DescribedPermissionEntry extends PermissionEntry {
@@ -233,8 +236,8 @@ export function backendDelegationResolvedPermissions(
 }
 
 export function backendDelegationPolicyHash(backendDid: string, ownerDid?: string): string {
-  const permissions = backendDelegationResolvedPermissions(backendDid, ownerDid).map(
-    (permission) => ({
+  const permissions = backendDelegationResolvedPermissions(backendDid, ownerDid).map((permission) =>
+    normalizePermissionForPolicyHash({
       service: permission.service,
       space: permission.space,
       path: permission.path,
@@ -250,15 +253,61 @@ export function delegationCoversBackendPolicy(
   backendDid: string,
   ownerDid?: string,
 ): boolean {
-  const requested = backendDelegationResolvedPermissions(backendDid, ownerDid);
-  const granted = permissions.map((permission) => ({
-    service: permission.service,
-    ...(permission.space !== undefined ? { space: permission.space } : {}),
-    path: permission.path,
-    actions: [...permission.actions],
-  }));
+  const requested = backendDelegationResolvedPermissions(backendDid, ownerDid).map(
+    normalizePermissionForPolicyComparison,
+  );
+  const granted = permissions
+    .map((permission) => ({
+      service: permission.service,
+      space: permission.space,
+      path: permission.path,
+      actions: [...permission.actions],
+    }))
+    .map(normalizePermissionForPolicyComparison);
 
   return isCapabilitySubset(requested, granted).subset;
+}
+
+function normalizePermissionForPolicyHash(permission: {
+  service: string;
+  space?: string;
+  path: string;
+  actions: string[];
+}) {
+  const normalized = normalizePermissionForPolicyComparison(permission);
+
+  return {
+    service: normalized.service,
+    space: normalized.space,
+    path: normalized.path,
+    actions: normalized.actions,
+  };
+}
+
+function normalizePermissionForPolicyComparison(permission: {
+  service: string;
+  space?: string;
+  path: string;
+  actions: string[];
+}) {
+  return {
+    service: permission.service,
+    ...(permission.space !== undefined ? { space: permission.space } : {}),
+    path: normalizePermissionPathForPolicyComparison(permission),
+    actions: [...permission.actions],
+  };
+}
+
+function normalizePermissionPathForPolicyComparison(permission: {
+  service: string;
+  path: string;
+}): string {
+  if (permission.service !== "tinycloud.encryption") {
+    return permission.path;
+  }
+
+  const parsed = parseNetworkId(permission.path);
+  return buildNetworkId(canonicalizeDid(parsed.ownerDid), parsed.name);
 }
 
 export function runtimeManifest(backendDid?: string, ownerDid?: string): Manifest {
