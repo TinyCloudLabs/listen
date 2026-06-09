@@ -1,6 +1,7 @@
 {
   "name": "listen",
   "private": true,
+  "license": "SEE LICENSE IN LICENSE.md",
   "packageManager": "bun@1.3.9",
   "workspaces": [
     "packages/*",

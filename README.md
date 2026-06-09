@@ -110,6 +110,14 @@ VITE_ENABLE_AGENT=true docker compose up --build listen-agent
 
 Set `VITE_ENABLE_AGENT=true` in `.env` when you want the frontend to show the agent connection control. Production config keeps it disabled.
 
+## License
+
+Listen is licensed under the TinyCloud Open Source License (TOSL). See [LICENSE.md](./LICENSE.md) for the full terms.
+
+## Security
+
+Report vulnerabilities privately through the process in [SECURITY.md](./SECURITY.md).
+
 ## Deploy
 
 Frontend target: Cloudflare Pages project `listen`, custom domain `https://listen.tinycloud.xyz`.
