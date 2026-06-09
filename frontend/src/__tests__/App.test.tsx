@@ -375,7 +375,7 @@ describe("App manual sign-in processing", () => {
     expect(mockGet).not.toHaveBeenCalled();
   });
 
-  it("restores a valid stored backend session on load without a fresh SIWE flow", async () => {
+  it("shows the landing page on load even when a valid stored backend session exists", () => {
     storeBackendSession();
     vi.mocked(loadPersistedSession).mockReturnValue({
       address: "0xabc123",
@@ -387,8 +387,30 @@ describe("App manual sign-in processing", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("0xabc1…c123")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /open app/i })).toHaveLength(2);
     expect(connectWallet).not.toHaveBeenCalled();
+    expect(restoreTinyCloudWeb).not.toHaveBeenCalled();
+    expect(requestNonce).not.toHaveBeenCalled();
+    expect(createAndSignIn).not.toHaveBeenCalled();
+    expect(verifySession).not.toHaveBeenCalled();
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it("restores a valid stored backend session after the user opens the app", async () => {
+    storeBackendSession();
+    vi.mocked(loadPersistedSession).mockReturnValue({
+      address: "0xabc123",
+      chainId: 1,
+      did: "did:pkh:eip155:1:0xabc123",
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      spaceId: "tinycloud:pkh:eip155:1:0xabc123:applications",
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: /open app/i })[0]);
+
+    expect(await screen.findByText("0xabc1…c123")).toBeInTheDocument();
+    expect(connectWallet).toHaveBeenCalled();
     expect(requestNonce).not.toHaveBeenCalled();
     expect(createAndSignIn).not.toHaveBeenCalled();
     expect(verifySession).not.toHaveBeenCalled();

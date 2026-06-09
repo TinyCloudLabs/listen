@@ -765,32 +765,6 @@ export function App() {
     return true;
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const restore = async () => {
-      const addr = sessionStoreRef.current.getAddress();
-      if (!addr || !sessionStoreRef.current.hasSession() || sessionStoreRef.current.isExpired()) {
-        return;
-      }
-
-      setAuthLoading(true);
-      setAuthError(null);
-      try {
-        await restoreStoredSession(addr);
-      } catch (err) {
-        if (!cancelled) setAuthError(err instanceof Error ? err.message : String(err));
-      } finally {
-        if (!cancelled) setAuthLoading(false);
-      }
-    };
-
-    void restore();
-    return () => {
-      cancelled = true;
-    };
-  }, [restoreStoredSession]);
-
   const renewBackendDelegation = useCallback(async () => {
     if (!tcw || !backendDid || !capabilityRequest) {
       throw new Error("Reconnect your wallet to finish source setup.");
