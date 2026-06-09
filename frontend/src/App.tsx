@@ -1070,6 +1070,11 @@ export function App() {
       setAuthError(null);
       setWorkspaceActionError(null);
       try {
+        if (!options?.forceWallet) {
+          const restored = await restoreStoredSession();
+          if (restored) return;
+        }
+
         const { address: addr, web3Provider } = await connectWallet({ host: OPENKEY_HOST });
         if (!options?.forceWallet) {
           const restored = await restoreStoredSession(addr);

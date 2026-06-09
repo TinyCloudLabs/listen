@@ -396,7 +396,7 @@ describe("App manual sign-in processing", () => {
     expect(mockGet).not.toHaveBeenCalled();
   });
 
-  it("restores a valid stored backend session after the user opens the app", async () => {
+  it("restores a valid stored backend session silently after the user opens the app", async () => {
     storeBackendSession();
     vi.mocked(loadPersistedSession).mockReturnValue({
       address: "0xabc123",
@@ -410,7 +410,7 @@ describe("App manual sign-in processing", () => {
     fireEvent.click(screen.getAllByRole("button", { name: /open app/i })[0]);
 
     expect(await screen.findByText("0xabc1…c123")).toBeInTheDocument();
-    expect(connectWallet).toHaveBeenCalled();
+    expect(connectWallet).not.toHaveBeenCalled();
     expect(requestNonce).not.toHaveBeenCalled();
     expect(createAndSignIn).not.toHaveBeenCalled();
     expect(verifySession).not.toHaveBeenCalled();
