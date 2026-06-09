@@ -174,7 +174,9 @@ export interface PaginationOptions {
   /** Delay between API calls in ms (default 800). */
   delayMs?: number;
   /** Called after each batch with progress info. */
-  onProgress?: (info: { batch: number; totalSoFar: number }) => void;
+  onProgress?: (info: { batch: number; totalSoFar: number }) => void | Promise<void>;
+  /** Return false to stop pagination before the next Fireflies request. */
+  shouldContinue?: () => boolean;
 }
 
 export interface PaginationResult {
@@ -227,12 +229,6 @@ export class FirefliesClient {
     );
   }
 
-  /** Download transcript audio using the same Fireflies API key. */
-  async downloadAudio(audioUrl: string) {
-    const { downloadAudio } = await import("./fireflies-audio.js");
-    return downloadAudio(audioUrl, this.apiKey);
-  }
-
   /**
    * Paginate through all transcripts.
    *
@@ -250,13 +246,19 @@ export class FirefliesClient {
     let batchCount = 0;
 
     while (true) {
+      if (options?.shouldContinue?.() === false) {
+        return { transcripts: all, batchCount, earlyExit: true };
+      }
       if (skip > 0) await sleep(delayMs);
+      if (options?.shouldContinue?.() === false) {
+        return { transcripts: all, batchCount, earlyExit: true };
+      }
 
       const page = await this.listTranscripts(batchSize, skip);
       batchCount++;
 
       all.push(...page);
-      onProgress?.({ batch: batchCount, totalSoFar: all.length });
+      await onProgress?.({ batch: batchCount, totalSoFar: all.length });
 
       if (page.length < batchSize) break; // last page
       skip += batchSize;

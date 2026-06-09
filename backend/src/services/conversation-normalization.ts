@@ -1,3 +1,5 @@
+import { resolveAppPath } from "../manifest.js";
+
 export interface NormalizedTranscriptSentence {
   index: number;
   speaker_id: string;
@@ -9,7 +11,6 @@ export interface NormalizedTranscriptSentence {
 }
 
 export const BASE64_AUDIO_STORAGE_ENCODING = "base64-string-kv";
-const LISTEN_APP_KV_PREFIX = "xyz.tinycloud.listen/";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -59,7 +60,8 @@ function parseJsonValue(value: string): unknown {
 }
 
 function normalizeAppRelativeKvKey(key: string): string {
-  return key.startsWith(LISTEN_APP_KV_PREFIX) ? key.slice(LISTEN_APP_KV_PREFIX.length) : key;
+  const appRoot = resolveAppPath("/");
+  return key.startsWith(appRoot) ? key.slice(appRoot.length) : key;
 }
 
 function transcriptCandidates(value: unknown): unknown[] | null {

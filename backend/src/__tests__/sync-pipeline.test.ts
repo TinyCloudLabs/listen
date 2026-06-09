@@ -210,10 +210,10 @@ describe("syncSingleTranscript", () => {
     const participantInserts = mockSQL._calls.filter(
       (c) => c.method === "execute" && c.sql.includes("INSERT INTO participant"),
     );
-    // Default mock transcript has Alice and Bob
-    expect(participantInserts).toHaveLength(2);
+    // Default mock transcript has Alice and Bob.
+    expect(participantInserts).toHaveLength(1);
     expect(participantInserts[0].params).toBeDefined();
-    expect(participantInserts[0].params!.length).toBe(5);
+    expect(participantInserts[0].params!.length).toBe(10);
   });
 
   // ── Test 6: writes transcript blob to KV ─────────────────────────
@@ -224,7 +224,7 @@ describe("syncSingleTranscript", () => {
     const result = await syncSingleTranscript("ff-1", mockAccess as any, mockClient);
 
     expect(result.status).toBe("created");
-    const kvKey = `transcript/${result.conversationId}`;
+    const kvKey = `xyz.tinycloud.listen/transcript/${result.conversationId}`;
     const storedBlob = mockKV._data.get(kvKey);
     expect(storedBlob).toBeDefined();
 

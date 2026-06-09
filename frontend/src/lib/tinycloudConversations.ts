@@ -1,11 +1,11 @@
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
 import type { ApiClient } from "@listen/client";
+import { normalizeAppRelativeKvKey, resolveAppKvPath, resolveAppSqlPath } from "./appManifest";
 
-const DATABASE_NAME = "xyz.tinycloud.listen/conversations";
+const DATABASE_NAME = resolveAppSqlPath("conversations");
 const DEFAULT_LIMIT = 20;
 const DEFAULT_OFFSET = 0;
 const BASE64_AUDIO_STORAGE_ENCODING = "base64-string-kv";
-const LISTEN_APP_KV_PREFIX = "xyz.tinycloud.listen/";
 
 export interface NormalizedTranscriptSentence {
   index: number;
@@ -199,10 +199,6 @@ function parseJsonValue(value: string): unknown {
   }
 }
 
-function normalizeAppRelativeKvKey(key: string): string {
-  return key.startsWith(LISTEN_APP_KV_PREFIX) ? key.slice(LISTEN_APP_KV_PREFIX.length) : key;
-}
-
 function transcriptCandidates(value: unknown): unknown[] | null {
   if (Array.isArray(value)) return value;
   if (typeof value === "string") return transcriptCandidates(parseJsonValue(value));
@@ -353,7 +349,7 @@ async function resolveAudioPlaybackMetadata(
   }
 
   try {
-    const signedResult = await kv.createSignedReadUrl(audioKey);
+    const signedResult = await kv.createSignedReadUrl(resolveAppKvPath(audioKey));
     const signedData = unwrapResult(signedResult) as { url?: unknown; expiresAt?: unknown };
     if (typeof signedData?.url === "string") {
       return {
@@ -449,7 +445,7 @@ async function getConversationDetail(
     ),
   );
 
-  const transcriptRaw = kvData(await access.kv.get(`transcript/${id}`));
+  const transcriptRaw = kvData(await access.kv.get(resolveAppKvPath(`transcript/${id}`)));
   const transcript = transcriptRaw == null ? null : normalizeTranscript(transcriptRaw);
 
   return { conversation, participants, transcript };

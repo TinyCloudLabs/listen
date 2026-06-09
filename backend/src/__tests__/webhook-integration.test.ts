@@ -308,15 +308,16 @@ describe("Webhook Integration Tests", () => {
       expect(conversationInserts).toHaveLength(1);
       expect(conversationInserts[0].values[3]).toBe("meeting-100"); // source_id
 
-      // Verify participants were inserted
+      // Verify participants were inserted in one multi-row statement.
       const participantInserts = mockAccess.sql._insertedRows.filter(
         (r) => r.table === "participant",
       );
-      expect(participantInserts).toHaveLength(2); // Alice and Bob
+      expect(participantInserts).toHaveLength(1);
+      expect(participantInserts[0].values).toHaveLength(10); // Alice and Bob
 
       // Verify transcript blob was stored in KV
       const convId = json.conversationId;
-      const kvKey = `transcript/${convId}`;
+      const kvKey = `xyz.tinycloud.listen/transcript/${convId}`;
       const storedBlob = mockAccess.kv._data.get(kvKey);
       expect(storedBlob).toBeDefined();
       const parsed = JSON.parse(storedBlob!);

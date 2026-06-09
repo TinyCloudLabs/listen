@@ -232,7 +232,7 @@ describe("Granola sync routes", () => {
     expect(conversationInsert?.params?.[8]).toBe("## Summary\n\nPlain summary");
 
     const conversationId = complete.conversations[0].id;
-    const storedTranscript = mockKV._data.get(`transcript/${conversationId}`);
+    const storedTranscript = mockKV._data.get(`xyz.tinycloud.listen/transcript/${conversationId}`);
     expect(JSON.parse(storedTranscript!)[0]).toMatchObject({
       speaker_name: "Speaker A",
       text: "Hello from Granola",

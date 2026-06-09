@@ -321,7 +321,7 @@ describe("Conversations Routes — GET /api/conversations/:id", () => {
         languageCode: "en",
       },
     ];
-    mockKV._data.set("transcript/conv-1", JSON.stringify(transcript));
+    mockKV._data.set("xyz.tinycloud.listen/transcript/conv-1", JSON.stringify(transcript));
 
     mockSQL = createMockSQL({
       detailRow: {
@@ -488,7 +488,7 @@ describe("Conversations Routes — GET /api/conversations/:id", () => {
     expect(res.status).toBe(200);
 
     const body = await res.json();
-    expect(signedUrlCalls).toEqual(["audio/conv-1/recording"]);
+    expect(signedUrlCalls).toEqual(["xyz.tinycloud.listen/audio/conv-1/recording"]);
     expect(body.conversation.metadata.audio_playback_url).toBe(
       "https://node.example.com/signed/audio",
     );
@@ -585,15 +585,19 @@ describe("Conversations Routes — GET /api/conversations/:id", () => {
 
   it("redirects importer audio playback to a signed KV URL when available", async () => {
     mockKV = createMockKV();
-    (mockKV as any).createSignedReadUrl = async (key: string) => ({
-      ok: true,
-      data: {
-        url: "https://node.example.com/signed/audio",
-        relativeUrl: "/signed/kv/ticket-1",
-        ticketId: "ticket-1",
-        expiresAt: "2026-05-13T13:45:00.000Z",
-      },
-    });
+    const signedUrlCalls: string[] = [];
+    (mockKV as any).createSignedReadUrl = async (key: string) => {
+      signedUrlCalls.push(key);
+      return {
+        ok: true,
+        data: {
+          url: "https://node.example.com/signed/audio",
+          relativeUrl: "/signed/kv/ticket-1",
+          ticketId: "ticket-1",
+          expiresAt: "2026-05-13T13:45:00.000Z",
+        },
+      };
+    };
     mockSQL = createMockSQL({
       detailRow: {
         id: "conv-1",
@@ -622,12 +626,16 @@ describe("Conversations Routes — GET /api/conversations/:id", () => {
       redirect: "manual",
     });
     expect(res.status).toBe(302);
+    expect(signedUrlCalls).toEqual(["xyz.tinycloud.listen/audio/conv-1/recording"]);
     expect(res.headers.get("location")).toBe("https://node.example.com/signed/audio");
   });
 
   it("serves stored Fireflies audio from KV", async () => {
     mockKV = createMockKV();
-    mockKV._data.set("audio/conv-1/recording.base64", Buffer.from("fake mp3").toString("base64"));
+    mockKV._data.set(
+      "xyz.tinycloud.listen/audio/conv-1/recording.base64",
+      Buffer.from("fake mp3").toString("base64"),
+    );
 
     mockSQL = createMockSQL({
       detailRow: {
@@ -744,9 +752,10 @@ describe("Conversations Routes — POST /api/conversations/import", () => {
     const participantInserts = mockSQL._calls.filter(
       (call) => call.method === "execute" && call.sql.includes("INSERT INTO participant"),
     );
-    expect(participantInserts).toHaveLength(2);
+    expect(participantInserts).toHaveLength(1);
+    expect(participantInserts[0].params).toHaveLength(10);
 
-    const transcriptKey = `transcript/${body.conversationId}`;
+    const transcriptKey = `xyz.tinycloud.listen/transcript/${body.conversationId}`;
     expect(mockKV._data.has(transcriptKey)).toBe(true);
     const transcript = JSON.parse(mockKV._data.get(transcriptKey)!);
     expect(transcript).toHaveLength(2);
@@ -831,7 +840,9 @@ describe("Conversations Routes — POST /api/conversations/transcribe", () => {
     expect(providerCalls).toEqual([
       { fileName: "call.txt", apiKey: "assembly-key", text: "audio bytes" },
     ]);
-    expect([...mockKV._data.keys()].some((key) => key.startsWith("source-media/"))).toBe(true);
+    expect(
+      [...mockKV._data.keys()].some((key) => key.startsWith("xyz.tinycloud.listen/source-media/")),
+    ).toBe(true);
 
     const conversationInsert = mockSQL._calls.find(
       (call) => call.method === "execute" && call.sql.includes("INSERT INTO conversation"),
@@ -839,7 +850,9 @@ describe("Conversations Routes — POST /api/conversations/transcribe", () => {
     expect(conversationInsert!.params).toContain("Uploaded customer call");
     expect(conversationInsert!.params).toContain("transcription:assemblyai");
 
-    const transcript = JSON.parse(mockKV._data.get(`transcript/${body.conversationId}`)!);
+    const transcript = JSON.parse(
+      mockKV._data.get(`xyz.tinycloud.listen/transcript/${body.conversationId}`)!,
+    );
     expect(transcript[0].speaker_name).toBe("Speaker A");
     expect(transcript[0].text).toBe("Hello from audio");
   });
