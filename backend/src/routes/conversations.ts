@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
 import { Buffer } from "node:buffer";
 import type { NormalizedConversation } from "../adapters/types.js";
+import { resolveAppPath } from "../manifest.js";
 import { conversationSql, ensureSchema } from "../schema.js";
 import { persistConversation } from "../services/persist-conversation.js";
 import {
@@ -144,7 +145,7 @@ async function resolveAudioPlaybackMetadata(
   }
 
   try {
-    const signedResult = await createSignedReadUrl.call(access.kv, audioKey);
+    const signedResult = await createSignedReadUrl.call(access.kv, resolveAppPath(audioKey));
     if (signedResult.ok && signedResult.data?.url) {
       return {
         ...normalized,
@@ -508,7 +509,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
       const uploadId = crypto.randomUUID();
       const mediaKey = `source-media/${uploadId}/${fileName}`;
       await access.kv.put(
-        mediaKey,
+        resolveAppPath(mediaKey),
         JSON.stringify({
           fileName,
           contentType,
@@ -585,7 +586,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         : [];
 
       // Load transcript blob from KV
-      const kvKey = `transcript/${id}`;
+      const kvKey = resolveAppPath(`transcript/${id}`);
       console.log(`[conversations] Loading transcript from KV: ${kvKey}`);
       const kvResult = await access.kv.get(kvKey);
       console.log(
@@ -634,7 +635,10 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
 
       if (!isBase64AudioStorage(metadata) && typeof access.kv.createSignedReadUrl === "function") {
         try {
-          const signedResult = await access.kv.createSignedReadUrl.call(access.kv, audioKey);
+          const signedResult = await access.kv.createSignedReadUrl.call(
+            access.kv,
+            resolveAppPath(audioKey),
+          );
           const signedData = signedResult as { ok?: boolean; data?: { url?: unknown } } | null;
           if (signedData?.ok && typeof signedData.data?.url === "string") {
             res.redirect(302, signedData.data.url);
@@ -645,7 +649,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         }
       }
 
-      const kvResult = await access.kv.get(audioKey);
+      const kvResult = await access.kv.get(resolveAppPath(audioKey));
       if (!kvResult.ok || !kvResult.data.data) {
         res.status(404).json({ error: "audio_not_found", message: "Stored audio is missing" });
         return;

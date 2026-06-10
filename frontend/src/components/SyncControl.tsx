@@ -12,12 +12,37 @@ interface SyncResult {
 }
 
 interface SyncProgress {
-  phase: "listing" | "syncing";
+  phase: "queued" | "listing" | "syncing";
   totalListed?: number;
   current?: number;
   total?: number;
   synced?: number;
   failed?: number;
+  lastTitle?: string;
+}
+
+type FirefliesSyncJobStatus =
+  | "queued"
+  | "listing"
+  | "syncing"
+  | "completed"
+  | "failed"
+  | "canceled";
+
+interface FirefliesSyncJob {
+  id: string;
+  source: "fireflies";
+  status: FirefliesSyncJobStatus;
+  mode: "incremental" | "full";
+  message?: string;
+  totalListed?: number;
+  current?: number;
+  total?: number;
+  synced: number;
+  repaired: number;
+  skipped: number;
+  failed: number;
+  errors: string[];
   lastTitle?: string;
 }
 
@@ -94,6 +119,41 @@ function daysUntil(isoString: string): number {
   return Math.max(0, Math.ceil((new Date(isoString).getTime() - Date.now()) / 86_400_000));
 }
 
+function isFirefliesJob(value: unknown): value is FirefliesSyncJob {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { source?: unknown }).source === "fireflies" &&
+    typeof (value as { id?: unknown }).id === "string"
+  );
+}
+
+function isActiveFirefliesJob(job: FirefliesSyncJob): boolean {
+  return job.status === "queued" || job.status === "listing" || job.status === "syncing";
+}
+
+function progressFromFirefliesJob(job: FirefliesSyncJob): SyncProgress {
+  if (job.status === "syncing") {
+    return {
+      phase: "syncing",
+      current: job.current ?? 0,
+      total: job.total ?? 0,
+      synced: job.synced,
+      failed: job.failed,
+      lastTitle: job.lastTitle,
+    };
+  }
+
+  if (job.status === "listing") {
+    return {
+      phase: "listing",
+      totalListed: job.totalListed,
+    };
+  }
+
+  return { phase: "queued" };
+}
+
 // ── Component ───────────────────────────────────────────────────────
 
 export const SyncControl: FC<SyncControlProps> = ({
@@ -122,6 +182,98 @@ export const SyncControl: FC<SyncControlProps> = ({
   const [webhookStatus, setWebhookStatus] = useState<WebhookStatus | null>(null);
   const [gmWebhookStatus, setGmWebhookStatus] = useState<GoogleMeetWebhookStatus | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const firefliesPollRef = useRef<number | null>(null);
+  const activeFirefliesJobRef = useRef<string | null>(null);
+  const completedFirefliesJobsRef = useRef<Set<string>>(new Set());
+
+  const clearFirefliesPoll = useCallback(() => {
+    if (firefliesPollRef.current != null) {
+      window.clearInterval(firefliesPollRef.current);
+      firefliesPollRef.current = null;
+    }
+  }, []);
+
+  const applyFirefliesJob = useCallback(
+    (job: FirefliesSyncJob) => {
+      if (isActiveFirefliesJob(job)) {
+        activeFirefliesJobRef.current = job.id;
+        setSyncing(true);
+        setSyncSource("fireflies");
+        setResult(null);
+        setError(null);
+        setProgress(progressFromFirefliesJob(job));
+        return;
+      }
+
+      if (activeFirefliesJobRef.current === job.id) {
+        activeFirefliesJobRef.current = null;
+      }
+      setSyncing(false);
+      setSyncSource(null);
+      setProgress(null);
+
+      if (job.status === "completed") {
+        setResult({
+          synced: job.synced,
+          repaired: job.repaired,
+          skipped: job.skipped,
+          failed: job.failed,
+          errors: job.errors,
+        });
+
+        if (!completedFirefliesJobsRef.current.has(job.id)) {
+          completedFirefliesJobsRef.current.add(job.id);
+          const ts = new Date().toISOString();
+          localStorage.setItem(LAST_SYNC_KEY, ts);
+          setLastSync(ts);
+          onSyncComplete();
+        }
+      } else if (job.status === "canceled") {
+        setResult({
+          synced: job.synced,
+          repaired: job.repaired,
+          skipped: job.skipped,
+          failed: job.failed,
+          errors: job.errors,
+        });
+      } else if (job.status === "failed") {
+        setError(job.message ?? "Fireflies sync failed.");
+      }
+    },
+    [onSyncComplete],
+  );
+
+  const pollFirefliesJob = useCallback(
+    (jobId: string) => {
+      clearFirefliesPoll();
+      let inFlight = false;
+
+      const refresh = async () => {
+        if (inFlight) return;
+        inFlight = true;
+        try {
+          const job = await api.get<FirefliesSyncJob>(`/api/sync/fireflies/jobs/${jobId}`);
+          if (!isFirefliesJob(job)) return;
+          applyFirefliesJob(job);
+          if (!isActiveFirefliesJob(job)) {
+            clearFirefliesPoll();
+          }
+        } catch (err) {
+          clearFirefliesPoll();
+          setSyncing(false);
+          setSyncSource(null);
+          setProgress(null);
+          setError(err instanceof Error ? err.message : String(err));
+        } finally {
+          inFlight = false;
+        }
+      };
+
+      void refresh();
+      firefliesPollRef.current = window.setInterval(refresh, 1500);
+    },
+    [api, applyFirefliesJob, clearFirefliesPoll],
+  );
 
   useEffect(() => {
     api
@@ -139,18 +291,64 @@ export const SyncControl: FC<SyncControlProps> = ({
   }, [api, hasGM]);
 
   useEffect(() => {
+    if (!hasFireflies) return;
+
+    let canceled = false;
+    api
+      .get<FirefliesSyncJob | null>("/api/sync/fireflies/jobs/current")
+      .then((job) => {
+        if (canceled || !isFirefliesJob(job)) return;
+        applyFirefliesJob(job);
+        if (isActiveFirefliesJob(job)) {
+          pollFirefliesJob(job.id);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      canceled = true;
+    };
+  }, [api, hasFireflies, applyFirefliesJob, pollFirefliesJob]);
+
+  useEffect(() => () => clearFirefliesPoll(), [clearFirefliesPoll]);
+
+  useEffect(() => {
     if (!lastSync) return;
     const id = setInterval(() => setLastSync(localStorage.getItem(LAST_SYNC_KEY)), 60_000);
     return () => clearInterval(id);
   }, [lastSync]);
 
-  // ── SSE sync handler ──────────────────────────────────────────────
+  // ── Stream sync handlers ───────────────────────────────────────────
+
+  const startFirefliesJob = useCallback(
+    async (mode: "incremental" | "full") => {
+      setSyncing(true);
+      setSyncSource("fireflies");
+      setResult(null);
+      setError(null);
+      setProgress({ phase: "queued" });
+
+      try {
+        const job = await api.post<FirefliesSyncJob>("/api/sync/fireflies/jobs", { mode });
+        if (!isFirefliesJob(job)) {
+          throw new Error("Fireflies sync did not return a job.");
+        }
+        applyFirefliesJob(job);
+        if (isActiveFirefliesJob(job)) {
+          pollFirefliesJob(job.id);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+        setProgress(null);
+        setSyncing(false);
+        setSyncSource(null);
+      }
+    },
+    [api, applyFirefliesJob, pollFirefliesJob],
+  );
 
   const startStreamSync = useCallback(
-    async (
-      mode: "incremental" | "full",
-      source: "fireflies" | "granola" | "google-meet" = "fireflies",
-    ) => {
+    async (mode: "incremental" | "full", source: "granola" | "google-meet") => {
       setSyncing(true);
       setSyncSource(source);
       setResult(null);
@@ -165,9 +363,7 @@ export const SyncControl: FC<SyncControlProps> = ({
         const url =
           source === "google-meet"
             ? `${backendUrl}/api/sync/google-meet/stream`
-            : source === "granola"
-              ? `${backendUrl}/api/sync/granola/stream?mode=${mode}`
-              : `${backendUrl}/api/sync/fireflies/stream?mode=${mode}`;
+            : `${backendUrl}/api/sync/granola/stream?mode=${mode}`;
         const response = await fetch(url, {
           headers: { Authorization: `Bearer ${token}` },
           signal: controller.signal,
@@ -251,8 +447,8 @@ export const SyncControl: FC<SyncControlProps> = ({
   );
 
   const handleFirefliesSync = useCallback(
-    () => startStreamSync("incremental", "fireflies"),
-    [startStreamSync],
+    () => startFirefliesJob("incremental"),
+    [startFirefliesJob],
   );
 
   const handleGoogleMeetSync = useCallback(
@@ -277,12 +473,23 @@ export const SyncControl: FC<SyncControlProps> = ({
       return;
     }
     setSyncing(false);
-    startStreamSync("full");
-  }, [api, startStreamSync]);
+    startFirefliesJob("full");
+  }, [api, startFirefliesJob]);
 
   const handleCancel = useCallback(() => {
+    const firefliesJobId = activeFirefliesJobRef.current;
+    if (syncSource === "fireflies" && firefliesJobId) {
+      api
+        .post<FirefliesSyncJob>(`/api/sync/fireflies/jobs/${firefliesJobId}/cancel`)
+        .then((job) => {
+          if (isFirefliesJob(job)) applyFirefliesJob(job);
+        })
+        .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+      return;
+    }
+
     abortRef.current?.abort();
-  }, []);
+  }, [api, applyFirefliesJob, syncSource]);
 
   const pct =
     progress?.phase === "syncing" && progress.total
@@ -351,15 +558,19 @@ export const SyncControl: FC<SyncControlProps> = ({
         </div>
       </div>
 
-      {/* Listing phase */}
-      {progress?.phase === "listing" && (
+      {/* Queued/listing phase */}
+      {(progress?.phase === "queued" || progress?.phase === "listing") && (
         <div style={s.phaseCard}>
           <div style={s.phaseRow}>
             <span style={s.phaseDot} />
-            <span style={s.phaseLabel}>{listingLabel}</span>
+            <span style={s.phaseLabel}>
+              {progress.phase === "queued" ? "Queued Fireflies sync" : listingLabel}
+            </span>
           </div>
           <p style={s.phaseDetail}>
-            {progress.totalListed != null ? (
+            {progress.phase === "queued" ? (
+              "Waiting to start\u2026"
+            ) : progress.totalListed != null ? (
               <>
                 <span style={s.statNum}>{progress.totalListed}</span> transcripts found
               </>
@@ -367,6 +578,9 @@ export const SyncControl: FC<SyncControlProps> = ({
               "Fetching transcript list\u2026"
             )}
           </p>
+          {syncSource === "fireflies" && (
+            <p style={s.phaseSubtle}>The backend will keep syncing if this page reloads.</p>
+          )}
         </div>
       )}
 
@@ -403,6 +617,9 @@ export const SyncControl: FC<SyncControlProps> = ({
 
           {/* Current transcript */}
           {progress.lastTitle && <p style={s.currentTitle}>{truncate(progress.lastTitle, 52)}</p>}
+          {syncSource === "fireflies" && (
+            <p style={s.currentTitle}>The backend will keep syncing if this page reloads.</p>
+          )}
         </div>
       )}
 
@@ -616,6 +833,12 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: 13,
     color: "var(--lst-ink-70)",
     margin: "4px 0 0",
+  },
+  phaseSubtle: {
+    fontFamily: FONT,
+    fontSize: 12,
+    color: "var(--lst-ink-55)",
+    margin: "8px 0 0",
   },
 
   // Syncing phase

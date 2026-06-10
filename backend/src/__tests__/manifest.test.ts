@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   backendDelegationResolvedPermissions,
+  delegationCoversBackendPolicy,
   runtimeManifest,
   resolveAppPath,
 } from "../manifest.js";
@@ -53,5 +54,21 @@ describe("manifest", () => {
       skipPrefix: true,
       description: "Decrypt Listen secrets through the user's default encryption network.",
     });
+  });
+
+  test("matches backend policy when the session DID and delegated encryption network differ only by address casing", () => {
+    const ownerDid = "did:pkh:eip155:1:0xd559ccd9eb87c530a9a349262669386de93cf412";
+    const checksummedOwnerDid = "did:pkh:eip155:1:0xd559CCd9EB87c530A9a349262669386dE93cf412";
+    const granted = backendDelegationResolvedPermissions("did:key:backend", ownerDid).map(
+      (permission) =>
+        permission.service === "tinycloud.encryption"
+          ? {
+              ...permission,
+              path: `urn:tinycloud:encryption:${checksummedOwnerDid}:default`,
+            }
+          : permission,
+    );
+
+    expect(delegationCoversBackendPolicy(granted, "did:key:backend", ownerDid)).toBe(true);
   });
 });

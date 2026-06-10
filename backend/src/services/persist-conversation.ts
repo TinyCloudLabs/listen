@@ -1,5 +1,6 @@
 import type { DelegatedAccess } from "@listen/server";
 import type { NormalizedConversation } from "../adapters/types.js";
+import { resolveAppPath } from "../manifest.js";
 import { conversationSql } from "../schema.js";
 import {
   normalizeConversationMetadata,
@@ -11,7 +12,7 @@ export async function persistTranscriptBlob(
   conversationId: string,
   transcript: unknown,
 ): Promise<void> {
-  const kvKey = `transcript/${conversationId}`;
+  const kvKey = resolveAppPath(`transcript/${conversationId}`);
   const transcriptJson = JSON.stringify(normalizeTranscript(transcript) ?? []);
   await access.kv.put(kvKey, transcriptJson);
 }
@@ -51,16 +52,19 @@ export async function persistConversation(
   );
 
   // 2. INSERT participant rows
-  for (const participant of normalized.participants) {
+  if (normalized.participants.length > 0) {
+    const placeholders = normalized.participants.map(() => "(?, ?, ?, ?, ?)").join(", ");
+    const params = normalized.participants.flatMap((participant) => [
+      participant.id,
+      normalized.conversation.id,
+      participant.name,
+      participant.email,
+      participant.speaker_label,
+    ]);
+
     await sqlDb.execute(
-      `INSERT INTO participant (id, conversation_id, name, email, speaker_label) VALUES (?, ?, ?, ?, ?)`,
-      [
-        participant.id,
-        normalized.conversation.id,
-        participant.name,
-        participant.email,
-        participant.speaker_label,
-      ],
+      `INSERT INTO participant (id, conversation_id, name, email, speaker_label) VALUES ${placeholders}`,
+      params,
     );
   }
 

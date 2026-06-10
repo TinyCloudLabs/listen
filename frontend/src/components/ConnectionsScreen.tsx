@@ -131,11 +131,15 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
     setMessage(null);
     try {
       if (source === "fireflies") {
-        await api.post("/api/sync/fireflies", { mode: "incremental" });
+        await api.post("/api/sync/fireflies/jobs", { mode: "incremental" });
       } else if (source === "google-meet") {
         await api.post("/api/sync/google-meet");
       }
-      setMessage(`${sources.find((item) => item.id === source)?.name ?? "Source"} synced`);
+      setMessage(
+        source === "fireflies"
+          ? "Fireflies sync started"
+          : `${sources.find((item) => item.id === source)?.name ?? "Source"} synced`,
+      );
       onRefresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -152,7 +156,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
       for (const source of connected) {
         if (source.ready && source.syncable) {
           if (source.id === "fireflies") {
-            await api.post("/api/sync/fireflies", { mode: "incremental" });
+            await api.post("/api/sync/fireflies/jobs", { mode: "incremental" });
           } else if (source.id === "google-meet") {
             await api.post("/api/sync/google-meet");
           }

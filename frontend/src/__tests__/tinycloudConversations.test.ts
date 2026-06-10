@@ -38,13 +38,16 @@ function mockTinyCloud(
     },
     kv: {
       get: vi.fn(async (key: string) => {
-        expect(key).toBe("transcript/01ABC");
+        expect(key).toBe("xyz.tinycloud.listen/transcript/01ABC");
         return { ok: true, data: { data: options.transcript ?? null } };
       }),
-      createSignedReadUrl: vi.fn(async () => ({
-        ok: true,
-        data: { url: options.signedAudioUrl, expiresAt: "2026-05-14T20:00:00.000Z" },
-      })),
+      createSignedReadUrl: vi.fn(async (key: string) => {
+        expect(key).toBe("xyz.tinycloud.listen/audio/01ABC/recording");
+        return {
+          ok: true,
+          data: { url: options.signedAudioUrl, expiresAt: "2026-05-14T20:00:00.000Z" },
+        };
+      }),
     },
   } as unknown as TinyCloudWeb;
 }

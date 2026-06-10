@@ -172,6 +172,12 @@ test.beforeEach(async ({ page }) => {
 test("restores a session and clicks through the app shell", async ({ page }) => {
   await page.goto("/");
 
+  await expect(page.getByRole("button", { name: /open app/i }).first()).toBeVisible();
+  await page
+    .getByRole("button", { name: /open app/i })
+    .first()
+    .click();
+
   await expect(page.getByRole("heading", { name: "Everything you've said." })).toBeVisible();
   await expect(page.getByText("TC-1384 Smoke Conversation")).toBeVisible();
 

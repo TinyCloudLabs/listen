@@ -363,6 +363,7 @@ async function main() {
     createSyncRouter({
       authMiddleware,
       delegationMiddleware,
+      backendKV,
     }),
   );
 

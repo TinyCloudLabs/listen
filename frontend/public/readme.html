@@ -616,13 +616,15 @@ sequenceDiagram
     User-&gt;&gt;Frontend: paste or upload .txt/.md/.srt/.vtt
     Frontend-&gt;&gt;Backend: POST /api/conversations/import
     Backend-&gt;&gt;TinyCloud: normalize manual transcript + SQL/KV writes
-  else backend-only Fireflies sync
-    Frontend-&gt;&gt;Backend: GET /api/sync/fireflies/stream
+  else backend-owned Fireflies sync
+    Frontend-&gt;&gt;Backend: POST /api/sync/fireflies/jobs
+    Backend--&gt;&gt;Frontend: job id + queued state
     Backend-&gt;&gt;TinyCloud: delegated KV read + network decrypt for FIREFLIES_API_KEY
     Backend-&gt;&gt;Fireflies: listAllTranscripts()
     Backend-&gt;&gt;TinyCloud: SQL dedup + INSERT conversation/participant
     Backend-&gt;&gt;TinyCloud: KV put transcript/{conversationId}
-    Backend--&gt;&gt;Frontend: SSE progress + complete
+    Frontend-&gt;&gt;Backend: GET /api/sync/fireflies/jobs/{id}
+    Backend--&gt;&gt;Frontend: progress or complete state
   else backend-only Google Meet sync
     Frontend-&gt;&gt;Backend: GET /api/auth/google
     Backend--&gt;&gt;Frontend: Google OAuth URL

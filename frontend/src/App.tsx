@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ComposedManifestRequest, Manifest, TinyCloudWeb } from "@tinycloud/web-sdk";
+import type { ComposedManifestRequest, TinyCloudWeb } from "@tinycloud/web-sdk";
 import type { ServerInfo } from "@listen/core";
 import {
   connectWallet,
@@ -31,6 +31,7 @@ import { ConnectAgentButton } from "./components/ConnectAgentButton";
 import { AppShell, type ShellRoute, type ShellSourceConfig } from "./components/AppShell";
 import { MobileExperience } from "./components/mobile";
 import { useIsMobile } from "./hooks/useIsMobile";
+import { APP_MANIFEST } from "./lib/appManifest";
 import { createTinyCloudConversationApi } from "./lib/tinycloudConversations";
 
 // ── Environment ─────────────────────────────────────────────────────
@@ -65,30 +66,6 @@ interface AppBootstrapContext {
   conversationEventPathPrefix: string | null;
 }
 
-const LOCAL_APP_MANIFEST: Manifest = {
-  manifest_version: 1,
-  app_id: "xyz.tinycloud.listen",
-  name: "Listen",
-  description: "Sync Fireflies, Granola, and Google Meet transcripts into a TinyCloud space.",
-  defaults: true,
-  secrets: {
-    FIREFLIES_API_KEY: ["read"],
-    GRANOLA_API_KEY: ["read"],
-    ASSEMBLYAI_API_KEY: ["read"],
-    DEEPGRAM_API_KEY: ["read"],
-  },
-  permissions: [
-    {
-      service: "tinycloud.hooks",
-      path: `sql/${CONVERSATION_HOOK_PATH_PREFIX}`,
-      actions: ["subscribe"],
-      skipPrefix: true,
-      description:
-        "Subscribe to conversation row write events for live updates when hooks are enabled.",
-    },
-  ],
-};
-
 function ownerDidFromAddress(address: string, chainId = 1): string {
   return `did:pkh:eip155:${chainId}:${address}`;
 }
@@ -122,7 +99,7 @@ async function loadAppBootstrapContext(ownerDid?: string): Promise<AppBootstrapC
     fetchBackendInfo(),
     ENABLE_AGENT ? fetchAgentInfo(AGENT_ENDPOINT) : Promise.resolve(null),
   ]);
-  const appManifest = LOCAL_APP_MANIFEST;
+  const appManifest = APP_MANIFEST;
   const conversationEventPathPrefix = ENABLE_TINYCLOUD_HOOKS ? CONVERSATION_HOOK_PATH_PREFIX : null;
   const delegatees: ServerInfo[] = [info, agent].filter(
     (delegatee): delegatee is ServerInfo => delegatee !== null,
@@ -709,7 +686,7 @@ export function App() {
       const { tcw: tcwInstance } = await createAndSignIn(web3Provider, {
         autoCreateSpace: true,
         tinycloudHosts: TINYCLOUD_HOSTS,
-        manifest: LOCAL_APP_MANIFEST,
+        manifest: APP_MANIFEST,
       });
       applyDirectTinyCloudSession(addr, tcwInstance);
     },
@@ -764,32 +741,6 @@ export function App() {
     setLiveWriteSpaceId(restoredTinyCloud?.tcw.spaceId ?? persistedSession?.spaceId ?? null);
     return true;
   }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const restore = async () => {
-      const addr = sessionStoreRef.current.getAddress();
-      if (!addr || !sessionStoreRef.current.hasSession() || sessionStoreRef.current.isExpired()) {
-        return;
-      }
-
-      setAuthLoading(true);
-      setAuthError(null);
-      try {
-        await restoreStoredSession(addr);
-      } catch (err) {
-        if (!cancelled) setAuthError(err instanceof Error ? err.message : String(err));
-      } finally {
-        if (!cancelled) setAuthLoading(false);
-      }
-    };
-
-    void restore();
-    return () => {
-      cancelled = true;
-    };
-  }, [restoreStoredSession]);
 
   const renewBackendDelegation = useCallback(async () => {
     if (!tcw || !backendDid || !capabilityRequest) {
@@ -1096,6 +1047,11 @@ export function App() {
       setAuthError(null);
       setWorkspaceActionError(null);
       try {
+        if (!options?.forceWallet) {
+          const restored = await restoreStoredSession();
+          if (restored) return;
+        }
+
         const { address: addr, web3Provider } = await connectWallet({ host: OPENKEY_HOST });
         if (!options?.forceWallet) {
           const restored = await restoreStoredSession(addr);

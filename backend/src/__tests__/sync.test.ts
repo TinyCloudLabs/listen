@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import express from "express";
 import type { Server } from "http";
 import type { Request, Response, NextFunction } from "express";
-import { Buffer } from "node:buffer";
 import { createSyncRouter } from "../routes/sync.js";
 import type {
   FullTranscript,
@@ -38,7 +37,7 @@ function seedTranscriptBlob(
   text = "Already synced",
 ) {
   mockKV._data.set(
-    `transcript/${conversationId}`,
+    `xyz.tinycloud.listen/transcript/${conversationId}`,
     JSON.stringify([
       {
         index: 0,
@@ -186,8 +185,8 @@ function createMockClientFactory() {
   let listCallIndex = 0;
   const getResults = new Map<string, FullTranscript | Error>();
   const getCalls: string[] = [];
-  const audioCalls: string[] = [];
   let lastApiKey: string | null = null;
+  let getDelayMs = 0;
 
   return {
     setListResult(transcripts: FullTranscript[]) {
@@ -208,8 +207,8 @@ function createMockClientFactory() {
     getGetCalls() {
       return getCalls;
     },
-    getAudioCalls() {
-      return audioCalls;
+    setGetDelayMs(ms: number) {
+      getDelayMs = ms;
     },
     factory(apiKey: string) {
       lastApiKey = apiKey;
@@ -231,30 +230,25 @@ function createMockClientFactory() {
             for (const batch of listBatches) {
               batchCount++;
               all.push(...batch);
-              options?.onProgress?.({ batch: batchCount, totalSoFar: all.length });
+              await options?.onProgress?.({ batch: batchCount, totalSoFar: all.length });
             }
 
             return { transcripts: all, batchCount, earlyExit: false };
           }
 
           // Simple fallback: return listResult as single batch
-          options?.onProgress?.({ batch: 1, totalSoFar: listResult.length });
+          await options?.onProgress?.({ batch: 1, totalSoFar: listResult.length });
           return { transcripts: listResult, batchCount: 1, earlyExit: false };
         },
         getTranscript: async (id: string) => {
+          if (getDelayMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, getDelayMs));
+          }
           getCalls.push(id);
           const result = getResults.get(id);
           if (result instanceof Error) throw result;
           if (!result) throw new Error(`No mock transcript for id=${id}`);
           return result;
-        },
-        downloadAudio: async (audioUrl: string) => {
-          audioCalls.push(audioUrl);
-          return {
-            bytes: new TextEncoder().encode("fake mp3").buffer,
-            contentType: "audio/mpeg",
-            sizeBytes: 8,
-          };
         },
       };
     },
@@ -275,6 +269,7 @@ function createApp(
   mockKV: ReturnType<typeof createMockKV>,
   mockSQL: ReturnType<typeof createMockSQL>,
   clientFactory: ReturnType<typeof createMockClientFactory>,
+  backendKV?: ReturnType<typeof createMockKV>,
 ) {
   const mockDelegationMiddleware = (req: Request, _res: Response, next: NextFunction) => {
     req.delegatedAccess = {
@@ -298,6 +293,7 @@ function createApp(
     createSyncRouter({
       authMiddleware: mockAuthMiddleware,
       delegationMiddleware: mockDelegationMiddleware,
+      backendKV,
       createClient: clientFactory.factory,
       syncDelayMs: 0,
     }),
@@ -318,6 +314,25 @@ function closeServer(server: Server): Promise<void> {
   return new Promise((resolve, reject) => {
     server.close((err) => (err ? reject(err) : resolve()));
   });
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForFirefliesJob(
+  port: number,
+  jobId: string,
+  predicate: (job: any) => boolean,
+): Promise<any> {
+  let latest: any = null;
+  for (let i = 0; i < 40; i++) {
+    const res = await fetch(`http://localhost:${port}/api/sync/fireflies/jobs/${jobId}`);
+    latest = await res.json();
+    if (predicate(latest)) return latest;
+    await sleep(25);
+  }
+  throw new Error(`Timed out waiting for Fireflies job. Latest: ${JSON.stringify(latest)}`);
 }
 
 // ── SSE parsing helper ──────────────────────────────────────────────
@@ -675,7 +690,7 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
 
     // Verify KV was written with the conversation ID
     const conversationId = body.conversations[0].id;
-    const kvKey = `transcript/${conversationId}`;
+    const kvKey = `xyz.tinycloud.listen/transcript/${conversationId}`;
     const storedBlob = mockKV._data.get(kvKey);
     expect(storedBlob).toBeDefined();
 
@@ -733,12 +748,12 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
     expect(body.failed).toBe(0);
     expect(clientFactory.getGetCalls()).toEqual(["ff-1"]);
 
-    const storedBlob = mockKV._data.get("transcript/existing-conv");
+    const storedBlob = mockKV._data.get("xyz.tinycloud.listen/transcript/existing-conv");
     expect(storedBlob).toBeDefined();
     expect(JSON.parse(storedBlob!)[0].text).toBe("Recovered transcript line");
   });
 
-  it("stores Fireflies audio data and metadata separately in KV when audio_url exists", async () => {
+  it("keeps Fireflies sync transcript-first and does not upload audio blobs", async () => {
     mockKV._data.set(KV_KEY, "test-api-key");
 
     const summaries = [createMockFullTranscript({ id: "ff-1" })];
@@ -755,14 +770,15 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     const conversationId = body.conversations[0].id;
-    const storedAudio = mockKV._data.get(`audio/${conversationId}/recording.base64`);
-    const storedMetadata = mockKV._data.get(`audio/${conversationId}/recording.json`);
+    const storedAudio = mockKV._data.get(
+      `xyz.tinycloud.listen/audio/${conversationId}/recording.base64`,
+    );
+    const storedMetadata = mockKV._data.get(
+      `xyz.tinycloud.listen/audio/${conversationId}/recording.json`,
+    );
 
-    expect(storedAudio).toBeDefined();
-    expect(storedAudio).toBe(Buffer.from("fake mp3").toString("base64"));
-    expect(storedMetadata).toBeDefined();
-    expect(clientFactory.getAudioCalls()).toEqual(["https://audio.example.com/ff-1.mp3"]);
-    expect(JSON.parse(storedMetadata!).contentType).toBe("audio/mpeg");
+    expect(storedAudio).toBeUndefined();
+    expect(storedMetadata).toBeUndefined();
   });
 
   // ── SQL insert verification ────────────────────────────────────
@@ -794,11 +810,12 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
     );
     expect(conversationInserts.length).toBeGreaterThanOrEqual(1);
 
-    // Find participant INSERT calls (Alice and Bob)
+    // Find participant INSERT call (Alice and Bob in one multi-row statement)
     const participantInserts = mockSQL._calls.filter(
       (c) => c.sql.includes("INSERT") && c.sql.includes("participant"),
     );
-    expect(participantInserts.length).toBeGreaterThanOrEqual(2);
+    expect(participantInserts).toHaveLength(1);
+    expect(participantInserts[0].params).toHaveLength(10);
   });
 
   // ── Metadata is JSON-stringified ───────────────────────────────
@@ -834,9 +851,9 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
     // Should be valid JSON
     const parsed = JSON.parse(metadataParam!);
     expect(parsed).toHaveProperty("audio_url");
-    expect(parsed).toHaveProperty("audio_data_kv_key");
-    expect(parsed).toHaveProperty("audio_metadata_kv_key");
-    expect(parsed).toHaveProperty("audio_storage_encoding", "base64-string-kv");
+    expect(parsed).not.toHaveProperty("audio_data_kv_key");
+    expect(parsed).not.toHaveProperty("audio_metadata_kv_key");
+    expect(parsed).not.toHaveProperty("audio_storage_encoding");
     expect(parsed).toHaveProperty("organizer_email");
   });
 
@@ -901,6 +918,102 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
         await closeServer(s);
       }
     });
+  });
+});
+
+describe("Sync Routes — Fireflies background jobs", () => {
+  let mockKV: ReturnType<typeof createMockKV>;
+  let mockSQL: ReturnType<typeof createMockSQL>;
+  let backendKV: ReturnType<typeof createMockKV>;
+  let clientFactory: ReturnType<typeof createMockClientFactory>;
+  let server: Server;
+  let port: number;
+
+  beforeEach(async () => {
+    mockKV = createMockKV();
+    mockSQL = createMockSQL();
+    backendKV = createMockKV();
+    clientFactory = createMockClientFactory();
+    const app = createApp(mockKV, mockSQL, clientFactory, backendKV);
+    ({ server, port } = await startServer(app));
+  });
+
+  afterEach(async () => {
+    await closeServer(server);
+  });
+
+  it("starts a backend-owned Fireflies job and exposes completion after the request returns", async () => {
+    mockKV._data.set(KV_KEY, "test-api-key");
+    const summaries = [
+      createMockFullTranscript({ id: "ff-1", title: "Meeting 1" }),
+      createMockFullTranscript({ id: "ff-2", title: "Meeting 2" }),
+    ];
+    clientFactory.setListResult(summaries);
+    clientFactory.setGetResult(
+      "ff-1",
+      createMockFullTranscript({ id: "ff-1", title: "Meeting 1" }),
+    );
+    clientFactory.setGetResult(
+      "ff-2",
+      createMockFullTranscript({ id: "ff-2", title: "Meeting 2" }),
+    );
+    mockSQL._setDedupRows([]);
+
+    const res = await fetch(`http://localhost:${port}/api/sync/fireflies/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "incremental" }),
+    });
+
+    expect(res.status).toBe(202);
+    const started = await res.json();
+    expect(started.id).toBeString();
+    expect(["queued", "listing", "syncing"]).toContain(started.status);
+
+    const complete = await waitForFirefliesJob(
+      port,
+      started.id,
+      (job) => job.status === "completed",
+    );
+
+    expect(complete.synced).toBe(2);
+    expect(complete.failed).toBe(0);
+    expect(complete.errors).toEqual([]);
+    expect(clientFactory.getGetCalls()).toEqual(["ff-1", "ff-2"]);
+
+    const current = await fetch(`http://localhost:${port}/api/sync/fireflies/jobs/current`);
+    expect(await current.json()).toMatchObject({ id: started.id, status: "completed" });
+  });
+
+  it("returns the active Fireflies job instead of starting duplicate work", async () => {
+    mockKV._data.set(KV_KEY, "test-api-key");
+    clientFactory.setListResult([createMockFullTranscript({ id: "ff-1", title: "Meeting 1" })]);
+    clientFactory.setGetResult(
+      "ff-1",
+      createMockFullTranscript({ id: "ff-1", title: "Meeting 1" }),
+    );
+    clientFactory.setGetDelayMs(100);
+    mockSQL._setDedupRows([]);
+
+    const first = await fetch(`http://localhost:${port}/api/sync/fireflies/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "incremental" }),
+    });
+    const firstJob = await first.json();
+
+    const second = await fetch(`http://localhost:${port}/api/sync/fireflies/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "incremental" }),
+    });
+    const secondJob = await second.json();
+
+    expect(second.status).toBe(202);
+    expect(secondJob.id).toBe(firstJob.id);
+
+    await waitForFirefliesJob(port, firstJob.id, (job) => job.status === "completed");
+    expect(clientFactory.getGetCalls()).toEqual(["ff-1"]);
   });
 });
 
