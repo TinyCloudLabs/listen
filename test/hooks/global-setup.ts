@@ -228,7 +228,7 @@ async function createOwnerSession(input: {
   const { backendURL, tinycloudHost, ownerPrivateKey } = input;
   const signer = new PrivateKeySigner(ownerPrivateKey);
   const address = await signer.getAddress();
-  const principalDid = `did:pkh:eip155:1:${address}`;
+  const ownerDid = `did:pkh:eip155:1:${address}`;
   const [{ nonce }, serverInfo, appManifest] = await Promise.all([
     fetchJson<{ nonce: string }>(
       `${backendURL}/api/auth/nonce?address=${encodeURIComponent(address)}`,
@@ -238,7 +238,7 @@ async function createOwnerSession(input: {
   ]);
 
   const capabilityRequest = composeManifestWithDelegatees(appManifest, [serverInfo], {
-    principalDid,
+    ownerDid,
     decryptDelegateDid: serverInfo.did,
   });
   const sessionStorage = new MemorySessionStorage();
