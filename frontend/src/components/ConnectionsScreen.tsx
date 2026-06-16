@@ -191,7 +191,10 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
             </button>
           </div>
         </div>
-        <p style={s.lede}>Manage synced sources or import a transcript into your Listen inbox.</p>
+        <p style={s.lede}>
+          Bring your meetings and conversations together. Connect a source to sync automatically, or
+          import a single transcript whenever you like.
+        </p>
       </header>
 
       {message && <div style={s.notice}>{message}</div>}
@@ -204,7 +207,10 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
         </div>
 
         {connected.length === 0 ? (
-          <div style={s.empty}>No sources connected yet.</div>
+          <div style={s.empty}>
+            Nothing connected yet. Add a source below and your conversations will start arriving
+            here.
+          </div>
         ) : (
           connected.map((source) => (
             <div key={source.id} style={s.sourceCard}>
@@ -422,8 +428,8 @@ const s: Record<string, React.CSSProperties> = {
     marginTop: 6,
   },
   title: {
-    fontSize: 38,
-    lineHeight: 1.05,
+    fontSize: "var(--lst-type-display)",
+    lineHeight: "var(--lst-leading-tight)",
     fontWeight: 400,
     margin: 0,
   },
@@ -433,8 +439,10 @@ const s: Record<string, React.CSSProperties> = {
   },
   lede: {
     margin: "10px 0 0",
+    maxWidth: 560,
     color: "var(--lst-ink-70)",
-    fontSize: 14,
+    fontSize: "var(--lst-type-body)",
+    lineHeight: "var(--lst-leading-body)",
   },
   body: {
     flex: 1,
@@ -511,15 +519,16 @@ const s: Record<string, React.CSSProperties> = {
   },
   commandBlock: {
     margin: 0,
-    padding: "12px 14px",
-    overflowX: "auto",
-    border: "var(--lst-border)",
+    padding: "14px 16px",
+    border: "var(--lst-hair)",
+    borderLeft: "2px solid var(--lst-ink-35)",
     background: "var(--lst-bg)",
-    color: "var(--lst-blue)",
-    fontFamily: MONO,
-    fontSize: 11,
-    lineHeight: 1.6,
-    whiteSpace: "pre",
+    color: "var(--lst-ink-70)",
+    fontFamily: FONT,
+    fontSize: 13,
+    lineHeight: "var(--lst-leading-body)",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
   },
   referenceLink: {
     fontFamily: FONT,
@@ -553,14 +562,14 @@ const s: Record<string, React.CSSProperties> = {
     width: 20,
     height: 20,
     borderRadius: 4,
-    background: "var(--lst-blue)",
+    background: "var(--lst-ok)",
   },
   markWarn: {
     width: 20,
     height: 20,
     borderRadius: 4,
-    border: "var(--lst-border)",
-    background: "var(--lst-ink-08)",
+    border: "1px solid var(--lst-warn)",
+    background: "var(--lst-warn-soft)",
   },
   markIdle: {
     width: 20,
@@ -573,7 +582,7 @@ const s: Record<string, React.CSSProperties> = {
     fontFamily: MONO,
     fontSize: 10,
     color: "var(--lst-bg)",
-    background: "var(--lst-blue)",
+    background: "var(--lst-ok)",
     borderRadius: 999,
     padding: "5px 10px",
     letterSpacing: "0.08em",
@@ -582,8 +591,8 @@ const s: Record<string, React.CSSProperties> = {
   chipGhost: {
     fontFamily: MONO,
     fontSize: 10,
-    color: "var(--lst-blue)",
-    border: "var(--lst-border)",
+    color: "var(--lst-warn)",
+    border: "1px solid var(--lst-warn)",
     borderRadius: 999,
     padding: "5px 10px",
     letterSpacing: "0.08em",
@@ -632,16 +641,16 @@ const s: Record<string, React.CSSProperties> = {
   },
   notice: {
     padding: "9px 32px",
-    borderBottom: "var(--lst-border)",
-    background: "var(--lst-ink-08)",
-    color: "var(--lst-blue)",
+    borderBottom: "1px solid var(--lst-ok)",
+    background: "var(--lst-ok-soft)",
+    color: "var(--lst-ok)",
     fontSize: 13,
   },
   error: {
     padding: "9px 32px",
-    borderBottom: "var(--lst-border)",
-    background: "var(--lst-ink-08)",
-    color: "var(--lst-blue)",
+    borderBottom: "1px solid var(--lst-alert)",
+    background: "var(--lst-alert-soft)",
+    color: "var(--lst-alert)",
     fontSize: 13,
   },
   empty: {

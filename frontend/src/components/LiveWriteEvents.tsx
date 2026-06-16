@@ -61,11 +61,11 @@ function statusAccent(status: Status): string {
     case "idle":
       return "var(--lst-ink-55)";
     case "connecting":
-      return "var(--lst-blue)";
+      return "var(--lst-warn)";
     case "live":
-      return "var(--lst-blue)";
+      return "var(--lst-ok)";
     case "error":
-      return "var(--lst-blue)";
+      return "var(--lst-alert)";
   }
 }
 
@@ -334,10 +334,8 @@ const s: Record<string, React.CSSProperties> = {
     fontFamily: MONO,
     fontSize: 11,
     fontWeight: 500,
-    color: "var(--lst-blue)",
-    background: "var(--lst-bg)",
-    padding: "1px 6px",
-    borderRadius: 0,
+    color: "var(--lst-ink-70)",
+    letterSpacing: "0.02em",
   },
   timestamp: {
     fontFamily: MONO,
@@ -347,10 +345,7 @@ const s: Record<string, React.CSSProperties> = {
   path: {
     fontFamily: MONO,
     fontSize: 11,
-    color: "var(--lst-blue)",
-    background: "var(--lst-bg)",
-    padding: "1px 6px",
-    borderRadius: 0,
+    color: "var(--lst-ink-70)",
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap" as const,
@@ -368,9 +363,9 @@ const s: Record<string, React.CSSProperties> = {
     marginTop: 12,
     padding: "10px 14px",
     fontSize: 13,
-    color: "var(--lst-blue)",
-    background: "var(--lst-ink-08)",
-    border: "var(--lst-border)",
+    color: "var(--lst-alert)",
+    background: "var(--lst-alert-soft)",
+    border: "1px solid var(--lst-alert)",
     borderRadius: 0,
     lineHeight: 1.4,
   },
@@ -381,7 +376,7 @@ const s: Record<string, React.CSSProperties> = {
     width: 18,
     height: 18,
     borderRadius: "50%",
-    background: "var(--lst-blue)",
+    background: "var(--lst-alert)",
     color: "var(--lst-bg)",
     fontSize: 11,
     fontWeight: 700,

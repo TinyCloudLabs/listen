@@ -408,15 +408,16 @@ const s: Record<string, React.CSSProperties> = {
   },
   title: {
     margin: "6px 0 4px",
-    fontSize: 38,
-    lineHeight: 1.05,
+    fontSize: "var(--lst-type-display)",
+    lineHeight: "var(--lst-leading-tight)",
     fontWeight: 400,
     color: "var(--lst-blue)",
   },
   lede: {
     margin: 0,
     color: "var(--lst-ink-70)",
-    fontSize: 14,
+    fontSize: "var(--lst-type-body)",
+    lineHeight: "var(--lst-leading-body)",
   },
   error: {
     padding: "10px 32px",
@@ -453,8 +454,8 @@ const s: Record<string, React.CSSProperties> = {
   },
   messageText: {
     margin: 0,
-    fontSize: 14,
-    lineHeight: 1.55,
+    fontSize: "var(--lst-type-body)",
+    lineHeight: "var(--lst-leading-body)",
   },
   citations: {
     display: "grid",
@@ -516,12 +517,12 @@ const s: Record<string, React.CSSProperties> = {
   input: {
     flex: 1,
     border: "var(--lst-border)",
-    background: "transparent",
+    background: "var(--lst-bg)",
     color: "var(--lst-blue)",
     borderRadius: 999,
-    padding: "10px 14px",
+    padding: "11px 16px",
     fontFamily: FONT,
-    fontSize: 14,
+    fontSize: "var(--lst-type-body)",
     outline: "none",
   },
   send: {
