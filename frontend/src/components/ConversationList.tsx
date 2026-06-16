@@ -343,9 +343,9 @@ export const ConversationList: FC<ConversationListProps> = ({
           groupedConversations.map((group) => (
             <div key={group.date}>
               <div style={s.groupHeader}>
-                <span>— {group.date.toUpperCase()}</span>
+                <span style={s.groupDate}>{group.date.toUpperCase()}</span>
                 <span style={s.groupRule} />
-                <span>
+                <span style={s.groupCount}>
                   {group.items.length} record{group.items.length === 1 ? "" : "s"}
                 </span>
               </div>
@@ -454,11 +454,11 @@ const s: Record<string, React.CSSProperties> = {
     borderBottom: "var(--lst-border)",
   },
   countLabel: {
-    fontFamily: MONO,
-    fontSize: 11,
+    fontFamily: "var(--lst-font-eyebrow)",
+    fontSize: "var(--lst-type-eyebrow)",
     fontWeight: 500,
     color: "var(--lst-ink-55)",
-    letterSpacing: "0.08em",
+    letterSpacing: "var(--lst-tracking-eyebrow)",
     textTransform: "uppercase" as const,
   },
   pageStatus: {
@@ -476,10 +476,11 @@ const s: Record<string, React.CSSProperties> = {
     zIndex: 2,
   },
   colLabel: {
-    fontFamily: MONO,
+    fontFamily: "var(--lst-font-eyebrow)",
     fontSize: 10,
     color: "var(--lst-ink-55)",
-    letterSpacing: "0.08em",
+    letterSpacing: "var(--lst-tracking-eyebrow)",
+    textTransform: "uppercase" as const,
   },
   list: { margin: 0, padding: 0 },
   filteredEmpty: {
@@ -491,18 +492,28 @@ const s: Record<string, React.CSSProperties> = {
   },
   groupHeader: {
     display: "flex",
-    alignItems: "center",
-    gap: 12,
-    padding: "20px 32px 8px",
-    fontFamily: MONO,
-    fontSize: 11,
-    color: "var(--lst-ink-55)",
-    letterSpacing: "0.08em",
+    alignItems: "baseline",
+    gap: 14,
+    padding: "22px 32px 8px",
+  },
+  groupDate: {
+    fontFamily: "var(--lst-font-eyebrow)",
+    fontSize: "var(--lst-type-eyebrow)",
+    fontWeight: 600,
+    color: "var(--lst-ink-70)",
+    letterSpacing: "var(--lst-tracking-eyebrow)",
   },
   groupRule: {
+    alignSelf: "center",
     height: 1,
     background: "var(--lst-rule-soft)",
     flex: 1,
+  },
+  groupCount: {
+    fontFamily: "var(--lst-font-eyebrow)",
+    fontSize: 10,
+    color: "var(--lst-ink-35)",
+    letterSpacing: "var(--lst-tracking-eyebrow)",
   },
   pagination: {
     display: "flex",
