@@ -1066,3 +1066,44 @@ a {
     font-size: 22px;
   }
 }
+
+/* === Phase 2C: speaker palette =====================================
+   Stable per-participant colors so "who said what" is scannable down a
+   long transcript. A calm spread anchored on the cobalt and the status
+   hue family (cobalt, slate-indigo, teal, ochre, clay, violet), all
+   desaturated to harmonize with --lst-blue — identity, NOT state, so
+   kept separate from --lst-ok/warn/alert. Each has a soft tint for
+   avatar fills. Used ONLY on speaker labels + avatars; utterance prose
+   stays in --lst-blue ink. Appended at EOF (additive, multiple :root /
+   [data-theme] blocks are valid) to keep the shared-file merge clean. */
+:root {
+  --lst-spk-1: #1c35b8;
+  --lst-spk-1-soft: rgba(28, 53, 184, 0.12);
+  --lst-spk-2: #3f6f8f;
+  --lst-spk-2-soft: rgba(63, 111, 143, 0.13);
+  --lst-spk-3: #2f7d6b;
+  --lst-spk-3-soft: rgba(47, 125, 107, 0.13);
+  --lst-spk-4: #8a6a2c;
+  --lst-spk-4-soft: rgba(138, 106, 44, 0.13);
+  --lst-spk-5: #9a4f53;
+  --lst-spk-5-soft: rgba(154, 79, 83, 0.13);
+  --lst-spk-6: #5a4d96;
+  --lst-spk-6-soft: rgba(90, 77, 150, 0.13);
+}
+
+/* Lifted for legibility on the dark long-read paper — same calm spread,
+   low-glare and harmonious with the lifted cobalt ink. */
+[data-theme="dark"] {
+  --lst-spk-1: #b9c4ff;
+  --lst-spk-1-soft: rgba(185, 196, 255, 0.16);
+  --lst-spk-2: #92c0dd;
+  --lst-spk-2-soft: rgba(146, 192, 221, 0.16);
+  --lst-spk-3: #79cdb4;
+  --lst-spk-3-soft: rgba(121, 205, 180, 0.16);
+  --lst-spk-4: #d6b173;
+  --lst-spk-4-soft: rgba(214, 177, 115, 0.16);
+  --lst-spk-5: #dc9a9e;
+  --lst-spk-5-soft: rgba(220, 154, 158, 0.16);
+  --lst-spk-6: #ada0e6;
+  --lst-spk-6-soft: rgba(173, 160, 230, 0.16);
+}

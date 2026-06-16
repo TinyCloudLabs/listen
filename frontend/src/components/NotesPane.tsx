@@ -112,7 +112,7 @@ const MONO = "var(--lst-mono)";
 const s: Record<string, React.CSSProperties> = {
   pane: {
     fontFamily: FONT,
-    borderLeft: "var(--lst-border)",
+    borderLeft: "var(--lst-hair)",
     display: "flex",
     flexDirection: "column" as const,
     minWidth: 0,
@@ -125,10 +125,10 @@ const s: Record<string, React.CSSProperties> = {
     alignItems: "center",
   },
   eyebrow: {
-    fontFamily: MONO,
-    fontSize: 11,
+    fontFamily: "var(--lst-font-eyebrow)",
+    fontSize: "var(--lst-type-eyebrow)",
     color: "var(--lst-ink-55)",
-    letterSpacing: "0.08em",
+    letterSpacing: "var(--lst-tracking-eyebrow)",
     textTransform: "uppercase" as const,
   },
   iconBtn: {
