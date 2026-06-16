@@ -1,4 +1,208 @@
+/* ── herdr design system ─────────────────────────────────────────────
+   Listen is re-skinned to match herdr (https://herdr.dev): warm cream
+   paper, warm near-black ink, JetBrains Mono headlines, a SPARING blue
+   accent, quiet warm hairlines, and semantic state colors. The token
+   NAMES are unchanged so components keep working; only the VALUES move
+   to herdr's system.
+
+   Mapping from herdr (style.css :root) → Listen:
+     herdr --bg            → --lst-bg          (warm paper)
+     herdr --bg-elevated   → --lst-bg-2
+     herdr --line          → --lst-bg-3 / rule / border line color
+     herdr --ink           → --lst-blue        (primary fg + active fill)
+     herdr --ink-soft/muted → the --lst-ink-* ramp (warm-ink alphas)
+     herdr --accent        → --lst-accent       (links / focus / pop)
+     herdr --green/yellow/red → --lst-ok/warn/alert
+
+   --lst-blue keeps its name but is now warm ink, because Listen uses it
+   as BOTH primary text AND primary/active fill — which is exactly how
+   herdr uses --ink. Blue is split out as --lst-accent, used ONLY for
+   links, focus rings, primary-hover, and active emphasis (never a field
+   color). Default palette is herdr-light (this :root). */
 :root {
+  --lst-blue: #1a1a18;
+  --lst-bg: #f0eee9;
+  --lst-bg-2: #f5f3ee;
+  --lst-bg-3: #d8d6d0;
+  --lst-rule: #d8d6d0;
+  --lst-rule-soft: rgba(26, 26, 24, 0.1);
+  --lst-ink-70: rgba(26, 26, 24, 0.78);
+  --lst-ink-55: rgba(26, 26, 24, 0.58);
+  --lst-ink-35: rgba(26, 26, 24, 0.4);
+  --lst-ink-20: rgba(26, 26, 24, 0.22);
+  --lst-ink-15: rgba(26, 26, 24, 0.14);
+  --lst-ink-08: rgba(26, 26, 24, 0.07);
+  --lst-border: 1px solid var(--lst-rule);
+  --lst-hair: 1px solid var(--lst-rule-soft);
+  --lst-font: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --lst-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* ── Accent ───────────────────────────────────────────────────────
+     herdr's signature blue. SPARING: links, focus rings, primary-hover,
+     active emphasis, the brand-mark dot. NOT a field/border color and
+     NOT body text. */
+  --lst-accent: #4a9eff;
+  --lst-accent-soft: color-mix(in srgb, var(--lst-accent) 10%, transparent);
+
+  /* ── Semantic status palette ──────────────────────────────────────
+     Reserved STRICTLY for conveying state (sync health, errors,
+     confirmations). Do NOT use these for decoration, branding, or
+     emphasis. Values come from herdr --green/--yellow/--red, with soft
+     tints for backgrounds/wash. */
+  --lst-ok: #2d9f52;
+  --lst-ok-soft: rgba(45, 159, 82, 0.12);
+  --lst-warn: #b8860b;
+  --lst-warn-soft: rgba(184, 134, 11, 0.13);
+  --lst-alert: #c73e3e;
+  --lst-alert-soft: rgba(199, 62, 62, 0.12);
+
+  /* ── Editorial type scale ─────────────────────────────────────────
+     Shared sizing so Phase-2 surfaces stay consistent. JetBrains Mono
+     for display/titles (herdr's headline voice), Inter for body. */
+  --lst-type-display: 38px;
+  --lst-type-title: 28px;
+  --lst-type-heading: 18px;
+  --lst-type-body: 14px;
+  --lst-type-meta: 12px;
+  --lst-type-eyebrow: 11px;
+  --lst-leading-tight: 1.05;
+  --lst-leading-snug: 1.25;
+  --lst-leading-body: 1.55;
+  --lst-tracking-eyebrow: 0.08em;
+  --lst-tracking-display: -0.04em;
+  --lst-font-display: var(--lst-mono);
+  --lst-font-eyebrow: var(--lst-mono);
+}
+
+/* ── herdr-dark (herdr [data-palette="herdr"]) ──────────────────────
+   herdr's own dark palette. Used as the dark fallback. Status colors
+   lifted for legibility on the dark paper. */
+[data-theme="herdr-dark"] {
+  --lst-blue: #f0ece0;
+  --lst-bg: #0c0c0b;
+  --lst-bg-2: #131312;
+  --lst-bg-3: #252522;
+  --lst-rule: #252522;
+  --lst-rule-soft: rgba(240, 236, 224, 0.12);
+  --lst-ink-70: rgba(240, 236, 224, 0.8);
+  --lst-ink-55: rgba(240, 236, 224, 0.58);
+  --lst-ink-35: rgba(240, 236, 224, 0.4);
+  --lst-ink-20: rgba(240, 236, 224, 0.22);
+  --lst-ink-15: rgba(240, 236, 224, 0.14);
+  --lst-ink-08: rgba(240, 236, 224, 0.08);
+  --lst-accent: #4a9eff;
+  --lst-accent-soft: color-mix(in srgb, var(--lst-accent) 12%, transparent);
+
+  --lst-ok: #52c97a;
+  --lst-ok-soft: rgba(82, 201, 122, 0.16);
+  --lst-warn: #e6b84a;
+  --lst-warn-soft: rgba(230, 184, 74, 0.16);
+  --lst-alert: #e05a5a;
+  --lst-alert-soft: rgba(224, 90, 90, 0.16);
+}
+
+/* ── tokyo-night (herdr [data-palette="tokyo-night"]) ───────────────── */
+[data-theme="tokyo-night"] {
+  --lst-blue: #d5dcff;
+  --lst-bg: #1a1b26;
+  --lst-bg-2: #202331;
+  --lst-bg-3: #2f3549;
+  --lst-rule: #2f3549;
+  --lst-rule-soft: rgba(213, 220, 255, 0.12);
+  --lst-ink-70: rgba(213, 220, 255, 0.8);
+  --lst-ink-55: rgba(213, 220, 255, 0.58);
+  --lst-ink-35: rgba(213, 220, 255, 0.4);
+  --lst-ink-20: rgba(213, 220, 255, 0.22);
+  --lst-ink-15: rgba(213, 220, 255, 0.14);
+  --lst-ink-08: rgba(213, 220, 255, 0.08);
+  --lst-accent: #7aa2f7;
+  --lst-accent-soft: color-mix(in srgb, var(--lst-accent) 14%, transparent);
+
+  --lst-ok: #9ece6a;
+  --lst-ok-soft: rgba(158, 206, 106, 0.16);
+  --lst-warn: #e0af68;
+  --lst-warn-soft: rgba(224, 175, 104, 0.16);
+  --lst-alert: #f7768e;
+  --lst-alert-soft: rgba(247, 118, 142, 0.16);
+}
+
+/* ── catppuccin (mocha) (herdr [data-palette="catppuccin"]) ─────────── */
+[data-theme="catppuccin"] {
+  --lst-blue: #cdd6f4;
+  --lst-bg: #11111b;
+  --lst-bg-2: #181825;
+  --lst-bg-3: #313244;
+  --lst-rule: #313244;
+  --lst-rule-soft: rgba(205, 214, 244, 0.12);
+  --lst-ink-70: rgba(205, 214, 244, 0.8);
+  --lst-ink-55: rgba(205, 214, 244, 0.58);
+  --lst-ink-35: rgba(205, 214, 244, 0.4);
+  --lst-ink-20: rgba(205, 214, 244, 0.22);
+  --lst-ink-15: rgba(205, 214, 244, 0.14);
+  --lst-ink-08: rgba(205, 214, 244, 0.08);
+  --lst-accent: #89b4fa;
+  --lst-accent-soft: color-mix(in srgb, var(--lst-accent) 14%, transparent);
+
+  --lst-ok: #a6e3a1;
+  --lst-ok-soft: rgba(166, 227, 161, 0.16);
+  --lst-warn: #f9e2af;
+  --lst-warn-soft: rgba(249, 226, 175, 0.16);
+  --lst-alert: #f38ba8;
+  --lst-alert-soft: rgba(243, 139, 168, 0.16);
+}
+
+/* ── nord (herdr [data-palette="nord"]) ─────────────────────────────── */
+[data-theme="nord"] {
+  --lst-blue: #eceff4;
+  --lst-bg: #2e3440;
+  --lst-bg-2: #343b49;
+  --lst-bg-3: #434c5e;
+  --lst-rule: #434c5e;
+  --lst-rule-soft: rgba(236, 239, 244, 0.12);
+  --lst-ink-70: rgba(236, 239, 244, 0.8);
+  --lst-ink-55: rgba(236, 239, 244, 0.58);
+  --lst-ink-35: rgba(236, 239, 244, 0.4);
+  --lst-ink-20: rgba(236, 239, 244, 0.22);
+  --lst-ink-15: rgba(236, 239, 244, 0.14);
+  --lst-ink-08: rgba(236, 239, 244, 0.08);
+  --lst-accent: #88c0d0;
+  --lst-accent-soft: color-mix(in srgb, var(--lst-accent) 14%, transparent);
+
+  --lst-ok: #a3be8c;
+  --lst-ok-soft: rgba(163, 190, 140, 0.16);
+  --lst-warn: #ebcb8b;
+  --lst-warn-soft: rgba(235, 203, 139, 0.16);
+  --lst-alert: #bf616a;
+  --lst-alert-soft: rgba(191, 97, 106, 0.16);
+}
+
+/* ── gruvbox (herdr [data-palette="gruvbox"]) ───────────────────────── */
+[data-theme="gruvbox"] {
+  --lst-blue: #fbf1c7;
+  --lst-bg: #282828;
+  --lst-bg-2: #32302f;
+  --lst-bg-3: #504945;
+  --lst-rule: #504945;
+  --lst-rule-soft: rgba(251, 241, 199, 0.12);
+  --lst-ink-70: rgba(251, 241, 199, 0.8);
+  --lst-ink-55: rgba(251, 241, 199, 0.58);
+  --lst-ink-35: rgba(251, 241, 199, 0.4);
+  --lst-ink-20: rgba(251, 241, 199, 0.22);
+  --lst-ink-15: rgba(251, 241, 199, 0.14);
+  --lst-ink-08: rgba(251, 241, 199, 0.08);
+  --lst-accent: #d79921;
+  --lst-accent-soft: color-mix(in srgb, var(--lst-accent) 16%, transparent);
+
+  --lst-ok: #b8bb26;
+  --lst-ok-soft: rgba(184, 187, 38, 0.16);
+  --lst-warn: #fabd2f;
+  --lst-warn-soft: rgba(250, 189, 47, 0.16);
+  --lst-alert: #fb4934;
+  --lst-alert-soft: rgba(251, 73, 52, 0.16);
+}
+
+/* ── classic — Listen's ORIGINAL cobalt identity, kept selectable ──── */
+[data-theme="classic"] {
   --lst-blue: #1c35b8;
   --lst-bg: #f2f2f4;
   --lst-bg-2: #eaeaee;
@@ -11,83 +215,62 @@
   --lst-ink-20: rgba(28, 53, 184, 0.2);
   --lst-ink-15: rgba(28, 53, 184, 0.15);
   --lst-ink-08: rgba(28, 53, 184, 0.08);
-  --lst-border: 1px solid var(--lst-blue);
-  --lst-hair: 1px solid var(--lst-rule-soft);
-  --lst-font: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --lst-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --lst-accent: #1c35b8;
+  --lst-accent-soft: rgba(28, 53, 184, 0.1);
 
-  /* ── Semantic status palette ──────────────────────────────────────
-     Reserved STRICTLY for conveying state (sync health, errors,
-     confirmations). Do NOT use these for decoration, branding, or
-     emphasis — that is the cobalt blue's job. Each status has a strong
-     value (text/icons/dots) plus a soft tint (backgrounds/wash). Tuned
-     muted, not neon, so they sit calmly beside --lst-blue. */
   --lst-ok: #2f7d5b;
   --lst-ok-soft: rgba(47, 125, 91, 0.12);
   --lst-warn: #9a6a16;
   --lst-warn-soft: rgba(154, 106, 22, 0.13);
   --lst-alert: #b23b3b;
   --lst-alert-soft: rgba(178, 59, 59, 0.12);
-
-  /* ── Editorial type scale ─────────────────────────────────────────
-     Shared sizing so Phase-2 surfaces stay consistent. Inter for
-     display/title/body, JetBrains Mono only for small eyebrows/meta. */
-  --lst-type-display: 38px;
-  --lst-type-title: 28px;
-  --lst-type-heading: 18px;
-  --lst-type-body: 14px;
-  --lst-type-meta: 12px;
-  --lst-type-eyebrow: 11px;
-  --lst-leading-tight: 1.06;
-  --lst-leading-snug: 1.25;
-  --lst-leading-body: 1.55;
-  --lst-tracking-eyebrow: 0.08em;
-  --lst-font-display: var(--lst-font);
-  --lst-font-eyebrow: var(--lst-mono);
 }
 
-/* ── Dark theme ─────────────────────────────────────────────────────
-   Calm, low-glare long-read surface. Dark paper with light
-   cobalt-tinted ink; status colors lifted for legibility on dark.
-   Light remains the default — this block only applies under
-   [data-theme="dark"]. Also re-maps the --landing-* set so the
-   signed-out landing page reads correctly in dark. */
-[data-theme="dark"] {
-  --lst-blue: #b9c4ff;
-  --lst-bg: #0f1118;
-  --lst-bg-2: #161925;
-  --lst-bg-3: #1d2130;
-  --lst-rule: #b9c4ff;
-  --lst-rule-soft: rgba(185, 196, 255, 0.2);
-  --lst-ink-70: rgba(208, 215, 255, 0.78);
-  --lst-ink-55: rgba(208, 215, 255, 0.58);
-  --lst-ink-35: rgba(208, 215, 255, 0.36);
-  --lst-ink-20: rgba(185, 196, 255, 0.2);
-  --lst-ink-15: rgba(185, 196, 255, 0.16);
-  --lst-ink-08: rgba(185, 196, 255, 0.09);
-
-  --lst-ok: #5fcf97;
-  --lst-ok-soft: rgba(95, 207, 151, 0.16);
-  --lst-warn: #e0b35f;
-  --lst-warn-soft: rgba(224, 179, 95, 0.16);
-  --lst-alert: #e88585;
-  --lst-alert-soft: rgba(232, 133, 133, 0.16);
+/* ── Landing page palette mirroring ─────────────────────────────────
+   The signed-out landing page uses its own --landing-* set. Re-map it
+   per palette so it tracks the active theme. herdr-light is the :root
+   default below; each dark/other palette overrides to match. */
+.landing-page {
+  --landing-accent: var(--lst-accent);
+  --landing-accent-soft: var(--lst-accent-soft);
 }
 
-[data-theme="dark"] .landing-page {
-  --landing-blue: #b9c4ff;
-  --landing-bg: #0f1118;
-  --landing-bg-2: #161925;
-  --landing-rule-soft: rgba(185, 196, 255, 0.2);
-  --landing-ink-70: rgba(208, 215, 255, 0.78);
-  --landing-ink-55: rgba(208, 215, 255, 0.58);
-  --landing-ink-08: rgba(185, 196, 255, 0.08);
+[data-theme="herdr-dark"] .landing-page,
+[data-theme="tokyo-night"] .landing-page,
+[data-theme="catppuccin"] .landing-page,
+[data-theme="nord"] .landing-page,
+[data-theme="gruvbox"] .landing-page {
+  --landing-blue: var(--lst-blue);
+  --landing-bg: var(--lst-bg);
+  --landing-bg-2: var(--lst-bg-2);
+  --landing-rule-soft: var(--lst-rule-soft);
+  --landing-ink-70: var(--lst-ink-70);
+  --landing-ink-55: var(--lst-ink-55);
+  --landing-ink-08: var(--lst-ink-08);
 }
 
-/* Noise overlay reads as a dark grain in dark mode instead of the
-   light multiply wash. */
-[data-theme="dark"] .landing-noise::after,
-[data-theme="dark"] .listen-shell::after {
+[data-theme="classic"] .landing-page {
+  --landing-blue: #1c35b8;
+  --landing-bg: #f2f2f4;
+  --landing-bg-2: #eaeaee;
+  --landing-rule-soft: rgba(28, 53, 184, 0.18);
+  --landing-ink-70: rgba(28, 53, 184, 0.7);
+  --landing-ink-55: rgba(28, 53, 184, 0.55);
+  --landing-ink-08: rgba(28, 53, 184, 0.06);
+}
+
+/* Noise overlay reads as a grain on dark paper instead of the light
+   multiply wash. */
+[data-theme="herdr-dark"] .landing-noise::after,
+[data-theme="herdr-dark"] .listen-shell::after,
+[data-theme="tokyo-night"] .landing-noise::after,
+[data-theme="tokyo-night"] .listen-shell::after,
+[data-theme="catppuccin"] .landing-noise::after,
+[data-theme="catppuccin"] .listen-shell::after,
+[data-theme="nord"] .landing-noise::after,
+[data-theme="nord"] .listen-shell::after,
+[data-theme="gruvbox"] .landing-noise::after,
+[data-theme="gruvbox"] .listen-shell::after {
   mix-blend-mode: screen;
   opacity: 0.06;
 }
@@ -122,14 +305,14 @@ a {
 }
 
 .landing-page {
-  --landing-blue: #1c35b8;
-  --landing-bg: #f2f2f4;
-  --landing-bg-2: #eaeaee;
-  --landing-rule-soft: rgba(28, 53, 184, 0.18);
-  --landing-ink-70: rgba(28, 53, 184, 0.7);
-  --landing-ink-55: rgba(28, 53, 184, 0.55);
-  --landing-ink-08: rgba(28, 53, 184, 0.06);
-  --landing-border: 1px solid var(--landing-blue);
+  --landing-blue: #1a1a18;
+  --landing-bg: #f0eee9;
+  --landing-bg-2: #f5f3ee;
+  --landing-rule-soft: rgba(26, 26, 24, 0.1);
+  --landing-ink-70: rgba(26, 26, 24, 0.78);
+  --landing-ink-55: rgba(26, 26, 24, 0.58);
+  --landing-ink-08: rgba(26, 26, 24, 0.06);
+  --landing-border: 1px solid var(--landing-rule-soft);
   --landing-font: var(--lst-font);
   --landing-mono-font: var(--lst-mono);
   min-height: 100vh;
@@ -224,7 +407,7 @@ a {
   content: "";
   width: 8px;
   height: 8px;
-  background: var(--landing-blue);
+  background: var(--landing-accent);
   border-radius: 50%;
 }
 
@@ -412,8 +595,8 @@ a {
   height: 78%;
   background: radial-gradient(
     ellipse at center,
-    rgba(28, 53, 184, 0.42) 0%,
-    rgba(28, 53, 184, 0) 65%
+    color-mix(in srgb, var(--landing-accent) 42%, transparent) 0%,
+    color-mix(in srgb, var(--landing-accent) 0%, transparent) 65%
   );
   display: flex;
   align-items: center;
@@ -570,7 +753,7 @@ a {
   flex-direction: column;
   min-width: 0;
   overflow: hidden;
-  background: rgba(28, 53, 184, 0.025);
+  background: color-mix(in srgb, var(--landing-blue) 2.5%, transparent);
 }
 
 .landing-preview-head {
@@ -599,7 +782,7 @@ a {
 }
 
 .landing-search::placeholder {
-  color: rgba(28, 53, 184, 0.5);
+  color: var(--landing-ink-55);
 }
 
 .landing-preview-list {
@@ -691,7 +874,7 @@ a {
   position: relative;
   flex: 1;
   height: 1px;
-  background: rgba(28, 53, 184, 0.3);
+  background: color-mix(in srgb, var(--landing-blue) 30%, transparent);
 }
 
 .landing-timeline-progress {
@@ -747,7 +930,7 @@ a {
 }
 
 .landing-utterance.highlighted {
-  background: rgba(28, 53, 184, 0.12);
+  background: color-mix(in srgb, var(--landing-accent) 12%, transparent);
 }
 
 .landing-quote-section {
@@ -827,7 +1010,7 @@ a {
   z-index: 1;
   min-height: 100vh;
   border-right: var(--lst-border);
-  background: rgba(28, 53, 184, 0.02);
+  background: color-mix(in srgb, var(--lst-blue) 2%, transparent);
   display: flex;
   flex-direction: column;
   overflow: auto;
@@ -871,7 +1054,7 @@ a {
   content: "";
   width: 8px;
   height: 8px;
-  background: var(--lst-blue);
+  background: var(--lst-accent);
   border-radius: 50%;
 }
 
@@ -1071,14 +1254,52 @@ a {
 
 /* === Phase 2C: speaker palette =====================================
    Stable per-participant colors so "who said what" is scannable down a
-   long transcript. A calm spread anchored on the cobalt and the status
-   hue family (cobalt, slate-indigo, teal, ochre, clay, violet), all
-   desaturated to harmonize with --lst-blue — identity, NOT state, so
-   kept separate from --lst-ok/warn/alert. Each has a soft tint for
-   avatar fills. Used ONLY on speaker labels + avatars; utterance prose
-   stays in --lst-blue ink. Appended at EOF (additive, multiple :root /
-   [data-theme] blocks are valid) to keep the shared-file merge clean. */
+   long transcript. Re-derived from herdr's accent + status hue family
+   (accent-blue, teal, green, ochre, clay/red, violet) — identity, NOT
+   state, so kept separate from --lst-ok/warn/alert. On the warm cream
+   paper the values are deepened for legibility; on dark palettes they
+   are lifted. Each has a soft tint for avatar fills. Used ONLY on
+   speaker labels + avatars; utterance prose stays in --lst-blue ink.
+   Appended at EOF (additive, multiple :root / [data-theme] blocks are
+   valid) to keep the shared-file merge clean. */
 :root {
+  --lst-spk-1: #2f7fd6;
+  --lst-spk-1-soft: rgba(47, 127, 214, 0.12);
+  --lst-spk-2: #2f8f86;
+  --lst-spk-2-soft: rgba(47, 143, 134, 0.13);
+  --lst-spk-3: #2d9f52;
+  --lst-spk-3-soft: rgba(45, 159, 82, 0.13);
+  --lst-spk-4: #b8860b;
+  --lst-spk-4-soft: rgba(184, 134, 11, 0.13);
+  --lst-spk-5: #c73e3e;
+  --lst-spk-5-soft: rgba(199, 62, 62, 0.12);
+  --lst-spk-6: #7a5cc4;
+  --lst-spk-6-soft: rgba(122, 92, 196, 0.13);
+}
+
+/* Lifted for legibility on dark long-read paper — same hue family,
+   low-glare and harmonious with the lifted ink across dark palettes. */
+[data-theme="herdr-dark"],
+[data-theme="tokyo-night"],
+[data-theme="catppuccin"],
+[data-theme="nord"],
+[data-theme="gruvbox"] {
+  --lst-spk-1: #7ab8ff;
+  --lst-spk-1-soft: rgba(122, 184, 255, 0.16);
+  --lst-spk-2: #6fcabf;
+  --lst-spk-2-soft: rgba(111, 202, 191, 0.16);
+  --lst-spk-3: #79cf94;
+  --lst-spk-3-soft: rgba(121, 207, 148, 0.16);
+  --lst-spk-4: #e6c060;
+  --lst-spk-4-soft: rgba(230, 192, 96, 0.16);
+  --lst-spk-5: #e88585;
+  --lst-spk-5-soft: rgba(232, 133, 133, 0.16);
+  --lst-spk-6: #b6a0ec;
+  --lst-spk-6-soft: rgba(182, 160, 236, 0.16);
+}
+
+/* classic keeps Listen's original cobalt-anchored speaker spread. */
+[data-theme="classic"] {
   --lst-spk-1: #1c35b8;
   --lst-spk-1-soft: rgba(28, 53, 184, 0.12);
   --lst-spk-2: #3f6f8f;
@@ -1091,21 +1312,4 @@ a {
   --lst-spk-5-soft: rgba(154, 79, 83, 0.13);
   --lst-spk-6: #5a4d96;
   --lst-spk-6-soft: rgba(90, 77, 150, 0.13);
-}
-
-/* Lifted for legibility on the dark long-read paper — same calm spread,
-   low-glare and harmonious with the lifted cobalt ink. */
-[data-theme="dark"] {
-  --lst-spk-1: #b9c4ff;
-  --lst-spk-1-soft: rgba(185, 196, 255, 0.16);
-  --lst-spk-2: #92c0dd;
-  --lst-spk-2-soft: rgba(146, 192, 221, 0.16);
-  --lst-spk-3: #79cdb4;
-  --lst-spk-3-soft: rgba(121, 205, 180, 0.16);
-  --lst-spk-4: #d6b173;
-  --lst-spk-4-soft: rgba(214, 177, 115, 0.16);
-  --lst-spk-5: #dc9a9e;
-  --lst-spk-5-soft: rgba(220, 154, 158, 0.16);
-  --lst-spk-6: #ada0e6;
-  --lst-spk-6-soft: rgba(173, 160, 230, 0.16);
 }

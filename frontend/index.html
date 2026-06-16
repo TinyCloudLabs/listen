@@ -7,23 +7,34 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
     <script>
-      // Apply saved/system theme before first paint to avoid a flash.
+      // Apply saved/system palette before first paint to avoid a flash.
+      // Must mirror lib/theme.ts (same key, attribute, palette ids, and
+      // default). Default is herdr-light; herdr-dark is the dark fallback.
       (function () {
+        var THEMES = [
+          "herdr-light",
+          "herdr-dark",
+          "tokyo-night",
+          "catppuccin",
+          "nord",
+          "gruvbox",
+          "classic",
+        ];
         try {
           var saved = localStorage.getItem("listen:theme");
           var theme =
-            saved === "light" || saved === "dark"
+            THEMES.indexOf(saved) !== -1
               ? saved
               : window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
-                ? "dark"
-                : "light";
+                ? "herdr-dark"
+                : "herdr-light";
           document.documentElement.dataset.theme = theme;
         } catch (_e) {
-          document.documentElement.dataset.theme = "light";
+          document.documentElement.dataset.theme = "herdr-light";
         }
       })();
     </script>
@@ -35,19 +46,34 @@
       }
       body {
         margin: 0;
-        background: #f2f2f4;
+        background: #f0eee9;
         -webkit-font-smoothing: antialiased;
       }
-      html[data-theme="dark"] body {
-        background: #0f1118;
+      html[data-theme="herdr-dark"] body {
+        background: #0c0c0b;
+      }
+      html[data-theme="tokyo-night"] body {
+        background: #1a1b26;
+      }
+      html[data-theme="catppuccin"] body {
+        background: #11111b;
+      }
+      html[data-theme="nord"] body {
+        background: #2e3440;
+      }
+      html[data-theme="gruvbox"] body {
+        background: #282828;
+      }
+      html[data-theme="classic"] body {
+        background: #f2f2f4;
       }
       ::selection {
-        background: rgba(28, 53, 184, 0.15);
+        background: rgba(74, 158, 255, 0.18);
       }
       input:focus {
         outline: none;
-        border-color: #1c35b8 !important;
-        box-shadow: 0 0 0 3px rgba(28, 53, 184, 0.08);
+        border-color: #4a9eff !important;
+        box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.12);
       }
       button {
         transition:
