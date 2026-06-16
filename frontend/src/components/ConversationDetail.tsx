@@ -1,6 +1,6 @@
 import { useState, useEffect, type FC } from "react";
 import type { ApiClient } from "@listen/client";
-import { TranscriptPane, type TranscriptSentence } from "./TranscriptPane";
+import { TranscriptPane, speakerColor, type TranscriptSentence } from "./TranscriptPane";
 import { NotesPane } from "./NotesPane";
 import {
   readConversationDetailCache,
@@ -325,19 +325,25 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
         <div style={s.titleMetaRow}>
           {participants.length > 0 && (
             <div style={s.avatarStack}>
-              {participants.slice(0, 5).map((p, i) => (
-                <div
-                  key={p.id}
-                  style={{
-                    ...s.avatar,
-                    marginLeft: i === 0 ? 0 : -7,
-                    zIndex: participants.length - i,
-                  }}
-                  title={p.name}
-                >
-                  {initialsFor(p.name)}
-                </div>
-              ))}
+              {participants.slice(0, 5).map((p, i) => {
+                const color = speakerColor(p.name);
+                return (
+                  <div
+                    key={p.id}
+                    style={{
+                      ...s.avatar,
+                      marginLeft: i === 0 ? 0 : -7,
+                      zIndex: participants.length - i,
+                      border: `1px solid ${color.ink}`,
+                      background: `linear-gradient(${color.soft}, ${color.soft}), var(--lst-bg)`,
+                      color: color.ink,
+                    }}
+                    title={p.name}
+                  >
+                    {initialsFor(p.name)}
+                  </div>
+                );
+              })}
             </div>
           )}
           {participants.length > 0 && (
@@ -471,13 +477,13 @@ const s: Record<string, React.CSSProperties> = {
     borderBottom: "var(--lst-border)",
   },
   title: {
-    fontFamily: FONT,
-    fontSize: 38,
+    fontFamily: "var(--lst-font-display)",
+    fontSize: "var(--lst-type-display)",
     fontWeight: 400,
     color: "var(--lst-blue)",
     margin: "0 0 8px",
     letterSpacing: "-0.015em",
-    lineHeight: 1.06,
+    lineHeight: "var(--lst-leading-tight)",
   },
   titleMetaRow: {
     display: "flex",
@@ -492,9 +498,6 @@ const s: Record<string, React.CSSProperties> = {
     width: 24,
     height: 24,
     borderRadius: "50%",
-    border: "var(--lst-border)",
-    background: "var(--lst-bg)",
-    color: "var(--lst-blue)",
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
@@ -561,7 +564,7 @@ const s: Record<string, React.CSSProperties> = {
 
   // summary pane
   summaryPane: {
-    borderRight: "var(--lst-border)",
+    borderRight: "var(--lst-hair)",
     overflow: "auto",
     padding: "20px 22px",
     minWidth: 0,
@@ -578,10 +581,10 @@ const s: Record<string, React.CSSProperties> = {
     gap: 6,
   },
   eyebrow: {
-    fontFamily: MONO,
-    fontSize: 11,
+    fontFamily: "var(--lst-font-eyebrow)",
+    fontSize: "var(--lst-type-eyebrow)",
     color: "var(--lst-ink-55)",
-    letterSpacing: "0.08em",
+    letterSpacing: "var(--lst-tracking-eyebrow)",
     textTransform: "uppercase" as const,
   },
   tinyBtn: {
@@ -601,9 +604,9 @@ const s: Record<string, React.CSSProperties> = {
   },
   summaryBody: {
     fontFamily: FONT,
-    fontSize: 14,
+    fontSize: "var(--lst-type-body)",
     color: "var(--lst-blue)",
-    lineHeight: 1.6,
+    lineHeight: "var(--lst-leading-body)",
     margin: 0,
   },
   summaryEmpty: {
