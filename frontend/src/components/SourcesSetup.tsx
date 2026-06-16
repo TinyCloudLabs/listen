@@ -937,8 +937,9 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
               : "Add a source or transcript."}
           </h3>
           <p style={s.copy}>
-            Listen can sync from providers or import a transcript directly. Provider credentials
-            stay in TinyCloud Secrets; transcript imports write straight into your inbox.
+            Listen brings your meetings and conversations into one calm, searchable place. Sync from
+            a provider or import a transcript directly. Your credentials stay private in TinyCloud
+            Secrets; imports go straight to your inbox.
           </p>
           <p style={s.secretsNote}>
             Secrets are managed through TinyCloud Secrets at{" "}
@@ -1298,7 +1299,7 @@ const s: Record<string, React.CSSProperties> = {
   },
   copy: {
     fontSize: 15,
-    lineHeight: 1.55,
+    lineHeight: "var(--lst-leading-body)",
     color: "var(--lst-blue)",
     margin: 0,
   },
@@ -1392,9 +1393,9 @@ const s: Record<string, React.CSSProperties> = {
     width: 19,
     height: 19,
     borderRadius: 999,
-    border: "1px solid var(--lst-blue)",
+    border: "1px solid var(--lst-ok)",
     display: "inline-block",
-    background: "radial-gradient(circle, var(--lst-blue) 0 3px, transparent 4px)",
+    background: "radial-gradient(circle, var(--lst-ok) 0 3px, transparent 4px)",
   },
   sourceBody: {
     minWidth: 0,
@@ -1577,9 +1578,9 @@ const s: Record<string, React.CSSProperties> = {
   btnConnected: {
     fontFamily: FONT,
     fontSize: 12,
-    color: "var(--lst-bg)",
-    background: "var(--lst-blue)",
-    border: "var(--lst-border)",
+    color: "var(--lst-ok)",
+    background: "var(--lst-ok-soft)",
+    border: "1px solid var(--lst-ok)",
     borderRadius: 999,
     padding: "7px 13px",
     whiteSpace: "nowrap" as const,
@@ -1592,8 +1593,8 @@ const s: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     gap: 12,
-    border: "var(--lst-border)",
-    background: "var(--lst-bg)",
+    border: "1px solid var(--lst-ok)",
+    background: "var(--lst-ok-soft)",
     padding: "12px 14px",
   },
   checkmark: {
@@ -1603,13 +1604,13 @@ const s: Record<string, React.CSSProperties> = {
     width: 22,
     height: 22,
     borderRadius: 999,
-    background: "var(--lst-blue)",
+    background: "var(--lst-ok)",
     color: "var(--lst-bg)",
     fontSize: 13,
     fontWeight: 700,
   },
   successTitle: {
-    color: "var(--lst-blue)",
+    color: "var(--lst-ok)",
     fontSize: 13,
     fontWeight: 600,
     margin: 0,
@@ -1621,13 +1622,13 @@ const s: Record<string, React.CSSProperties> = {
   },
   successInline: {
     fontSize: 12,
-    color: "var(--lst-blue)",
+    color: "var(--lst-ok)",
   },
   errorCard: {
     fontSize: 12,
-    color: "var(--lst-blue)",
-    border: "var(--lst-border)",
-    background: "var(--lst-bg)",
+    color: "var(--lst-alert)",
+    border: "1px solid var(--lst-alert)",
+    background: "var(--lst-alert-soft)",
     padding: "10px 12px",
     lineHeight: 1.4,
   },
