@@ -1401,10 +1401,29 @@ export function App() {
                         ? "Everything you've said."
                         : "Connect what you already have.";
 
+  // Nav source dots reflect real connection health only. There's no
+  // per-source syncing or error flag at this level, so we set "connected"
+  // for sources that are actually connected and leave the rest undefined
+  // (neutral blue) rather than fabricate a state.
   const sourceItems: ShellSourceConfig[] = [
-    { key: "fireflies", name: "Fireflies", count: null },
-    { key: "granola", name: "Granola", count: null },
-    { key: "gmeet", name: "Google Meet", count: null },
+    {
+      key: "fireflies",
+      name: "Fireflies",
+      count: null,
+      status: firefliesConnected ? "connected" : undefined,
+    },
+    {
+      key: "granola",
+      name: "Granola",
+      count: null,
+      status: granolaConnected ? "connected" : undefined,
+    },
+    {
+      key: "gmeet",
+      name: "Google Meet",
+      count: null,
+      status: hasGoogleMeet === true ? "connected" : undefined,
+    },
   ];
 
   const userInitials = address ? `${address.slice(2, 3)}${address.slice(-1)}`.toUpperCase() : "??";

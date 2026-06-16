@@ -8,6 +8,7 @@
   --lst-ink-70: rgba(28, 53, 184, 0.7);
   --lst-ink-55: rgba(28, 53, 184, 0.55);
   --lst-ink-35: rgba(28, 53, 184, 0.35);
+  --lst-ink-20: rgba(28, 53, 184, 0.2);
   --lst-ink-15: rgba(28, 53, 184, 0.15);
   --lst-ink-08: rgba(28, 53, 184, 0.08);
   --lst-border: 1px solid var(--lst-blue);
@@ -61,6 +62,7 @@
   --lst-ink-70: rgba(208, 215, 255, 0.78);
   --lst-ink-55: rgba(208, 215, 255, 0.58);
   --lst-ink-35: rgba(208, 215, 255, 0.36);
+  --lst-ink-20: rgba(185, 196, 255, 0.2);
   --lst-ink-15: rgba(185, 196, 255, 0.16);
   --lst-ink-08: rgba(185, 196, 255, 0.09);
 
