@@ -7,10 +7,15 @@ export type ShellRoute = "inbox" | "chat" | "connections" | "sources";
 
 export type ShellSourceKey = "fireflies" | "granola" | "gmeet";
 
+export type ShellSourceStatus = "connected" | "syncing" | "error";
+
 export interface ShellSourceConfig {
   key: ShellSourceKey;
   name: string;
   count: number | null;
+  // Connection health. Drives the source-row dot color (state-only).
+  // When absent, the dot falls back to the calm flat brand blue.
+  status?: ShellSourceStatus;
 }
 
 export interface ShellFolderConfig {
@@ -122,6 +127,21 @@ const NAV_ITEMS: NavItem[] = [
   { key: "chat", label: "Chat", icon: "sparkle" },
 ];
 
+// ── Source health ───────────────────────────────────────────────────
+
+// Connection health → dot color. Color is reserved for state only;
+// an unknown/absent status keeps the calm flat brand blue.
+const SOURCE_STATUS_COLOR: Record<ShellSourceStatus, string> = {
+  connected: "var(--lst-ok)",
+  syncing: "var(--lst-warn)",
+  error: "var(--lst-alert)",
+};
+
+function sourceDotStyle(status?: ShellSourceStatus): CSSProperties {
+  if (!status) return shell.sourceDot;
+  return { ...shell.sourceDot, background: SOURCE_STATUS_COLOR[status] };
+}
+
 // ── AppShell ────────────────────────────────────────────────────────
 
 export const AppShell: FC<AppShellProps> = ({
@@ -138,7 +158,16 @@ export const AppShell: FC<AppShellProps> = ({
   children,
 }) => {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
+
+  // Subtle hover tint for inactive rows. Color stays monochrome — only a
+  // faint ink wash signals interactivity; active rows keep their fill.
+  const hoverProps = (key: string, base: CSSProperties, active = false) => ({
+    onMouseEnter: () => setHoveredKey(key),
+    onMouseLeave: () => setHoveredKey((current) => (current === key ? null : current)),
+    style: !active && hoveredKey === key ? { ...base, background: "var(--lst-ink-08)" } : base,
+  });
 
   useEffect(() => {
     if (!userMenuOpen) return;
@@ -209,7 +238,11 @@ export const AppShell: FC<AppShellProps> = ({
                 key={item.key}
                 type="button"
                 onClick={() => onRouteChange(item.key)}
-                style={isActive ? shell.navRowActive : shell.navRow}
+                {...hoverProps(
+                  `nav:${item.key}`,
+                  isActive ? shell.navRowActive : shell.navRow,
+                  isActive,
+                )}
               >
                 <ShellIcon name={item.icon} size={14} />
                 <span style={shell.navLabel}>{item.label}</span>
@@ -233,7 +266,7 @@ export const AppShell: FC<AppShellProps> = ({
                   key={folder.name}
                   type="button"
                   onClick={() => onRouteChange("inbox")}
-                  style={shell.sideRow}
+                  {...hoverProps(`folder:${folder.name}`, shell.sideRow)}
                 >
                   <ShellIcon name="folder" size={13} />
                   <span style={shell.sideRowLabel}>{folder.name}</span>
@@ -254,9 +287,9 @@ export const AppShell: FC<AppShellProps> = ({
               key={source.key}
               type="button"
               onClick={() => onRouteChange("connections")}
-              style={shell.sideRow}
+              {...hoverProps(`source:${source.key}`, shell.sideRow)}
             >
-              <span style={shell.sourceDot} />
+              <span style={sourceDotStyle(source.status)} aria-hidden />
               <span style={shell.sideRowLabel}>{source.name}</span>
               {source.count !== null && <span style={shell.sideRowCount}>{source.count}</span>}
             </button>
@@ -322,12 +355,12 @@ const shell: Record<string, CSSProperties> = {
     gap: 10,
   },
   brandWord: {
-    fontFamily: FONT,
+    fontFamily: "var(--lst-font-display)",
     fontSize: 22,
     fontWeight: 400,
     letterSpacing: -0.4,
     color: "var(--lst-blue)",
-    lineHeight: 1,
+    lineHeight: "var(--lst-leading-tight)",
   },
   iconBtn: {
     fontFamily: FONT,
@@ -556,19 +589,19 @@ const shell: Record<string, CSSProperties> = {
   },
   eyebrow: {
     display: "block",
-    fontFamily: MONO,
-    fontSize: 11,
+    fontFamily: "var(--lst-font-eyebrow)",
+    fontSize: "var(--lst-type-eyebrow)",
     color: "var(--lst-ink-55)",
-    letterSpacing: "0.08em",
+    letterSpacing: "var(--lst-tracking-eyebrow)",
     textTransform: "uppercase",
     marginBottom: 7,
   },
   pageTitle: {
-    fontFamily: FONT,
-    fontSize: 38,
+    fontFamily: "var(--lst-font-display)",
+    fontSize: "var(--lst-type-display)",
     fontWeight: 400,
     letterSpacing: 0,
-    lineHeight: 1.06,
+    lineHeight: "var(--lst-leading-tight)",
     margin: 0,
     color: "var(--lst-blue)",
   },
