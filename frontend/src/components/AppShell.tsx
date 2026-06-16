@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type FC, type ReactNode } from "react";
+import { ThemeToggle } from "./ThemeToggle";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -262,6 +263,10 @@ export const AppShell: FC<AppShellProps> = ({
           ))}
         </div>
 
+        <div style={shell.themeRow}>
+          <ThemeToggle />
+        </div>
+
         <div style={shell.userFooterWrap} ref={userMenuRef}>
           {userMenu && userMenuOpen && <div style={shell.userMenu}>{userMenu}</div>}
           <button
@@ -474,8 +479,12 @@ const shell: Record<string, CSSProperties> = {
     display: "inline-block",
     flexShrink: 0,
   },
-  userFooterWrap: {
+  themeRow: {
     marginTop: "auto",
+    padding: "10px 14px",
+    borderTop: "var(--lst-border)",
+  },
+  userFooterWrap: {
     position: "relative",
     borderTop: "var(--lst-border)",
   },

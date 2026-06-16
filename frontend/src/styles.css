@@ -14,6 +14,80 @@
   --lst-hair: 1px solid var(--lst-rule-soft);
   --lst-font: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
   --lst-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* ── Semantic status palette ──────────────────────────────────────
+     Reserved STRICTLY for conveying state (sync health, errors,
+     confirmations). Do NOT use these for decoration, branding, or
+     emphasis — that is the cobalt blue's job. Each status has a strong
+     value (text/icons/dots) plus a soft tint (backgrounds/wash). Tuned
+     muted, not neon, so they sit calmly beside --lst-blue. */
+  --lst-ok: #2f7d5b;
+  --lst-ok-soft: rgba(47, 125, 91, 0.12);
+  --lst-warn: #9a6a16;
+  --lst-warn-soft: rgba(154, 106, 22, 0.13);
+  --lst-alert: #b23b3b;
+  --lst-alert-soft: rgba(178, 59, 59, 0.12);
+
+  /* ── Editorial type scale ─────────────────────────────────────────
+     Shared sizing so Phase-2 surfaces stay consistent. Inter for
+     display/title/body, JetBrains Mono only for small eyebrows/meta. */
+  --lst-type-display: 38px;
+  --lst-type-title: 28px;
+  --lst-type-heading: 18px;
+  --lst-type-body: 14px;
+  --lst-type-meta: 12px;
+  --lst-type-eyebrow: 11px;
+  --lst-leading-tight: 1.06;
+  --lst-leading-snug: 1.25;
+  --lst-leading-body: 1.55;
+  --lst-tracking-eyebrow: 0.08em;
+  --lst-font-display: var(--lst-font);
+  --lst-font-eyebrow: var(--lst-mono);
+}
+
+/* ── Dark theme ─────────────────────────────────────────────────────
+   Calm, low-glare long-read surface. Dark paper with light
+   cobalt-tinted ink; status colors lifted for legibility on dark.
+   Light remains the default — this block only applies under
+   [data-theme="dark"]. Also re-maps the --landing-* set so the
+   signed-out landing page reads correctly in dark. */
+[data-theme="dark"] {
+  --lst-blue: #b9c4ff;
+  --lst-bg: #0f1118;
+  --lst-bg-2: #161925;
+  --lst-bg-3: #1d2130;
+  --lst-rule: #b9c4ff;
+  --lst-rule-soft: rgba(185, 196, 255, 0.2);
+  --lst-ink-70: rgba(208, 215, 255, 0.78);
+  --lst-ink-55: rgba(208, 215, 255, 0.58);
+  --lst-ink-35: rgba(208, 215, 255, 0.36);
+  --lst-ink-15: rgba(185, 196, 255, 0.16);
+  --lst-ink-08: rgba(185, 196, 255, 0.09);
+
+  --lst-ok: #5fcf97;
+  --lst-ok-soft: rgba(95, 207, 151, 0.16);
+  --lst-warn: #e0b35f;
+  --lst-warn-soft: rgba(224, 179, 95, 0.16);
+  --lst-alert: #e88585;
+  --lst-alert-soft: rgba(232, 133, 133, 0.16);
+}
+
+[data-theme="dark"] .landing-page {
+  --landing-blue: #b9c4ff;
+  --landing-bg: #0f1118;
+  --landing-bg-2: #161925;
+  --landing-rule-soft: rgba(185, 196, 255, 0.2);
+  --landing-ink-70: rgba(208, 215, 255, 0.78);
+  --landing-ink-55: rgba(208, 215, 255, 0.58);
+  --landing-ink-08: rgba(185, 196, 255, 0.08);
+}
+
+/* Noise overlay reads as a dark grain in dark mode instead of the
+   light multiply wash. */
+[data-theme="dark"] .landing-noise::after,
+[data-theme="dark"] .listen-shell::after {
+  mix-blend-mode: screen;
+  opacity: 0.06;
 }
 
 html,
