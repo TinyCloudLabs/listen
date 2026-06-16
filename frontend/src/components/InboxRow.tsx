@@ -1,4 +1,4 @@
-import type { FC, MouseEvent } from "react";
+import { useState, type FC, type MouseEvent } from "react";
 
 export interface InboxRowConversation {
   id: string;
@@ -66,12 +66,19 @@ export const InboxRow: FC<InboxRowProps> = ({
   const sourceLabel = SOURCE_LABEL[c.source] ?? c.source.toUpperCase();
   const avatarCount = Math.min(c.participant_count, 3);
   const extra = c.participant_count - avatarCount;
+  const [hovered, setHovered] = useState(false);
 
   return (
     <div
-      style={{ ...s.row, ...(selected ? s.rowSelected : {}) }}
+      style={{
+        ...s.row,
+        ...(hovered && !selected ? s.rowHover : {}),
+        ...(selected ? s.rowSelected : {}),
+      }}
       onClick={() => onOpen(c.id)}
       onContextMenu={(e) => onContextMenu(e, c.id)}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
       <input
         type="checkbox"
@@ -96,8 +103,8 @@ export const InboxRow: FC<InboxRowProps> = ({
         {extra > 0 && <span style={s.peopleExtra}>+{extra}</span>}
       </div>
       <span style={s.duration}>{formatDuration(c.duration_secs)}</span>
-      <span style={s.sum} aria-label={c.summary ? "Has summary" : "No summary"}>
-        {c.summary ? "✓" : "—"}
+      <span style={s.sumCell} aria-label={c.summary ? "Has summary" : "No summary"}>
+        <span style={{ ...s.sumDot, ...(c.summary ? s.sumDotOk : s.sumDotMuted) }} />
       </span>
       <button
         type="button"
@@ -132,9 +139,14 @@ const s: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     background: "transparent",
     fontFamily: FONT,
+    transition: "background 120ms ease, box-shadow 120ms ease",
+  },
+  rowHover: {
+    background: "var(--lst-ink-08)",
   },
   rowSelected: {
-    background: "var(--lst-ink-08)",
+    background: "var(--lst-ink-15)",
+    boxShadow: "inset 2px 0 0 var(--lst-blue)",
   },
   checkbox: {
     accentColor: "var(--lst-blue)",
@@ -192,10 +204,23 @@ const s: Record<string, React.CSSProperties> = {
     color: "var(--lst-ink-70)",
     textAlign: "right",
   },
-  sum: {
-    textAlign: "center",
-    color: "var(--lst-ink-70)",
-    fontSize: 13,
+  sumCell: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sumDot: {
+    width: 7,
+    height: 7,
+    borderRadius: "50%",
+  },
+  sumDotOk: {
+    background: "var(--lst-ok)",
+    boxShadow: "0 0 0 3px var(--lst-ok-soft)",
+  },
+  sumDotMuted: {
+    background: "transparent",
+    border: "1px solid var(--lst-ink-35)",
   },
   kebab: {
     width: 26,

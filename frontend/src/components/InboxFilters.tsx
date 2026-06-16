@@ -29,6 +29,18 @@ export const SOURCE_CHIPS: Array<{ key: SourceFilter; label: string }> = [
   { key: "voxterm", label: "VoxTerm" },
 ];
 
+// Calm per-source accent hues so sources are distinguishable at a glance.
+// Muted, editorial — never neon. Reused for both light and dark via opacity.
+const SOURCE_ACCENT: Record<string, string> = {
+  fireflies: "#c2603a",
+  granola: "#7a8a2f",
+  "google-meet": "#3a72c2",
+  manual: "#7d6aa6",
+  recorder: "#3a9aa0",
+  voice_memos: "#b0853a",
+  voxterm: "#5b7a52",
+};
+
 export const InboxFilters: FC<InboxFiltersProps> = ({
   total,
   sourceFilter,
@@ -45,13 +57,28 @@ export const InboxFilters: FC<InboxFiltersProps> = ({
     <div style={s.wrap}>
       {chips.map((chip) => {
         const isActive = chip.key === sourceFilter;
+        const accent = SOURCE_ACCENT[chip.key];
+        const chipStyle: React.CSSProperties = {
+          ...s.chip,
+          ...(accent ? { paddingLeft: 8 } : {}),
+          ...(isActive ? s.chipActive : {}),
+          ...(accent && isActive
+            ? { border: `1px solid ${accent}`, background: `${accent}1f`, color: "var(--lst-blue)" }
+            : {}),
+        };
         return (
           <button
             key={chip.key}
             type="button"
-            style={{ ...s.chip, ...(isActive ? s.chipActive : {}) }}
+            style={chipStyle}
             onClick={() => onSourceFilterChange(chip.key)}
           >
+            {accent && (
+              <span
+                aria-hidden
+                style={{ ...s.accentDot, background: accent, opacity: isActive ? 1 : 0.7 }}
+              />
+            )}
             {chip.label}
           </button>
         );
@@ -77,6 +104,9 @@ const s: Record<string, React.CSSProperties> = {
     borderBottom: "var(--lst-border)",
   },
   chip: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
     fontFamily: FONT,
     fontSize: 11.5,
     fontWeight: 500,
@@ -91,6 +121,12 @@ const s: Record<string, React.CSSProperties> = {
     color: "var(--lst-bg)",
     background: "var(--lst-blue)",
     borderColor: "var(--lst-blue)",
+  },
+  accentDot: {
+    width: 6,
+    height: 6,
+    borderRadius: "50%",
+    flexShrink: 0,
   },
   spacer: { marginLeft: "auto" },
   showing: {
