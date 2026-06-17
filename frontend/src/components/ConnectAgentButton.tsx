@@ -100,7 +100,7 @@ export const ConnectAgentButton: FC<ConnectAgentButtonProps> = ({
     <section style={s.card}>
       <div style={s.header}>
         <div>
-          <span style={s.sectionLabel}>Agent</span>
+          <span style={s.sectionLabel}>· agent</span>
           <p style={s.description}>
             {isConnected
               ? "An agent with access to your conversations is connected."
@@ -239,8 +239,8 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: 10,
     fontWeight: 500,
     color: "var(--lst-ink-55)",
-    textTransform: "uppercase" as const,
-    letterSpacing: "0.08em",
+    textTransform: "lowercase" as const,
+    letterSpacing: "0.06em",
   },
   description: {
     fontSize: 13,

@@ -258,7 +258,7 @@ export const AppShell: FC<AppShellProps> = ({
           <>
             {/* Folders */}
             <div style={shell.sectionHeading}>
-              <span style={shell.sectionDash}>— folders</span>
+              <span style={shell.sectionDash}>· folders</span>
             </div>
             <div>
               {folders.map((folder) => (
@@ -279,7 +279,7 @@ export const AppShell: FC<AppShellProps> = ({
 
         {/* Sources */}
         <div style={shell.sectionHeading}>
-          <span style={shell.sectionDash}>— sources</span>
+          <span style={shell.sectionDash}>· sources</span>
         </div>
         <div>
           {sources.map((source) => (
@@ -322,7 +322,7 @@ export const AppShell: FC<AppShellProps> = ({
       <main className="listen-main">
         <header style={shell.topbar}>
           <div>
-            <span style={shell.eyebrow}>— {pageEyebrow}</span>
+            <span style={shell.eyebrow}>· {pageEyebrow}</span>
             <h2 style={shell.pageTitle}>{pageTitle}</h2>
           </div>
           {topbarActions && <div style={shell.topbarActions}>{topbarActions}</div>}
@@ -477,8 +477,8 @@ const shell: Record<string, CSSProperties> = {
     fontFamily: MONO,
     opacity: 0.55,
     fontSize: 10,
-    letterSpacing: "0.08em",
-    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+    textTransform: "lowercase",
     color: "var(--lst-blue)",
   },
   sideRow: {
@@ -541,7 +541,7 @@ const shell: Record<string, CSSProperties> = {
     bottom: "calc(100% + 8px)",
     border: "var(--lst-border)",
     background: "var(--lst-bg)",
-    boxShadow: "0 18px 50px rgba(28, 53, 184, 0.16)",
+    boxShadow: "0 18px 50px var(--lst-ink-15)",
     maxHeight: "62vh",
     overflowY: "auto",
     zIndex: 5,
@@ -575,8 +575,8 @@ const shell: Record<string, CSSProperties> = {
     fontFamily: MONO,
     opacity: 0.55,
     fontSize: 10,
-    letterSpacing: "0.08em",
-    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+    textTransform: "lowercase",
   },
   topbar: {
     padding: "20px 32px 16px",
@@ -592,15 +592,15 @@ const shell: Record<string, CSSProperties> = {
     fontFamily: "var(--lst-font-eyebrow)",
     fontSize: "var(--lst-type-eyebrow)",
     color: "var(--lst-ink-55)",
-    letterSpacing: "var(--lst-tracking-eyebrow)",
-    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+    textTransform: "lowercase",
     marginBottom: 7,
   },
   pageTitle: {
     fontFamily: "var(--lst-font-display)",
     fontSize: "var(--lst-type-display)",
     fontWeight: 400,
-    letterSpacing: 0,
+    letterSpacing: "var(--lst-tracking-display)",
     lineHeight: "var(--lst-leading-tight)",
     margin: 0,
     color: "var(--lst-blue)",

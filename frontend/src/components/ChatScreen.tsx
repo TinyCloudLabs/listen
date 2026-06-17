@@ -303,7 +303,7 @@ export const ChatScreen: FC<ChatScreenProps> = ({ api, refreshKey, onOpenConvers
   return (
     <section style={s.shell}>
       <div style={s.header}>
-        <span style={s.eyebrow}>— transcript search</span>
+        <span style={s.eyebrow}>· transcript search</span>
         <h2 style={s.title}>Chat</h2>
         <p style={s.lede}>
           Searches {conversations.length} synced transcript{conversations.length === 1 ? "" : "s"}.
@@ -403,12 +403,14 @@ const s: Record<string, React.CSSProperties> = {
     fontFamily: MONO,
     fontSize: 11,
     color: "var(--lst-ink-55)",
-    letterSpacing: "0.08em",
-    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+    textTransform: "lowercase",
   },
   title: {
     margin: "6px 0 4px",
+    fontFamily: "var(--lst-font-display)",
     fontSize: "var(--lst-type-display)",
+    letterSpacing: "var(--lst-tracking-display)",
     lineHeight: "var(--lst-leading-tight)",
     fontWeight: 400,
     color: "var(--lst-blue)",

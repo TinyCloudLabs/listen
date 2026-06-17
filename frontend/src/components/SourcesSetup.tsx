@@ -930,7 +930,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
     <section style={s.shell}>
       <div style={s.leftPane}>
         <div style={s.leftContent}>
-          <span style={s.eyebrow}>- {mode === "onboarding" ? "welcome to listen" : "sources"}</span>
+          <span style={s.eyebrow}>· {mode === "onboarding" ? "welcome to listen" : "sources"}</span>
           <h3 style={s.title}>
             {mode === "onboarding"
               ? "Connect what you already have."
@@ -974,7 +974,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
 
       <div style={s.rightPane}>
         <div style={s.sourcesHeader}>
-          <span style={s.fieldLabel}>- add source or transcript</span>
+          <span style={s.fieldLabel}>· add source or transcript</span>
           <span style={s.fieldLabel}>
             {connectedCount} provider{connectedCount === 1 ? "" : "s"} connected
           </span>
@@ -1154,7 +1154,7 @@ function SourceCard({
       <div style={s.sourceBody}>
         <div style={s.sourceTitleRow}>
           <strong style={s.sourceTitle}>{title}</strong>
-          <span style={s.sourceMeta}>- {meta}</span>
+          <span style={s.sourceMeta}>· {meta}</span>
         </div>
         <p style={s.sourceDesc}>{description}</p>
         <span style={s.sourceDetail}>{detail}</span>
@@ -1286,8 +1286,8 @@ const s: Record<string, React.CSSProperties> = {
     fontFamily: MONO,
     fontSize: 10,
     color: "var(--lst-ink-55)",
-    letterSpacing: "0.08em",
-    textTransform: "uppercase" as const,
+    letterSpacing: "0.06em",
+    textTransform: "lowercase" as const,
   },
   title: {
     fontSize: 42,
@@ -1337,8 +1337,8 @@ const s: Record<string, React.CSSProperties> = {
     fontFamily: MONO,
     fontSize: 10,
     color: "var(--lst-ink-55)",
-    letterSpacing: "0.08em",
-    textTransform: "uppercase" as const,
+    letterSpacing: "0.06em",
+    textTransform: "lowercase" as const,
   },
   progressDots: {
     display: "inline-flex",
@@ -1415,8 +1415,8 @@ const s: Record<string, React.CSSProperties> = {
     fontFamily: MONO,
     fontSize: 9,
     color: "var(--lst-ink-55)",
-    letterSpacing: "0.08em",
-    textTransform: "uppercase" as const,
+    letterSpacing: "0.06em",
+    textTransform: "lowercase" as const,
   },
   sourceDesc: {
     color: "var(--lst-ink-70)",
@@ -1428,8 +1428,8 @@ const s: Record<string, React.CSSProperties> = {
     fontFamily: MONO,
     fontSize: 9,
     color: "var(--lst-ink-55)",
-    letterSpacing: "0.08em",
-    textTransform: "uppercase" as const,
+    letterSpacing: "0.06em",
+    textTransform: "lowercase" as const,
   },
   detailPanel: {
     marginTop: 12,
@@ -1449,8 +1449,8 @@ const s: Record<string, React.CSSProperties> = {
     fontFamily: MONO,
     fontSize: 10,
     color: "var(--lst-ink-55)",
-    letterSpacing: "0.08em",
-    textTransform: "uppercase" as const,
+    letterSpacing: "0.06em",
+    textTransform: "lowercase" as const,
   },
   input: {
     fontFamily: FONT,
