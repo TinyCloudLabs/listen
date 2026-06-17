@@ -1,48 +1,64 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, fireEvent, within } from "@testing-library/react";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { ThemeToggle } from "../ThemeToggle";
+
+function mockPrefersDark(dark: boolean) {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: dark,
+    media: query,
+    onchange: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => false,
+  }));
+}
 
 describe("ThemeToggle", () => {
   beforeEach(() => {
     localStorage.clear();
     delete document.documentElement.dataset.theme;
+    mockPrefersDark(false);
   });
 
   afterEach(() => {
     cleanup();
     localStorage.clear();
     delete document.documentElement.dataset.theme;
+    vi.unstubAllGlobals();
   });
 
-  it("defaults to herdr-light and applies it on mount", () => {
+  it("defaults to light (no data-theme) when the system prefers light", () => {
     render(<ThemeToggle />);
-    expect(document.documentElement.dataset.theme).toBe("herdr-light");
-    expect(screen.getByRole("button", { name: /choose theme/i })).toBeInTheDocument();
+    expect(document.documentElement.dataset.theme).toBeUndefined();
+    expect(screen.getByRole("button", { name: /switch to dark theme/i })).toBeInTheDocument();
   });
 
-  it("opens the palette menu and selecting a palette applies and persists it", () => {
+  it("follows the system preference for dark", () => {
+    mockPrefersDark(true);
     render(<ThemeToggle />);
-
-    fireEvent.click(screen.getByRole("button", { name: /choose theme/i }));
-
-    const menu = screen.getByRole("menu", { name: /theme/i });
-    const nord = within(menu).getByRole("menuitemradio", { name: /nord/i });
-    fireEvent.click(nord);
-
-    expect(document.documentElement.dataset.theme).toBe("nord");
-    expect(localStorage.getItem("listen:theme")).toBe("nord");
-    // Menu closes after selection.
-    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(screen.getByRole("button", { name: /switch to light theme/i })).toBeInTheDocument();
   });
 
-  it("reads a persisted palette on mount and marks it selected", () => {
-    localStorage.setItem("listen:theme", "tokyo-night");
+  it("toggles light↔dark and persists the choice", () => {
+    render(<ThemeToggle />);
+
+    fireEvent.click(screen.getByRole("button", { name: /switch to dark theme/i }));
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(localStorage.getItem("listen:theme")).toBe("dark");
+
+    fireEvent.click(screen.getByRole("button", { name: /switch to light theme/i }));
+    expect(document.documentElement.dataset.theme).toBeUndefined();
+    expect(localStorage.getItem("listen:theme")).toBe("light");
+  });
+
+  it("reads a persisted theme on mount", () => {
+    localStorage.setItem("listen:theme", "dark");
 
     render(<ThemeToggle />);
-    expect(document.documentElement.dataset.theme).toBe("tokyo-night");
-
-    fireEvent.click(screen.getByRole("button", { name: /choose theme/i }));
-    const selected = screen.getByRole("menuitemradio", { name: /tokyo night/i });
-    expect(selected).toHaveAttribute("aria-checked", "true");
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(screen.getByRole("button", { name: /switch to light theme/i })).toBeInTheDocument();
   });
 });

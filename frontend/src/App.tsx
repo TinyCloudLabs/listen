@@ -122,7 +122,7 @@ function localConversationEventPathPrefix(): string | null {
   return CONVERSATION_HOOK_PATH_PREFIX;
 }
 
-// Herdr-style display headlines render in JetBrains Mono (--lst-font-display)
+// Display headlines render in JetBrains Mono (--lst-font-display)
 // with weight 400, tight tracking, and tight leading. Eyebrows/kickers are
 // lowercase mono with a small leading status dot.
 const landingDisplayHeadline: React.CSSProperties = {
