@@ -1,29 +1,37 @@
 import { useCallback, useEffect, useState } from "react";
 
 // ── Theme runtime ───────────────────────────────────────────────────
-// Listen has a binary light/dark theme. Each theme only overrides the
-// --lst-* token values (see styles.css); components inherit. Light is
-// the default (:root, no data-theme); dark sets data-theme="dark". The
-// choice is stored in localStorage and applied via
-// document.documentElement.dataset.theme. With no saved choice the theme
-// follows prefers-color-scheme.
+// Listen has two visual themes — light (the default :root tokens) and
+// dark (tokyo-night, data-theme="dark"). The user picks a *preference*:
+// "system" follows prefers-color-scheme, while "light"/"dark" pin a
+// theme regardless of the OS. The literal preference is stored in
+// localStorage; an absent value means "system". The resolved theme is
+// applied via document.documentElement.dataset.theme.
 
 export type Theme = "light" | "dark";
+export type ThemePreference = "system" | "light" | "dark";
 
 const STORAGE_KEY = "listen:theme";
 
-function isTheme(value: string | null | undefined): value is Theme {
-  return value === "light" || value === "dark";
+// Click order for the toggle.
+const CYCLE: ThemePreference[] = ["system", "light", "dark"];
+
+function isPreference(value: string | null | undefined): value is ThemePreference {
+  return value === "system" || value === "light" || value === "dark";
 }
 
-function systemTheme(): Theme {
-  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+function prefersDark(): boolean {
+  return !!window.matchMedia?.("(prefers-color-scheme: dark)").matches;
 }
 
-export function resolveInitialTheme(): Theme {
+export function resolveInitialPreference(): ThemePreference {
   const saved = localStorage.getItem(STORAGE_KEY);
-  if (isTheme(saved)) return saved;
-  return systemTheme();
+  return isPreference(saved) ? saved : "system";
+}
+
+export function resolveTheme(preference: ThemePreference): Theme {
+  if (preference === "system") return prefersDark() ? "dark" : "light";
+  return preference;
 }
 
 export function applyTheme(theme: Theme) {
@@ -34,35 +42,38 @@ export function applyTheme(theme: Theme) {
   }
 }
 
+export function nextPreference(preference: ThemePreference): ThemePreference {
+  const i = CYCLE.indexOf(preference);
+  return CYCLE[(i + 1) % CYCLE.length];
+}
+
 export function useTheme(): {
+  preference: ThemePreference;
   theme: Theme;
-  setTheme: (next: Theme) => void;
-  toggleTheme: () => void;
+  cyclePreference: () => void;
 } {
-  const [theme, setThemeState] = useState<Theme>(() => {
-    const current = document.documentElement.dataset.theme;
-    return current === "dark" ? "dark" : resolveInitialTheme();
-  });
+  const [preference, setPreference] = useState<ThemePreference>(resolveInitialPreference);
 
+  // Apply the resolved theme whenever the preference changes, and — while
+  // following the system — keep applying as the OS preference changes.
   useEffect(() => {
-    applyTheme(theme);
-  }, [theme]);
+    applyTheme(resolveTheme(preference));
 
-  const setTheme = useCallback((next: Theme) => {
-    setThemeState((prev) => {
-      if (prev === next) return prev;
+    if (preference !== "system" || !window.matchMedia) return;
+
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => applyTheme(resolveTheme("system"));
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, [preference]);
+
+  const cyclePreference = useCallback(() => {
+    setPreference((prev) => {
+      const next = nextPreference(prev);
       localStorage.setItem(STORAGE_KEY, next);
       return next;
     });
   }, []);
 
-  const toggleTheme = useCallback(() => {
-    setThemeState((prev) => {
-      const next = prev === "dark" ? "light" : "dark";
-      localStorage.setItem(STORAGE_KEY, next);
-      return next;
-    });
-  }, []);
-
-  return { theme, setTheme, toggleTheme };
+  return { preference, theme: resolveTheme(preference), cyclePreference };
 }

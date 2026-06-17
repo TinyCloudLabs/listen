@@ -12,15 +12,17 @@
     />
     <script>
       // Apply saved/system theme before first paint to avoid a flash.
-      // Must mirror lib/theme.ts (same key, attribute, default). Light is
-      // the default (no data-theme); dark sets data-theme="dark". With no
-      // saved choice we follow prefers-color-scheme.
+      // Must mirror lib/theme.ts (same key, attribute, default). The saved
+      // value is the literal preference: "system" | "light" | "dark"
+      // (absent = system). Light is the default (no data-theme); dark sets
+      // data-theme="dark"; system follows prefers-color-scheme.
       (function () {
         try {
           var saved = localStorage.getItem("listen:theme");
+          var system = saved !== "light" && saved !== "dark";
           var dark =
             saved === "dark" ||
-            (saved !== "light" &&
+            (system &&
               window.matchMedia &&
               window.matchMedia("(prefers-color-scheme: dark)").matches);
           if (dark) document.documentElement.dataset.theme = "dark";

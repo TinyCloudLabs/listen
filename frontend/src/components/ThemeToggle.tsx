@@ -1,12 +1,32 @@
 import { type CSSProperties, type FC } from "react";
-import { useTheme } from "../lib/theme";
+import { useTheme, type ThemePreference } from "../lib/theme";
 
 // ── ThemeToggle ─────────────────────────────────────────────────────
-// Light/dark toggle for the AppShell sidebar footer. Follows the system
-// preference by default; clicking flips light↔dark and persists it. The
-// icon shows the theme you'd switch TO (moon while light, sun while dark).
+// Tri-state theme cycler for the AppShell sidebar footer. Defaults to
+// "System" (follows the OS); clicking cycles System → Light → Dark and
+// persists the choice. The button shows the CURRENT preference: a
+// monitor for System, a sun for Light, a moon for Dark.
 
 const FONT = "var(--lst-font)";
+
+function MonitorIcon() {
+  return (
+    <svg
+      width={14}
+      height={14}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <rect x="2" y="3" width="20" height="14" rx="2" />
+      <path d="M8 21h8M12 17v4" />
+    </svg>
+  );
+}
 
 function SunIcon() {
   return (
@@ -45,21 +65,32 @@ function MoonIcon() {
   );
 }
 
+const LABELS: Record<ThemePreference, string> = {
+  system: "System",
+  light: "Light",
+  dark: "Dark",
+};
+
+function PreferenceIcon({ preference }: { preference: ThemePreference }) {
+  if (preference === "system") return <MonitorIcon />;
+  if (preference === "light") return <SunIcon />;
+  return <MoonIcon />;
+}
+
 export const ThemeToggle: FC = () => {
-  const { theme, toggleTheme } = useTheme();
-  const isDark = theme === "dark";
-  const nextLabel = isDark ? "Light" : "Dark";
+  const { preference, cyclePreference } = useTheme();
+  const label = LABELS[preference];
 
   return (
     <button
       type="button"
       style={styles.button}
-      onClick={toggleTheme}
-      aria-label={`Switch to ${nextLabel.toLowerCase()} theme`}
-      title={`Switch to ${nextLabel.toLowerCase()} theme`}
+      onClick={cyclePreference}
+      aria-label={`Theme: ${label.toLowerCase()}`}
+      title={`Theme: ${label.toLowerCase()}`}
     >
-      {isDark ? <SunIcon /> : <MoonIcon />}
-      <span style={styles.label}>{nextLabel}</span>
+      <PreferenceIcon preference={preference} />
+      <span style={styles.label}>{label}</span>
     </button>
   );
 };
