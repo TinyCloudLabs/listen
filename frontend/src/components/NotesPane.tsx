@@ -61,7 +61,7 @@ export const NotesPane: FC<NotesPaneProps> = ({ conversationId }) => {
   return (
     <aside style={s.pane}>
       <div style={s.head}>
-        <span style={s.eyebrow}>— notes · {notes.length}</span>
+        <span style={s.eyebrow}>· notes · {notes.length}</span>
         <button style={s.iconBtn} onClick={() => setDrafting(true)} aria-label="Add note">
           +
         </button>
@@ -128,8 +128,8 @@ const s: Record<string, React.CSSProperties> = {
     fontFamily: "var(--lst-font-eyebrow)",
     fontSize: "var(--lst-type-eyebrow)",
     color: "var(--lst-ink-55)",
-    letterSpacing: "var(--lst-tracking-eyebrow)",
-    textTransform: "uppercase" as const,
+    letterSpacing: "0.06em",
+    textTransform: "lowercase" as const,
   },
   iconBtn: {
     marginLeft: "auto",

@@ -373,7 +373,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
         {/* Summary pane */}
         <aside style={s.summaryPane}>
           <div style={s.summaryHead}>
-            <span style={s.eyebrow}>— summary</span>
+            <span style={s.eyebrow}>· summary</span>
             <span style={s.summaryActions}>
               <button
                 style={{ ...s.tinyBtn, ...(!conversation.summary ? s.tinyBtnDisabled : {}) }}
@@ -515,7 +515,7 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: 11,
     color: "var(--lst-ink-55)",
     letterSpacing: "0.06em",
-    textTransform: "uppercase",
+    textTransform: "lowercase",
   },
   vRule: {
     width: 1,
@@ -549,8 +549,8 @@ const s: Record<string, React.CSSProperties> = {
     color: "var(--lst-blue)",
     fontFamily: MONO,
     fontSize: 11,
-    letterSpacing: "0.08em",
-    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+    textTransform: "lowercase",
   },
 
   // body
@@ -584,8 +584,8 @@ const s: Record<string, React.CSSProperties> = {
     fontFamily: "var(--lst-font-eyebrow)",
     fontSize: "var(--lst-type-eyebrow)",
     color: "var(--lst-ink-55)",
-    letterSpacing: "var(--lst-tracking-eyebrow)",
-    textTransform: "uppercase" as const,
+    letterSpacing: "0.06em",
+    textTransform: "lowercase" as const,
   },
   tinyBtn: {
     fontFamily: FONT,

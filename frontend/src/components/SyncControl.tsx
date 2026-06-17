@@ -731,8 +731,8 @@ const s: Record<string, React.CSSProperties> = {
     background: "var(--lst-ink-08)",
     padding: "3px 8px",
     borderRadius: 999,
-    letterSpacing: "0.08em",
-    textTransform: "uppercase" as const,
+    letterSpacing: "0.06em",
+    textTransform: "lowercase" as const,
   },
   webhookBadge: {
     display: "inline-flex",
@@ -960,10 +960,11 @@ const s: Record<string, React.CSSProperties> = {
     letterSpacing: 0,
   },
   resultLabel: {
+    fontFamily: MONO,
     fontSize: 11,
     fontWeight: 500,
     color: "var(--lst-ink-55)",
-    textTransform: "uppercase" as const,
+    textTransform: "lowercase" as const,
     letterSpacing: "0.06em",
   },
   errorList: {

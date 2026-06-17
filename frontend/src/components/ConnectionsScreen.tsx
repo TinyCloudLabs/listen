@@ -1,5 +1,6 @@
 import { useState, type FC } from "react";
 import type { ApiClient } from "@listen/client";
+import { useIsMobile } from "../hooks/useIsMobile";
 
 interface ConnectionsScreenProps {
   api: ApiClient;
@@ -60,6 +61,14 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
   const [showLocalImporter, setShowLocalImporter] = useState(false);
   const [localImporterCopied, setLocalImporterCopied] = useState(false);
   const openTranscriptImport = onAddTranscript ?? onAddSource;
+  const isMobile = useIsMobile();
+
+  // On narrow widths the source cards stack vertically so the description
+  // keeps a comfortable width and the badge/action buttons wrap instead of
+  // clipping. On desktop they stay as a single aligned row (CSS grid).
+  const sourceCardStyle = isMobile ? { ...s.sourceCard, ...s.cardStacked } : s.sourceCard;
+  const availableCardStyle = isMobile ? { ...s.availableCard, ...s.cardStacked } : s.availableCard;
+  const rowActionsStyle = isMobile ? { ...s.rowActions, ...s.rowActionsStacked } : s.rowActions;
 
   const sources: SourceRow[] = [
     {
@@ -174,7 +183,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
   return (
     <section style={s.shell}>
       <header style={s.header}>
-        <span style={s.eyebrow}>— settings / sources</span>
+        <span style={s.eyebrow}>· settings / sources</span>
         <div style={s.headerRow}>
           <h2 style={s.title}>Connections</h2>
           <div style={s.headerActions}>
@@ -202,7 +211,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
 
       <div style={s.body}>
         <div style={s.sectionLabelRow}>
-          <span style={s.sectionLabel}>— connected · {connected.length}</span>
+          <span style={s.sectionLabel}>· connected · {connected.length}</span>
           <span style={s.sectionRule} />
         </div>
 
@@ -213,18 +222,19 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
           </div>
         ) : (
           connected.map((source) => (
-            <div key={source.id} style={s.sourceCard}>
+            <div key={source.id} style={sourceCardStyle}>
               <span style={source.ready ? s.markLive : s.markWarn} />
-              <div>
-                <div style={s.sourceName}>{source.name}</div>
-                <div style={s.sourceMeta}>
-                  {source.ready ? "READY" : "NEEDS ACCESS"} · {source.description}
+              <div style={s.sourceContent}>
+                <div style={s.sourceHead}>
+                  <div style={s.sourceName}>{source.name}</div>
+                  <span style={source.ready ? s.chipSolid : s.chipGhost}>
+                    {source.ready ? "Live" : "Finish setup"}
+                  </span>
                 </div>
+                <div style={s.sourceEyebrow}>{source.ready ? "ready" : "needs access"}</div>
+                <p style={s.availableDesc}>{source.description}</p>
               </div>
-              <span style={source.ready ? s.chipSolid : s.chipGhost}>
-                {source.ready ? "Live" : "Finish setup"}
-              </span>
-              <div style={s.rowActions}>
+              <div style={rowActionsStyle}>
                 {source.ready && source.syncable ? (
                   <button
                     type="button"
@@ -269,11 +279,11 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
         )}
 
         <div style={{ ...s.sectionLabelRow, marginTop: 28 }}>
-          <span style={s.sectionLabel}>— available · {availableCount}</span>
+          <span style={s.sectionLabel}>· available · {availableCount}</span>
           <span style={s.sectionRule} />
         </div>
 
-        <div style={s.availableCard}>
+        <div style={availableCardStyle}>
           <span style={s.markIdle} />
           <div>
             <div style={s.sourceName}>Transcript import</div>
@@ -286,7 +296,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
           </button>
         </div>
 
-        <div style={s.availableCard}>
+        <div style={availableCardStyle}>
           <span style={s.markIdle} />
           <div>
             <div style={s.sourceName}>Import local</div>
@@ -335,7 +345,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
             </div>
 
             <div style={s.commandHeader}>
-              <span style={s.sourceMeta}>AGENT PROMPT</span>
+              <span style={s.sourceMeta}>agent prompt</span>
               <button
                 type="button"
                 style={s.btnGhostSm}
@@ -350,14 +360,14 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
 
             <div style={s.importerGrid}>
               <div>
-                <div style={s.sourceMeta}>SKILL URL</div>
+                <div style={s.sourceMeta}>skill url</div>
                 <p style={s.availableDesc}>
                   The instructions are published at <code>listen.xyz/importer</code> for agents to
                   fetch directly.
                 </p>
               </div>
               <div>
-                <div style={s.sourceMeta}>COVERS</div>
+                <div style={s.sourceMeta}>covers</div>
                 <p style={s.availableDesc}>
                   Pulling in the importer, local source scans, downsampling, transcription, and
                   publishing to Listen.
@@ -371,7 +381,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
           <div style={s.empty}>All provider sources are connected.</div>
         ) : (
           available.map((source) => (
-            <div key={source.id} style={s.availableCard}>
+            <div key={source.id} style={availableCardStyle}>
               <span style={s.markIdle} />
               <div>
                 <div style={s.sourceName}>{source.name}</div>
@@ -417,24 +427,28 @@ const s: Record<string, React.CSSProperties> = {
     fontFamily: MONO,
     fontSize: 11,
     color: "var(--lst-ink-55)",
-    letterSpacing: "0.08em",
-    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+    textTransform: "lowercase",
   },
   headerRow: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
+    flexWrap: "wrap",
     gap: 16,
     marginTop: 6,
   },
   title: {
+    fontFamily: "var(--lst-font-display)",
     fontSize: "var(--lst-type-display)",
+    letterSpacing: "var(--lst-tracking-display)",
     lineHeight: "var(--lst-leading-tight)",
     fontWeight: 400,
     margin: 0,
   },
   headerActions: {
     display: "flex",
+    flexWrap: "wrap",
     gap: 8,
   },
   lede: {
@@ -459,8 +473,8 @@ const s: Record<string, React.CSSProperties> = {
     fontFamily: MONO,
     fontSize: 11,
     color: "var(--lst-ink-55)",
-    letterSpacing: "0.08em",
-    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+    textTransform: "lowercase",
   },
   sectionRule: {
     flex: 1,
@@ -471,9 +485,9 @@ const s: Record<string, React.CSSProperties> = {
     border: "var(--lst-border)",
     padding: "15px 18px",
     display: "grid",
-    gridTemplateColumns: "28px minmax(0, 1fr) auto auto",
+    gridTemplateColumns: "28px minmax(0, 1fr) auto",
     gap: 14,
-    alignItems: "center",
+    alignItems: "start",
     marginBottom: 8,
   },
   availableCard: {
@@ -484,6 +498,34 @@ const s: Record<string, React.CSSProperties> = {
     gap: 14,
     alignItems: "center",
     marginBottom: 8,
+  },
+  // Narrow-width override: drop the grid and stack the mark, content, and
+  // actions so the description spans full width instead of being crushed.
+  cardStacked: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "stretch",
+    gap: 10,
+  },
+  sourceContent: {
+    minWidth: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+  },
+  sourceHead: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    flexWrap: "wrap",
+  },
+  sourceEyebrow: {
+    fontFamily: MONO,
+    fontSize: 10,
+    color: "var(--lst-ink-55)",
+    letterSpacing: "0.06em",
+    textTransform: "lowercase",
   },
   importerPanel: {
     border: "var(--lst-border)",
@@ -552,6 +594,7 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: 10,
     color: "var(--lst-ink-55)",
     letterSpacing: "0.06em",
+    textTransform: "lowercase",
   },
   availableDesc: {
     margin: 0,
@@ -601,6 +644,11 @@ const s: Record<string, React.CSSProperties> = {
   rowActions: {
     display: "flex",
     gap: 8,
+    flexWrap: "wrap",
+  },
+  // Stacked cards give the buttons their own full-width row that wraps.
+  rowActionsStacked: {
+    marginTop: 2,
   },
   btnPrimary: {
     fontFamily: FONT,

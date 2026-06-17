@@ -29,7 +29,7 @@ export const AuthPanel: FC<AuthPanelProps> = ({
       {!isSignedIn ? (
         <div style={s.signedOutContent}>
           <div>
-            <span style={s.sectionLabel}>Connect</span>
+            <span style={s.sectionLabel}>· connect</span>
             <p style={s.description}>
               Sign in with OpenKey to connect your wallet and start syncing.
             </p>
@@ -90,8 +90,8 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: 10,
     fontWeight: 500,
     color: "var(--lst-ink-55)",
-    textTransform: "uppercase" as const,
-    letterSpacing: "0.08em",
+    textTransform: "lowercase" as const,
+    letterSpacing: "0.06em",
   },
   description: {
     fontSize: 13,

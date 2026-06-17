@@ -127,7 +127,7 @@ export const TranscriptPane: FC<TranscriptPaneProps> = ({ transcript }) => {
     <section style={s.pane}>
       {/* Find / filter */}
       <div style={s.toolsBar}>
-        <span style={s.eyebrow}>— transcript</span>
+        <span style={s.eyebrow}>· transcript</span>
         <span style={s.spacer} />
         <div style={s.searchPill}>
           <span style={s.searchIcon} aria-hidden="true">
@@ -229,8 +229,8 @@ const s: Record<string, React.CSSProperties> = {
     fontFamily: "var(--lst-font-eyebrow)",
     fontSize: "var(--lst-type-eyebrow)",
     color: "var(--lst-ink-55)",
-    letterSpacing: "var(--lst-tracking-eyebrow)",
-    textTransform: "uppercase" as const,
+    letterSpacing: "0.06em",
+    textTransform: "lowercase" as const,
   },
   spacer: { flex: 1 },
   searchPill: {
@@ -289,7 +289,7 @@ const s: Record<string, React.CSSProperties> = {
     display: "flex",
     flexDirection: "column" as const,
     zIndex: 10,
-    boxShadow: "0 4px 12px rgba(28, 53, 184, 0.08)",
+    boxShadow: "0 4px 12px var(--lst-ink-08)",
   },
   speakerOption: {
     fontFamily: FONT,
