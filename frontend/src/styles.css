@@ -1,3 +1,14 @@
+/* ── Listen design system ────────────────────────────────────────────
+   Listen's original cobalt identity: cool-gray paper, cobalt-blue ink,
+   JetBrains Mono headlines, a SPARING cobalt accent, quiet hairlines,
+   and semantic state colors. The token NAMES are unchanged so components
+   keep working.
+
+   --lst-blue keeps its name and is the cobalt ink, used as BOTH primary
+   text AND primary/active fill. --lst-accent is the cobalt brand, used
+   for links, focus rings, primary-hover, and active emphasis. This
+   :root is the default (light) theme; [data-theme="dark"] below is the
+   dark theme. */
 :root {
   --lst-blue: #1c35b8;
   --lst-bg: #f2f2f4;
@@ -8,12 +19,100 @@
   --lst-ink-70: rgba(28, 53, 184, 0.7);
   --lst-ink-55: rgba(28, 53, 184, 0.55);
   --lst-ink-35: rgba(28, 53, 184, 0.35);
+  --lst-ink-20: rgba(28, 53, 184, 0.2);
   --lst-ink-15: rgba(28, 53, 184, 0.15);
   --lst-ink-08: rgba(28, 53, 184, 0.08);
-  --lst-border: 1px solid var(--lst-blue);
+  --lst-border: 1px solid var(--lst-rule);
   --lst-hair: 1px solid var(--lst-rule-soft);
   --lst-font: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
   --lst-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* ── Accent ───────────────────────────────────────────────────────
+     The cobalt brand. SPARING: links, focus rings, primary-hover,
+     active emphasis, the brand-mark dot. */
+  --lst-accent: #1c35b8;
+  --lst-accent-soft: rgba(28, 53, 184, 0.1);
+
+  /* ── Semantic status palette ──────────────────────────────────────
+     Reserved STRICTLY for conveying state (sync health, errors,
+     confirmations). Do NOT use these for decoration, branding, or
+     emphasis. */
+  --lst-ok: #2f7d5b;
+  --lst-ok-soft: rgba(47, 125, 91, 0.12);
+  --lst-warn: #9a6a16;
+  --lst-warn-soft: rgba(154, 106, 22, 0.13);
+  --lst-alert: #b23b3b;
+  --lst-alert-soft: rgba(178, 59, 59, 0.12);
+
+  /* ── Editorial type scale ─────────────────────────────────────────
+     Shared sizing so Phase-2 surfaces stay consistent. JetBrains Mono
+     for display/titles, Inter for body. */
+  --lst-type-display: 38px;
+  --lst-type-title: 28px;
+  --lst-type-heading: 18px;
+  --lst-type-body: 14px;
+  --lst-type-meta: 12px;
+  --lst-type-eyebrow: 11px;
+  --lst-leading-tight: 1.05;
+  --lst-leading-snug: 1.25;
+  --lst-leading-body: 1.55;
+  --lst-tracking-eyebrow: 0.08em;
+  --lst-tracking-display: -0.04em;
+  --lst-font-display: var(--lst-mono);
+  --lst-font-eyebrow: var(--lst-mono);
+}
+
+/* ── dark (tokyo-night) ─────────────────────────────────────────────
+   The dark theme. Status colors lifted for legibility on dark paper. */
+[data-theme="dark"] {
+  --lst-blue: #d5dcff;
+  --lst-bg: #1a1b26;
+  --lst-bg-2: #202331;
+  --lst-bg-3: #2f3549;
+  --lst-rule: #2f3549;
+  --lst-rule-soft: rgba(213, 220, 255, 0.12);
+  --lst-ink-70: rgba(213, 220, 255, 0.8);
+  --lst-ink-55: rgba(213, 220, 255, 0.58);
+  --lst-ink-35: rgba(213, 220, 255, 0.4);
+  --lst-ink-20: rgba(213, 220, 255, 0.22);
+  --lst-ink-15: rgba(213, 220, 255, 0.14);
+  --lst-ink-08: rgba(213, 220, 255, 0.08);
+  --lst-accent: #7aa2f7;
+  --lst-accent-soft: color-mix(in srgb, var(--lst-accent) 14%, transparent);
+
+  --lst-ok: #9ece6a;
+  --lst-ok-soft: rgba(158, 206, 106, 0.16);
+  --lst-warn: #e0af68;
+  --lst-warn-soft: rgba(224, 175, 104, 0.16);
+  --lst-alert: #f7768e;
+  --lst-alert-soft: rgba(247, 118, 142, 0.16);
+}
+
+/* ── Landing page palette mirroring ─────────────────────────────────
+   The signed-out landing page uses its own --landing-* set. Re-map it
+   per theme so it tracks the active theme. The light (:root) default is
+   below; the dark theme overrides to match. */
+.landing-page {
+  --landing-accent: var(--lst-accent);
+  --landing-accent-soft: var(--lst-accent-soft);
+}
+
+[data-theme="dark"] .landing-page {
+  --landing-blue: var(--lst-blue);
+  --landing-bg: var(--lst-bg);
+  --landing-bg-2: var(--lst-bg-2);
+  --landing-rule-soft: var(--lst-rule-soft);
+  --landing-ink-70: var(--lst-ink-70);
+  --landing-ink-55: var(--lst-ink-55);
+  --landing-ink-08: var(--lst-ink-08);
+}
+
+/* Noise overlay reads as a grain on dark paper instead of the light
+   multiply wash. */
+[data-theme="dark"] .landing-noise::after,
+[data-theme="dark"] .listen-shell::after {
+  mix-blend-mode: screen;
+  opacity: 0.06;
 }
 
 html,
@@ -53,7 +152,7 @@ a {
   --landing-ink-70: rgba(28, 53, 184, 0.7);
   --landing-ink-55: rgba(28, 53, 184, 0.55);
   --landing-ink-08: rgba(28, 53, 184, 0.06);
-  --landing-border: 1px solid var(--landing-blue);
+  --landing-border: 1px solid var(--landing-rule-soft);
   --landing-font: var(--lst-font);
   --landing-mono-font: var(--lst-mono);
   min-height: 100vh;
@@ -148,7 +247,7 @@ a {
   content: "";
   width: 8px;
   height: 8px;
-  background: var(--landing-blue);
+  background: var(--landing-accent);
   border-radius: 50%;
 }
 
@@ -336,8 +435,8 @@ a {
   height: 78%;
   background: radial-gradient(
     ellipse at center,
-    rgba(28, 53, 184, 0.42) 0%,
-    rgba(28, 53, 184, 0) 65%
+    color-mix(in srgb, var(--landing-accent) 42%, transparent) 0%,
+    color-mix(in srgb, var(--landing-accent) 0%, transparent) 65%
   );
   display: flex;
   align-items: center;
@@ -494,7 +593,7 @@ a {
   flex-direction: column;
   min-width: 0;
   overflow: hidden;
-  background: rgba(28, 53, 184, 0.025);
+  background: color-mix(in srgb, var(--landing-blue) 2.5%, transparent);
 }
 
 .landing-preview-head {
@@ -523,7 +622,7 @@ a {
 }
 
 .landing-search::placeholder {
-  color: rgba(28, 53, 184, 0.5);
+  color: var(--landing-ink-55);
 }
 
 .landing-preview-list {
@@ -615,7 +714,7 @@ a {
   position: relative;
   flex: 1;
   height: 1px;
-  background: rgba(28, 53, 184, 0.3);
+  background: color-mix(in srgb, var(--landing-blue) 30%, transparent);
 }
 
 .landing-timeline-progress {
@@ -671,7 +770,7 @@ a {
 }
 
 .landing-utterance.highlighted {
-  background: rgba(28, 53, 184, 0.12);
+  background: color-mix(in srgb, var(--landing-accent) 12%, transparent);
 }
 
 .landing-quote-section {
@@ -751,7 +850,7 @@ a {
   z-index: 1;
   min-height: 100vh;
   border-right: var(--lst-border);
-  background: rgba(28, 53, 184, 0.02);
+  background: color-mix(in srgb, var(--lst-blue) 2%, transparent);
   display: flex;
   flex-direction: column;
   overflow: auto;
@@ -795,7 +894,7 @@ a {
   content: "";
   width: 8px;
   height: 8px;
-  background: var(--lst-blue);
+  background: var(--lst-accent);
   border-radius: 50%;
 }
 
@@ -991,4 +1090,43 @@ a {
   .landing-quote-section p {
     font-size: 22px;
   }
+}
+
+/* === Phase 2C: speaker palette =====================================
+   Stable per-participant colors so "who said what" is scannable down a
+   long transcript. Identity, NOT state, so kept separate from
+   --lst-ok/warn/alert. The light (:root) default is Listen's original
+   cobalt-anchored speaker spread; the dark theme lifts the hues for
+   legibility. Each has a soft tint for avatar fills. Used ONLY on
+   speaker labels + avatars; utterance prose stays in --lst-blue ink. */
+:root {
+  --lst-spk-1: #1c35b8;
+  --lst-spk-1-soft: rgba(28, 53, 184, 0.12);
+  --lst-spk-2: #3f6f8f;
+  --lst-spk-2-soft: rgba(63, 111, 143, 0.13);
+  --lst-spk-3: #2f7d6b;
+  --lst-spk-3-soft: rgba(47, 125, 107, 0.13);
+  --lst-spk-4: #8a6a2c;
+  --lst-spk-4-soft: rgba(138, 106, 44, 0.13);
+  --lst-spk-5: #9a4f53;
+  --lst-spk-5-soft: rgba(154, 79, 83, 0.13);
+  --lst-spk-6: #5a4d96;
+  --lst-spk-6-soft: rgba(90, 77, 150, 0.13);
+}
+
+/* Lifted for legibility on dark long-read paper — same hue family,
+   low-glare and harmonious with the lifted ink. */
+[data-theme="dark"] {
+  --lst-spk-1: #7ab8ff;
+  --lst-spk-1-soft: rgba(122, 184, 255, 0.16);
+  --lst-spk-2: #6fcabf;
+  --lst-spk-2-soft: rgba(111, 202, 191, 0.16);
+  --lst-spk-3: #79cf94;
+  --lst-spk-3-soft: rgba(121, 207, 148, 0.16);
+  --lst-spk-4: #e6c060;
+  --lst-spk-4-soft: rgba(230, 192, 96, 0.16);
+  --lst-spk-5: #e88585;
+  --lst-spk-5-soft: rgba(232, 133, 133, 0.16);
+  --lst-spk-6: #b6a0ec;
+  --lst-spk-6-soft: rgba(182, 160, 236, 0.16);
 }

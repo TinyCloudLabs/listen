@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type FC } from "react";
+import { useEffect, useState, type CSSProperties, type FC } from "react";
 
 export interface MobileDetailSentence {
   speakerName: string;
@@ -21,7 +21,32 @@ interface MobileDetailProps {
   onBack: () => void;
 }
 
-type DetailTab = "summary" | "transcript";
+type DetailTab = "summary" | "transcript" | "notes";
+
+// Notes persist per conversation in browser storage under the same key the
+// desktop NotesPane uses, so mobile and desktop notes stay in sync.
+interface Note {
+  id: string;
+  kind: "LINKED" | "FREE NOTE" | "FOLLOW-UP";
+  timestamp?: string;
+  body: string;
+  emphasized?: boolean;
+}
+
+function notesStorageKey(conversationId: string): string {
+  return `listen:conversation-notes:${conversationId}`;
+}
+
+function loadNotes(conversationId: string): Note[] {
+  try {
+    const raw = window.localStorage.getItem(notesStorageKey(conversationId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
 function srcLabel(s: string): string {
   if (s === "google-meet") return "MEET";
@@ -56,18 +81,95 @@ function renderSummary(text: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/^[-*]\s+/gm, "\u2022 ")
+    .replace(/^[-*]\s+/gm, "• ")
     .replace(/\n/g, "<br />");
 }
 
+// ── Notes pane ───────────────────────────────────────────────────────
+// Lean mobile note capture. Reads/writes the same localStorage key as the
+// desktop NotesPane so notes captured on either surface stay in sync.
+const NotesPane: FC<{ conversationId: string }> = ({ conversationId }) => {
+  const [notes, setNotes] = useState<Note[]>(() => loadNotes(conversationId));
+  const [drafting, setDrafting] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  useEffect(() => {
+    setNotes(loadNotes(conversationId));
+    setDrafting(false);
+    setDraft("");
+  }, [conversationId]);
+
+  useEffect(() => {
+    window.localStorage.setItem(notesStorageKey(conversationId), JSON.stringify(notes));
+  }, [conversationId, notes]);
+
+  const commitDraft = () => {
+    const text = draft.trim();
+    if (!text) {
+      setDrafting(false);
+      setDraft("");
+      return;
+    }
+    setNotes((n) => [...n, { id: `n${Date.now()}`, kind: "FREE NOTE", body: text }]);
+    setDraft("");
+    setDrafting(false);
+  };
+
+  return (
+    <div style={s.notesList}>
+      {notes.map((note) => (
+        <div key={note.id} style={{ ...s.note, ...(note.emphasized ? s.noteEmph : {}) }}>
+          <span style={s.noteMeta}>
+            {note.timestamp ? `${note.timestamp} · ${note.kind}` : note.kind}
+          </span>
+          <p style={s.noteBody}>{note.body}</p>
+        </div>
+      ))}
+
+      {drafting ? (
+        <textarea
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commitDraft}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              commitDraft();
+            }
+            if (e.key === "Escape") {
+              setDraft("");
+              setDrafting(false);
+            }
+          }}
+          placeholder={"Type a note. ⌘↵ to save."}
+          style={s.draft}
+        />
+      ) : (
+        <button style={s.addNote} onClick={() => setDrafting(true)} type="button">
+          {"+ add a note"}
+        </button>
+      )}
+    </div>
+  );
+};
+
 export const MobileDetail: FC<MobileDetailProps> = ({ conversation, transcript, onBack }) => {
   const [tab, setTab] = useState<DetailTab>("summary");
+
+  // Accessible names preserve the existing matchers (e.g. /Transcript\s+1/i):
+  // a trailing count is appended to Transcript when sentences are present.
+  const tabs: Array<[DetailTab, string]> = [
+    ["summary", "Summary"],
+    ["transcript", `Transcript${transcript.length ? `  ${transcript.length}` : ""}`],
+    ["notes", "Notes"],
+  ];
 
   return (
     <div style={s.root}>
       <header style={s.topBar}>
         <button type="button" style={s.backBtn} onClick={onBack}>
-          {"\u2039 Inbox"}
+          {"‹ Inbox"}
         </button>
         <span style={s.spacer} />
       </header>
@@ -75,30 +177,28 @@ export const MobileDetail: FC<MobileDetailProps> = ({ conversation, transcript, 
       <div style={s.scroll}>
         <div style={s.titleBlock}>
           <span style={s.metaMono}>
-            {`${srcLabel(conversation.source)} \u2014 ${formatDateMono(conversation.startedAt)} \u2014 ${formatTimestamp(conversation.durationSecs)}`}
+            {`${srcLabel(conversation.source)} — ${formatDateMono(conversation.startedAt)} — ${formatTimestamp(conversation.durationSecs)}`}
           </span>
           <h1 style={s.title}>{conversation.title}</h1>
         </div>
 
-        <div style={s.tabs}>
-          {(
-            [
-              ["summary", "Summary"],
-              ["transcript", `Transcript${transcript.length ? `  ${transcript.length}` : ""}`],
-            ] as Array<[DetailTab, string]>
-          ).map(([key, label]) => {
-            const active = tab === key;
-            return (
-              <button
-                key={key}
-                type="button"
-                style={{ ...s.tab, ...(active ? s.tabActive : {}) }}
-                onClick={() => setTab(key)}
-              >
-                {label}
-              </button>
-            );
-          })}
+        <div style={s.segmentWrap}>
+          <div style={s.segment}>
+            {tabs.map(([key, label]) => {
+              const active = tab === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={active}
+                  style={{ ...s.segmentBtn, ...(active ? s.segmentBtnActive : {}) }}
+                  onClick={() => setTab(key)}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {tab === "summary" && (
@@ -129,6 +229,12 @@ export const MobileDetail: FC<MobileDetailProps> = ({ conversation, transcript, 
                 </div>
               ))
             )}
+          </div>
+        )}
+
+        {tab === "notes" && (
+          <div style={s.section}>
+            <NotesPane conversationId={conversation.id} />
           </div>
         )}
       </div>
@@ -206,29 +312,38 @@ const s: Record<string, CSSProperties> = {
     margin: "6px 0 0",
     color: "var(--lst-blue)",
   },
-  tabs: {
-    display: "flex",
-    gap: 18,
-    padding: "0 18px",
-    borderBottom: "var(--lst-border)",
+  // Segmented control: a hairline track holding three equal segments. The
+  // active segment fills with brand cobalt; inactive segments read as muted
+  // ink. Both states stay legible in light and dark via the themed tokens.
+  segmentWrap: {
+    padding: "4px 18px 16px",
     flexShrink: 0,
   },
-  tab: {
+  segment: {
+    display: "flex",
+    gap: 2,
+    padding: 2,
+    border: "var(--lst-border)",
+    borderRadius: 999,
+    background: "var(--lst-ink-08)",
+  },
+  segmentBtn: {
+    flex: 1,
     fontFamily: FONT,
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: 500,
-    color: "var(--lst-blue)",
-    opacity: 0.55,
+    color: "var(--lst-ink-70)",
     background: "transparent",
     border: "none",
-    borderBottom: "2px solid transparent",
-    padding: "10px 0",
-    marginBottom: -1,
+    borderRadius: 999,
+    padding: "7px 8px",
     cursor: "pointer",
+    whiteSpace: "nowrap",
+    transition: "background 0.15s ease, color 0.15s ease",
   },
-  tabActive: {
-    opacity: 1,
-    borderBottomColor: "var(--lst-blue)",
+  segmentBtnActive: {
+    color: "var(--lst-bg)",
+    background: "var(--lst-blue)",
   },
   section: {
     padding: "18px 22px 32px",
@@ -267,5 +382,58 @@ const s: Record<string, CSSProperties> = {
     fontSize: 13,
     color: "var(--lst-ink-55)",
     margin: 0,
+  },
+  notesList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+  },
+  note: {
+    border: "var(--lst-border)",
+    padding: 12,
+    borderRadius: 4,
+    background: "transparent",
+  },
+  noteEmph: {
+    background: "var(--lst-ink-08)",
+  },
+  noteMeta: {
+    fontFamily: MONO,
+    fontSize: 10,
+    color: "var(--lst-ink-55)",
+    marginBottom: 6,
+    display: "block",
+    letterSpacing: "0.04em",
+  },
+  noteBody: {
+    fontFamily: FONT,
+    fontSize: 13,
+    color: "var(--lst-blue)",
+    lineHeight: 1.55,
+    margin: 0,
+  },
+  addNote: {
+    border: "1px dashed var(--lst-rule-soft)",
+    background: "transparent",
+    color: "var(--lst-ink-55)",
+    padding: 14,
+    borderRadius: 4,
+    fontSize: 13,
+    textAlign: "center",
+    cursor: "pointer",
+    fontFamily: FONT,
+  },
+  draft: {
+    border: "var(--lst-border)",
+    background: "var(--lst-bg)",
+    color: "var(--lst-blue)",
+    padding: 12,
+    borderRadius: 4,
+    fontSize: 13,
+    lineHeight: 1.55,
+    fontFamily: FONT,
+    minHeight: 84,
+    resize: "vertical",
+    outline: "none",
   },
 };

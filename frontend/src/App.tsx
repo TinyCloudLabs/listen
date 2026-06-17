@@ -122,6 +122,23 @@ function localConversationEventPathPrefix(): string | null {
   return CONVERSATION_HOOK_PATH_PREFIX;
 }
 
+// Display headlines render in JetBrains Mono (--lst-font-display)
+// with weight 400, tight tracking, and tight leading. Eyebrows/kickers are
+// lowercase mono with a small leading status dot.
+const landingDisplayHeadline: React.CSSProperties = {
+  fontFamily: "var(--lst-font-display)",
+  fontWeight: 400,
+  letterSpacing: "-0.04em",
+  lineHeight: 1.05,
+};
+
+const landingKicker: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 8,
+  textTransform: "none",
+};
+
 function LandingIcon({ name, size = 14 }: { name: "plus" | "minus"; size?: number }) {
   if (name === "minus") {
     return (
@@ -341,8 +358,11 @@ function LandingPage({
         <div className="landing-container">
           <section className="landing-hero">
             <div>
-              <span className="landing-mono landing-version">v0.4 - May 2026</span>
-              <h1>
+              <span className="landing-version" style={landingKicker}>
+                <span className="landing-dot" />
+                v0.4 - may 2026
+              </span>
+              <h1 style={landingDisplayHeadline}>
                 Capture thoughts.
                 <br />
                 Transform them into insights.
@@ -377,8 +397,11 @@ function LandingPage({
           <section id="sources" className="landing-sources-section">
             <div className="landing-section-head">
               <div>
-                <span className="landing-eyebrow">01 - sources</span>
-                <h2>Bring everything in.</h2>
+                <span className="landing-eyebrow" style={landingKicker}>
+                  <span className="landing-dot" />
+                  01 - sources
+                </span>
+                <h2 style={landingDisplayHeadline}>Bring everything in.</h2>
               </div>
               <span className="landing-mono landing-muted">many sources - synced or imported</span>
             </div>
@@ -429,8 +452,11 @@ function LandingPage({
           <section id="preview" className="landing-preview-section">
             <div className="landing-section-head">
               <div>
-                <span className="landing-eyebrow">02 - your transcripts</span>
-                <h2>The room, after the room.</h2>
+                <span className="landing-eyebrow" style={landingKicker}>
+                  <span className="landing-dot" />
+                  02 - your transcripts
+                </span>
+                <h2 style={landingDisplayHeadline}>The room, after the room.</h2>
               </div>
               <div className="landing-preview-actions">
                 <span className="landing-mono landing-muted">Sort: Date</span>
@@ -1401,10 +1427,29 @@ export function App() {
                         ? "Everything you've said."
                         : "Connect what you already have.";
 
+  // Nav source dots reflect real connection health only. There's no
+  // per-source syncing or error flag at this level, so we set "connected"
+  // for sources that are actually connected and leave the rest undefined
+  // (neutral blue) rather than fabricate a state.
   const sourceItems: ShellSourceConfig[] = [
-    { key: "fireflies", name: "Fireflies", count: null },
-    { key: "granola", name: "Granola", count: null },
-    { key: "gmeet", name: "Google Meet", count: null },
+    {
+      key: "fireflies",
+      name: "Fireflies",
+      count: null,
+      status: firefliesConnected ? "connected" : undefined,
+    },
+    {
+      key: "granola",
+      name: "Granola",
+      count: null,
+      status: granolaConnected ? "connected" : undefined,
+    },
+    {
+      key: "gmeet",
+      name: "Google Meet",
+      count: null,
+      status: hasGoogleMeet === true ? "connected" : undefined,
+    },
   ];
 
   const userInitials = address ? `${address.slice(2, 3)}${address.slice(-1)}`.toUpperCase() : "??";

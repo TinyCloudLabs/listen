@@ -7,9 +7,28 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
+    <script>
+      // Apply saved/system theme before first paint to avoid a flash.
+      // Must mirror lib/theme.ts (same key, attribute, default). The saved
+      // value is the literal preference: "system" | "light" | "dark"
+      // (absent = system). Light is the default (no data-theme); dark sets
+      // data-theme="dark"; system follows prefers-color-scheme.
+      (function () {
+        try {
+          var saved = localStorage.getItem("listen:theme");
+          var system = saved !== "light" && saved !== "dark";
+          var dark =
+            saved === "dark" ||
+            (system &&
+              window.matchMedia &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) document.documentElement.dataset.theme = "dark";
+        } catch (_e) {}
+      })();
+    </script>
     <style>
       *,
       *::before,
@@ -21,13 +40,16 @@
         background: #f2f2f4;
         -webkit-font-smoothing: antialiased;
       }
+      html[data-theme="dark"] body {
+        background: #1a1b26;
+      }
       ::selection {
-        background: rgba(28, 53, 184, 0.15);
+        background: rgba(28, 53, 184, 0.18);
       }
       input:focus {
         outline: none;
         border-color: #1c35b8 !important;
-        box-shadow: 0 0 0 3px rgba(28, 53, 184, 0.08);
+        box-shadow: 0 0 0 3px rgba(28, 53, 184, 0.12);
       }
       button {
         transition:
