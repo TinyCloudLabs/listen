@@ -1257,6 +1257,74 @@ export function App() {
     [api, backendDid, ensureBackendAccess, tcw],
   );
 
+  const autoAccessRenewalKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!api || !tcw || !backendDid) return;
+
+    const sources: Array<"fireflies" | "granola"> = [];
+    if (
+      hasKey === true &&
+      (hasBackendDelegation === false || hasFirefliesBackendAccess === false)
+    ) {
+      sources.push("fireflies");
+    }
+    if (
+      hasGranolaKey === true &&
+      (hasBackendDelegation === false || hasGranolaBackendAccess === false)
+    ) {
+      sources.push("granola");
+    }
+
+    if (sources.length === 0) return;
+
+    const renewalKey = [
+      address,
+      sources.join(","),
+      hasBackendDelegation,
+      hasFirefliesBackendAccess,
+      hasGranolaBackendAccess,
+    ].join("|");
+    if (autoAccessRenewalKeyRef.current === renewalKey) return;
+    autoAccessRenewalKeyRef.current = renewalKey;
+
+    let cancelled = false;
+    setWorkspaceActionLoading(true);
+    setWorkspaceActionError(null);
+
+    (async () => {
+      try {
+        if (sources.includes("fireflies")) {
+          await ensureFirefliesBackendAccess();
+        }
+        if (sources.includes("granola")) {
+          await ensureGranolaBackendAccess();
+        }
+        if (!cancelled) setRefreshKey((k) => k + 1);
+      } catch (err) {
+        if (!cancelled) setWorkspaceActionError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!cancelled) setWorkspaceActionLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    address,
+    api,
+    backendDid,
+    ensureFirefliesBackendAccess,
+    ensureGranolaBackendAccess,
+    hasBackendDelegation,
+    hasFirefliesBackendAccess,
+    hasGranolaBackendAccess,
+    hasGranolaKey,
+    hasKey,
+    tcw,
+  ]);
+
   const handleFinishFirefliesAccess = useCallback(async () => {
     setWorkspaceActionLoading(true);
     setWorkspaceActionError(null);

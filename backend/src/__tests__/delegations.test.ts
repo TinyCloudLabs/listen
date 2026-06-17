@@ -368,6 +368,7 @@ describe("Delegation Routes", () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.status).toBe("active");
+      expect(body.activation).toBe("active");
       expect(body.expiresAt).toBeDefined();
     });
 
@@ -556,7 +557,7 @@ describe("Delegation Routes", () => {
       expect(body.message).toBe("Failed to process delegation");
     });
 
-    it("returns 400 when node.useDelegation rejects", async () => {
+    it("stores the delegation when immediate activation rejects", async () => {
       mockUseDelegation.mockImplementationOnce(async () => {
         throw new Error("Delegation verification failed");
       });
@@ -567,10 +568,16 @@ describe("Delegation Routes", () => {
         body: JSON.stringify({ serialized: "unverifiable" }),
       });
 
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body.error).toBe("invalid_delegation");
-      expect(body.message).toBe("Failed to process delegation");
+      expect(body.status).toBe("active");
+      expect(body.activation).toBe("pending");
+      expect(body.expiresAt).toBeDefined();
+
+      const stored = await store.load(TEST_ADDRESS);
+      expect(stored).not.toBeNull();
+      expect(stored!.serialized).toBe("unverifiable");
+      expect(cache.has(TEST_ADDRESS)).toBe(false);
     });
   });
 

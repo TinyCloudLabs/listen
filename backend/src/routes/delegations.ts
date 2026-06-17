@@ -10,6 +10,7 @@ import {
 } from "../manifest.js";
 import {
   activatePortableDelegation,
+  DelegationActivationError,
   deserializePortableDelegationSet,
   portableDelegationExpiry,
   portableDelegations,
@@ -63,9 +64,6 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
         throw new Error("Delegation does not cover the current backend permission policy");
       }
 
-      // Activate the delegation to verify it works
-      const access = await activatePortableDelegation(node, delegation);
-
       // Extract metadata from the delegation itself
       const expiry = portableDelegationExpiry(delegation);
       const expiresAt = expiry
@@ -81,13 +79,29 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
         policyHash: backendDelegationPolicyHash(config.did, ownerDid),
       });
 
-      // Cache the active DelegatedAccess keyed by address
-      cache.set(address, access);
+      try {
+        // Cache the active DelegatedAccess keyed by address when activation is available now.
+        const access = await activatePortableDelegation(node, delegation);
+        cache.set(address, access);
 
-      res.json({
-        status: "active",
-        expiresAt,
-      });
+        res.json({
+          status: "active",
+          expiresAt,
+          activation: "active",
+        });
+      } catch (activationErr) {
+        console.warn(
+          "[delegations] stored delegation but activation is pending:",
+          describeActivationError(activationErr),
+        );
+        cache.evict(address);
+
+        res.json({
+          status: "active",
+          expiresAt,
+          activation: "pending",
+        });
+      }
     } catch (err) {
       console.error("[delegations] failed to process delegation:", err);
       res.status(400).json({
@@ -185,6 +199,18 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
   });
 
   return router;
+}
+
+function describeActivationError(err: unknown) {
+  if (err instanceof DelegationActivationError) {
+    return {
+      message: err.message,
+      resource: err.resource,
+      cause: err.cause instanceof Error ? err.cause.message : String(err.cause),
+    };
+  }
+
+  return err;
 }
 
 function extractDelegationResources(delegation: PortableDelegationSet): ServerInfoPermission[] {

@@ -101,6 +101,7 @@ export interface ItemListResponse {
 export interface DelegationResponse {
   status: DelegationStatus;
   expiresAt: string | null;
+  activation?: "active" | "pending";
 }
 
 export interface ApiError {

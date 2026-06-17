@@ -30,6 +30,19 @@ interface ActivatableResource {
   resource: PortableResource;
 }
 
+export class DelegationActivationError extends Error {
+  readonly resource: PortableResource;
+  readonly cause: unknown;
+
+  constructor(resource: PortableResource, cause: unknown) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    super(`Failed to activate delegated resource ${resource.service}:${resource.path}: ${message}`);
+    this.name = "DelegationActivationError";
+    this.resource = resource;
+    this.cause = cause;
+  }
+}
+
 interface InlineEncryptedEnvelope {
   v: number;
   networkId: string;
@@ -102,14 +115,14 @@ export async function activatePortableDelegation(
 
   if (activatableResources.length === 1) {
     const only = activatableResources[0];
-    return activateResource(node, only.delegation, only.resource);
+    return activateResourceWithContext(node, only.delegation, only.resource);
   }
 
   const accessByService = new Map<string, DelegatedAccess>();
   const activated = await Promise.all(
     activatableResources.map(async ({ delegation, resource }) => {
       const service = normalizeResourceService(resource.service);
-      const access = await activateResource(node, delegation, resource);
+      const access = await activateResourceWithContext(node, delegation, resource);
       if (!accessByService.has(service)) {
         accessByService.set(service, access);
       }
@@ -160,6 +173,18 @@ function activateResource(
     actions: resource.actions.map((action) => normalizeResourceAction(action, service)),
     resources: [{ ...resource, space: resource.space ?? delegation.spaceId }],
   });
+}
+
+async function activateResourceWithContext(
+  node: TinyCloudNode,
+  delegation: PortableDelegation,
+  resource: PortableResource,
+): Promise<DelegatedAccess> {
+  try {
+    return await activateResource(node, delegation, resource);
+  } catch (err) {
+    throw new DelegationActivationError(resource, err);
+  }
 }
 
 function extractPortableResources(delegation: PortableDelegation): PortableResource[] {
