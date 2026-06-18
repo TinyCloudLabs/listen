@@ -1,6 +1,8 @@
 import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
 import { FIREFLIES_SECRET_NAME, GRANOLA_SECRET_NAME, resolveAppPath } from "../manifest.js";
+import { conversationSql, ensureSchema } from "../schema.js";
+import { updateConversationTranscriptFields } from "../services/persist-conversation.js";
 import { TRANSCRIPTION_SECRET_NAMES } from "../services/transcription.js";
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -69,6 +71,31 @@ function kvErrorMessage(result: unknown, fallback: string): string {
 
 function isKvNotFound(result: KVResult): boolean {
   return !result.ok && result.error?.code === "KV_NOT_FOUND";
+}
+
+function rowValue(
+  row: unknown,
+  columns: unknown[] | undefined,
+  columnName: string,
+  fallbackIndex: number,
+): unknown {
+  if (Array.isArray(row)) {
+    const index = columns?.indexOf(columnName) ?? -1;
+    return row[index >= 0 ? index : fallbackIndex];
+  }
+  return (row as Record<string, unknown> | null)?.[columnName];
+}
+
+function transcriptValueMissing(value: unknown): boolean {
+  if (value == null || value === "") return true;
+  if (typeof value !== "string") return false;
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.length === 0;
+  } catch {
+    return false;
+  }
 }
 
 function createSecretExistsHandler(secretName: string, label: string) {
@@ -214,6 +241,77 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
     } catch (err) {
       console.error("[config] failed to disconnect google-meet:", err);
       res.status(500).json({ error: "disconnect_failed", message: "Failed to disconnect" });
+    }
+  });
+
+  router.post("/migrate-transcripts", delegationMiddleware, async (req: Request, res: Response) => {
+    const access = req.delegatedAccess!;
+
+    try {
+      await ensureSchema(access);
+      const sqlDb = conversationSql(access);
+      const result = await sqlDb.query(
+        "SELECT id, transcript_json FROM conversation ORDER BY created_at ASC",
+      );
+
+      if (!result.ok) {
+        res.status(500).json({
+          error: "migration_failed",
+          message: kvErrorMessage(result, "Failed to read conversation rows"),
+        });
+        return;
+      }
+
+      const rows = result.data.rows ?? [];
+      const columns = result.data.columns as unknown[] | undefined;
+      let migrated = 0;
+      let skipped = 0;
+      let missing = 0;
+      let failed = 0;
+
+      for (const row of rows as unknown[]) {
+        const id = rowValue(row, columns, "id", 0);
+        const transcriptJson = rowValue(row, columns, "transcript_json", 1);
+        if (!id) {
+          failed++;
+          continue;
+        }
+
+        if (!transcriptValueMissing(transcriptJson)) {
+          skipped++;
+          continue;
+        }
+
+        const kvResult = await access.kv.get(resolveAppPath(`transcript/${String(id)}`));
+        const rawTranscript = kvData(kvResult);
+        if (!kvResult.ok || rawTranscript == null) {
+          missing++;
+          continue;
+        }
+
+        try {
+          await updateConversationTranscriptFields(access, String(id), rawTranscript);
+          migrated++;
+        } catch (err) {
+          failed++;
+          console.error(`[config] failed to migrate transcript ${String(id)}:`, err);
+        }
+      }
+
+      res.json({
+        ok: failed === 0,
+        scanned: rows.length,
+        migrated,
+        skipped,
+        missing,
+        failed,
+      });
+    } catch (err) {
+      console.error("[config] transcript migration failed:", err);
+      res.status(500).json({
+        error: "migration_failed",
+        message: err instanceof Error ? err.message : "Failed to migrate transcripts",
+      });
     }
   });
 

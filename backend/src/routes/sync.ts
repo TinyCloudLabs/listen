@@ -9,7 +9,10 @@ import {
 } from "../services/fireflies-client.js";
 import { conversationSql, ensureSchema } from "../schema.js";
 import { persistFullTranscript } from "../services/sync-pipeline.js";
-import { persistTranscriptBlob } from "../services/persist-conversation.js";
+import {
+  persistTranscriptBlob,
+  updateConversationTranscriptFields,
+} from "../services/persist-conversation.js";
 import { readFirefliesApiKey } from "../services/fireflies-secret.js";
 import { resolveAppPath } from "../manifest.js";
 
@@ -44,6 +47,7 @@ interface BackendKV {
 
 interface ExistingFirefliesConversation {
   id: string;
+  transcriptJson: unknown;
 }
 
 type FirefliesSyncWorkItem =
@@ -224,7 +228,7 @@ async function loadExistingFirefliesConversations(
   sqlDb: Pick<ReturnType<typeof conversationSql>, "query">,
 ): Promise<Map<string, ExistingFirefliesConversation>> {
   const result = await sqlDb.query(
-    "SELECT id, source_id FROM conversation WHERE source = 'fireflies'",
+    "SELECT id, source_id, transcript_json FROM conversation WHERE source = 'fireflies'",
   );
 
   const existing = new Map<string, ExistingFirefliesConversation>();
@@ -234,8 +238,9 @@ async function loadExistingFirefliesConversations(
   for (const row of result.data.rows as unknown[]) {
     const id = rowValue(row, columns, "id", 0);
     const sourceId = rowValue(row, columns, "source_id", 1);
+    const transcriptJson = rowValue(row, columns, "transcript_json", 2);
     if (id && sourceId) {
-      existing.set(String(sourceId), { id: String(id) });
+      existing.set(String(sourceId), { id: String(id), transcriptJson });
     }
   }
 
@@ -257,17 +262,8 @@ function transcriptBlobIsMissingOrEmpty(raw: unknown): boolean {
   return Array.isArray(raw) && raw.length === 0;
 }
 
-async function transcriptBlobNeedsRepair(
-  access: DelegatedAccess,
-  conversationId: string,
-): Promise<boolean> {
-  try {
-    const result = await access.kv.get(resolveAppPath(`transcript/${conversationId}`));
-    if (!result.ok) return true;
-    return transcriptBlobIsMissingOrEmpty(result.data?.data);
-  } catch {
-    return true;
-  }
+function transcriptNeedsRepair(transcriptJson: unknown): boolean {
+  return transcriptBlobIsMissingOrEmpty(transcriptJson);
 }
 
 async function prepareFirefliesSyncWork(
@@ -285,7 +281,7 @@ async function prepareFirefliesSyncWork(
       continue;
     }
 
-    if (await transcriptBlobNeedsRepair(access, existing.id)) {
+    if (transcriptNeedsRepair(existing.transcriptJson)) {
       items.push({ type: "repair", summary, conversationId: existing.id });
     } else {
       skipped++;
@@ -326,6 +322,11 @@ async function processFirefliesSyncWork({
       const transcript = await client.getTranscript(summary.id);
 
       if (item.type === "repair") {
+        await updateConversationTranscriptFields(
+          access,
+          item.conversationId,
+          transcript.sentences ?? [],
+        );
         await persistTranscriptBlob(access, item.conversationId, transcript.sentences ?? []);
         repaired++;
       } else {

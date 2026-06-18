@@ -3,6 +3,7 @@ import type { NormalizedConversation } from "../adapters/types.js";
 import { resolveAppPath } from "../manifest.js";
 import { conversationSql } from "../schema.js";
 import {
+  type NormalizedTranscriptSentence,
   normalizeConversationMetadata,
   normalizeTranscript,
 } from "./conversation-normalization.js";
@@ -13,8 +14,70 @@ export async function persistTranscriptBlob(
   transcript: unknown,
 ): Promise<void> {
   const kvKey = resolveAppPath(`transcript/${conversationId}`);
-  const transcriptJson = JSON.stringify(normalizeTranscript(transcript) ?? []);
+  const transcriptJson = transcriptJsonForStorage(transcript);
   await access.kv.put(kvKey, transcriptJson);
+}
+
+export function transcriptJsonForStorage(transcript: unknown): string {
+  return JSON.stringify(normalizedTranscriptForStorage(transcript));
+}
+
+function normalizedTranscriptForStorage(transcript: unknown): NormalizedTranscriptSentence[] {
+  return normalizeTranscript(transcript) ?? [];
+}
+
+function formatTranscriptTimestamp(value: number | null): string | null {
+  if (value == null || !Number.isFinite(value)) return null;
+
+  const totalSeconds = Math.max(0, Math.floor(value));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const mm = String(minutes).padStart(2, "0");
+  const ss = String(seconds).padStart(2, "0");
+
+  return hours > 0 ? `${hours}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+export function transcriptTextForStorage(transcript: unknown): string {
+  return normalizedTranscriptForStorage(transcript)
+    .map((line) => {
+      const timestamp = formatTranscriptTimestamp(line.start_time);
+      const prefix = timestamp ? `[${timestamp}] ` : "";
+      return `${prefix}${line.speaker_name}: ${line.text}`;
+    })
+    .join("\n");
+}
+
+export function transcriptFieldsForStorage(transcript: unknown): {
+  transcriptJson: string;
+  transcriptText: string;
+} {
+  const normalized = normalizedTranscriptForStorage(transcript);
+  return {
+    transcriptJson: JSON.stringify(normalized),
+    transcriptText: normalized
+      .map((line) => {
+        const timestamp = formatTranscriptTimestamp(line.start_time);
+        const prefix = timestamp ? `[${timestamp}] ` : "";
+        return `${prefix}${line.speaker_name}: ${line.text}`;
+      })
+      .join("\n"),
+  };
+}
+
+export async function updateConversationTranscriptFields(
+  access: DelegatedAccess,
+  conversationId: string,
+  transcript: unknown,
+): Promise<void> {
+  const sqlDb = conversationSql(access);
+  const { transcriptJson, transcriptText } = transcriptFieldsForStorage(transcript);
+
+  await sqlDb.execute(
+    `UPDATE conversation SET transcript_json = ?, transcript_text = ?, updated_at = ? WHERE id = ?`,
+    [transcriptJson, transcriptText, new Date().toISOString(), conversationId],
+  );
 }
 
 /**
@@ -32,9 +95,10 @@ export async function persistConversation(
   const metadataJson = JSON.stringify(
     normalizeConversationMetadata(normalized.conversation.metadata),
   );
+  const { transcriptJson, transcriptText } = transcriptFieldsForStorage(normalized.transcript);
 
   await sqlDb.execute(
-    `INSERT INTO conversation (id, title, source, source_id, source_url, started_at, ended_at, duration_secs, summary, metadata, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO conversation (id, title, source, source_id, source_url, started_at, ended_at, duration_secs, summary, metadata, transcript_json, transcript_text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       normalized.conversation.id,
       normalized.conversation.title,
@@ -46,6 +110,8 @@ export async function persistConversation(
       normalized.conversation.duration_secs,
       normalized.conversation.summary,
       metadataJson,
+      transcriptJson,
+      transcriptText,
       now,
       now,
     ],
@@ -68,6 +134,6 @@ export async function persistConversation(
     );
   }
 
-  // 3. Write transcript blob to KV
+  // 3. Write transcript to SQL, with KV retained as a compatibility mirror
   await persistTranscriptBlob(access, normalized.conversation.id, normalized.transcript);
 }

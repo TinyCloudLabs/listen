@@ -197,7 +197,11 @@ describe("syncSingleTranscript", () => {
     );
     expect(conversationInserts).toHaveLength(1);
     expect(conversationInserts[0].params).toBeDefined();
-    expect(conversationInserts[0].params!.length).toBe(12);
+    expect(conversationInserts[0].sql).toContain("transcript_json");
+    expect(conversationInserts[0].sql).toContain("transcript_text");
+    expect(conversationInserts[0].params!.length).toBe(14);
+    expect(JSON.parse(conversationInserts[0].params![10])).toHaveLength(1);
+    expect(conversationInserts[0].params![11]).toContain("Alice: Hello everyone");
   });
 
   // ── Test 5: inserts participant rows into SQL ────────────────────

@@ -41,6 +41,8 @@ const SCHEMA_STATEMENTS = [
     duration_secs   REAL,
     summary         TEXT,
     metadata        TEXT,
+    transcript_json TEXT,
+    transcript_text TEXT,
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL
   )`,
@@ -51,6 +53,11 @@ const SCHEMA_STATEMENTS = [
     email           TEXT,
     speaker_label   TEXT
   )`,
+];
+
+const COLUMN_MIGRATION_STATEMENTS = [
+  `ALTER TABLE conversation ADD COLUMN transcript_json TEXT`,
+  `ALTER TABLE conversation ADD COLUMN transcript_text TEXT`,
 ];
 
 /**
@@ -78,17 +85,31 @@ export async function ensureSchema(access: DelegatedAccess): Promise<void> {
         continue;
       }
       // "not authorized" on CREATE TABLE IF NOT EXISTS likely means
-      // the table already exists and the authorizer blocks redundant DDL
+      // the table already exists and the authorizer blocks redundant DDL.
       if (msg.includes("not authorized")) {
-        // Verify by trying a SELECT — if it works, table exists
         const check = await sqlDb.query("SELECT 1 FROM conversation LIMIT 1");
         if (check.ok) {
           console.log("[schema] Tables exist (verified via SELECT), skipping DDL");
-          schemaInitialized.set(access, true);
-          return;
+          continue;
         }
       }
       throw new Error(`Failed to initialize conversations schema: ${msg}`);
+    }
+  }
+
+  const columnCheck = await sqlDb.query(
+    "SELECT transcript_json, transcript_text FROM conversation LIMIT 1",
+  );
+  if (!columnCheck.ok) {
+    for (const sql of COLUMN_MIGRATION_STATEMENTS) {
+      const result = await sqlDb.execute(sql);
+      if (!result.ok) {
+        const msg = (result as any).error?.message ?? "unknown error";
+        if (msg.includes("duplicate column") || msg.includes("already exists")) {
+          continue;
+        }
+        throw new Error(`Failed to update conversations schema: ${msg}`);
+      }
     }
   }
 

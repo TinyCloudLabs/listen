@@ -4,7 +4,11 @@ import { Buffer } from "node:buffer";
 import type { NormalizedConversation } from "../adapters/types.js";
 import { resolveAppPath } from "../manifest.js";
 import { conversationSql, ensureSchema } from "../schema.js";
-import { persistConversation, persistTranscriptBlob } from "../services/persist-conversation.js";
+import {
+  persistConversation,
+  persistTranscriptBlob,
+  updateConversationTranscriptFields,
+} from "../services/persist-conversation.js";
 import {
   isBase64AudioStorage,
   normalizeConversationMetadata,
@@ -609,7 +613,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
 
       // Fetch conversation
       const convoResult = await sqlDb.query(
-        `SELECT id, title, source, source_id, source_url, started_at, ended_at, duration_secs, summary, metadata, created_at, updated_at
+        `SELECT id, title, source, source_id, source_url, started_at, ended_at, duration_secs, summary, metadata, transcript_json, transcript_text, created_at, updated_at
          FROM conversation WHERE id = ?`,
         [id],
       );
@@ -641,36 +645,42 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
           )
         : [];
 
-      // Load transcript blob from KV
-      const kvKey = resolveAppPath(`transcript/${id}`);
-      console.log(`[conversations] Loading transcript from KV: ${kvKey}`);
       let transcript: unknown = null;
       let transcript_status: TranscriptStatus = missingTranscriptStatus(row);
-      try {
-        const kvResult = await access.kv.get(kvKey);
-        console.log(
-          `[conversations] KV result ok=${kvResult.ok}, hasData=${kvResult.ok && kvResult.data?.data != null}, type=${kvResult.ok ? typeof kvResult.data?.data : "n/a"}`,
-        );
-        if (kvResult.ok && kvResult.data.data) {
-          const raw = kvResult.data.data;
-          // KV may return already-parsed object or a JSON string
-          transcript = normalizeTranscript(raw);
-          transcript_status = transcriptAvailableStatus(row);
-        } else if (kvResult.ok) {
-          transcript_status = missingTranscriptStatus(row);
-        } else {
-          const message =
-            kvResult.error?.message ?? kvResult.error?.code ?? "Transcript KV read failed";
-          transcript_status = isMissingKvError(message)
+
+      if (typeof row.transcript_json === "string" && row.transcript_json.length > 0) {
+        transcript = normalizeTranscript(row.transcript_json);
+        transcript_status = transcriptAvailableStatus(row);
+      } else {
+        // Load legacy transcript blob from KV.
+        const kvKey = resolveAppPath(`transcript/${id}`);
+        console.log(`[conversations] Loading transcript from KV: ${kvKey}`);
+        try {
+          const kvResult = await access.kv.get(kvKey);
+          console.log(
+            `[conversations] KV result ok=${kvResult.ok}, hasData=${kvResult.ok && kvResult.data?.data != null}, type=${kvResult.ok ? typeof kvResult.data?.data : "n/a"}`,
+          );
+          if (kvResult.ok && kvResult.data.data) {
+            const raw = kvResult.data.data;
+            // KV may return already-parsed object or a JSON string.
+            transcript = normalizeTranscript(raw);
+            transcript_status = transcriptAvailableStatus(row);
+          } else if (kvResult.ok) {
+            transcript_status = missingTranscriptStatus(row);
+          } else {
+            const message =
+              kvResult.error?.message ?? kvResult.error?.code ?? "Transcript KV read failed";
+            transcript_status = isMissingKvError(message)
+              ? missingTranscriptStatus(row, message)
+              : transcriptReadErrorStatus(row, message);
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`[conversations] transcript unavailable for ${id}: ${message}`);
+          transcript_status = isMissingKvError(err)
             ? missingTranscriptStatus(row, message)
             : transcriptReadErrorStatus(row, message);
         }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.warn(`[conversations] transcript unavailable for ${id}: ${message}`);
-        transcript_status = isMissingKvError(err)
-          ? missingTranscriptStatus(row, message)
-          : transcriptReadErrorStatus(row, message);
       }
 
       res.json({ conversation, participants, transcript, transcript_status });
@@ -722,6 +732,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
       const fireflies = createFirefliesClient(apiKey);
       const transcriptDetail = await fireflies.getTranscript(sourceId);
       const transcript = normalizeTranscript(transcriptDetail.sentences ?? []) ?? [];
+      await updateConversationTranscriptFields(access, id, transcript);
       await persistTranscriptBlob(access, id, transcript);
 
       res.json({

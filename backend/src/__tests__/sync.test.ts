@@ -78,6 +78,7 @@ function seedTranscriptBlob(
 function createMockSQL() {
   const calls: Array<{ method: string; sql: string; params?: any[] }> = [];
   let dedupRows: Array<{ id: string; source_id: string }> = [];
+  const transcriptRows = new Set<string>();
   const failingSourceIds = new Set<string>();
 
   return {
@@ -87,6 +88,9 @@ function createMockSQL() {
         id: row.id ?? `conv-${row.source_id}`,
         source_id: row.source_id,
       }));
+    },
+    _seedTranscriptRow(conversationId: string) {
+      transcriptRows.add(conversationId);
     },
     /**
      * Causes any INSERT whose params contain the given source_id to throw.
@@ -99,12 +103,18 @@ function createMockSQL() {
       calls.push({ method: "query", sql, params });
 
       // Existing Fireflies SELECT query — rows are arrays.
-      if (sql.includes("SELECT id, source_id FROM conversation")) {
+      if (sql.includes("SELECT id, source_id") && sql.includes("FROM conversation")) {
         return {
           ok: true,
           data: {
-            rows: dedupRows.map((r) => [r.id, r.source_id]),
-            columns: ["id", "source_id"],
+            rows: dedupRows.map((r) => [
+              r.id,
+              r.source_id,
+              transcriptRows.has(r.id)
+                ? JSON.stringify([{ speaker_name: "Alice", text: "Already synced" }])
+                : null,
+            ]),
+            columns: ["id", "source_id", "transcript_json"],
           },
         };
       }
@@ -477,6 +487,7 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
     // ff-1 already exists in DB
     mockSQL._setDedupRows([{ source_id: "ff-1" }]);
     seedTranscriptBlob(mockKV, "conv-ff-1");
+    mockSQL._seedTranscriptRow("conv-ff-1");
 
     const res = await fetch(`http://localhost:${port}/api/sync/fireflies`, {
       method: "POST",
@@ -510,6 +521,8 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
     mockSQL._setDedupRows([{ source_id: "ff-1" }, { source_id: "ff-2" }]);
     seedTranscriptBlob(mockKV, "conv-ff-1");
     seedTranscriptBlob(mockKV, "conv-ff-2");
+    mockSQL._seedTranscriptRow("conv-ff-1");
+    mockSQL._seedTranscriptRow("conv-ff-2");
 
     const res = await fetch(`http://localhost:${port}/api/sync/fireflies`, {
       method: "POST",
@@ -551,6 +564,8 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
     mockSQL._setDedupRows([{ source_id: "ff-known-1" }, { source_id: "ff-known-2" }]);
     seedTranscriptBlob(mockKV, "conv-ff-known-1");
     seedTranscriptBlob(mockKV, "conv-ff-known-2");
+    mockSQL._seedTranscriptRow("conv-ff-known-1");
+    mockSQL._seedTranscriptRow("conv-ff-known-2");
 
     const res = await fetch(`http://localhost:${port}/api/sync/fireflies`, {
       method: "POST",
@@ -693,7 +708,7 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
 
   // ── KV transcript blob ─────────────────────────────────────────
 
-  it("writes transcript sentences to KV", async () => {
+  it("writes transcript sentences to SQL and KV", async () => {
     mockKV._data.set(KV_KEY, "test-api-key");
 
     const summaries = [createMockFullTranscript({ id: "ff-1" })];
@@ -721,6 +736,13 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
     const parsed = JSON.parse(storedBlob!);
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed[0].text).toBe("Hello everyone");
+
+    const conversationInsert = mockSQL._calls.find(
+      (call) => call.method === "execute" && call.sql.includes("INSERT INTO conversation"),
+    );
+    expect(conversationInsert).toBeDefined();
+    expect(JSON.parse(conversationInsert!.params![10])[0].text).toBe("Hello everyone");
+    expect(conversationInsert!.params![11]).toContain("Alice: Hello everyone");
   });
 
   it("repairs an existing Fireflies conversation with a missing transcript blob", async () => {
@@ -774,6 +796,15 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
     const storedBlob = mockKV._data.get("xyz.tinycloud.listen/transcript/existing-conv");
     expect(storedBlob).toBeDefined();
     expect(JSON.parse(storedBlob!)[0].text).toBe("Recovered transcript line");
+
+    const transcriptUpdate = mockSQL._calls.find(
+      (call) =>
+        call.method === "execute" &&
+        call.sql.includes("UPDATE conversation SET transcript_json = ?"),
+    );
+    expect(transcriptUpdate).toBeDefined();
+    expect(JSON.parse(transcriptUpdate!.params![0])[0].text).toBe("Recovered transcript line");
+    expect(transcriptUpdate!.params![1]).toContain("Alice: Recovered transcript line");
   });
 
   it("keeps Fireflies sync transcript-first and does not upload audio blobs", async () => {
@@ -1172,6 +1203,7 @@ describe("Sync Routes — GET /api/sync/fireflies/stream", () => {
     // ff-1 already in DB
     mockSQL._setDedupRows([{ source_id: "ff-1" }]);
     seedTranscriptBlob(mockKV, "conv-ff-1");
+    mockSQL._seedTranscriptRow("conv-ff-1");
 
     const res = await fetch(`http://localhost:${port}/api/sync/fireflies/stream?mode=incremental`);
     const text = await res.text();
@@ -1454,6 +1486,7 @@ describe("Sync Routes — SSE pagination integration (75 meetings)", () => {
     mockSQL._setDedupRows(existingIds);
     for (const existing of existingIds) {
       seedTranscriptBlob(mockKV, `conv-${existing.source_id}`);
+      mockSQL._seedTranscriptRow(`conv-${existing.source_id}`);
     }
 
     // Pagination: batch 1 = newest 25 (all new), batch 2 has known rows.
