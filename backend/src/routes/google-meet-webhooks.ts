@@ -12,6 +12,7 @@ import { GoogleAuthRevokedError } from "../services/google-auth.js";
 import type { SyncSingleResult } from "../services/google-meet-sync.js";
 import { checkAndRenewSubscription as defaultCheckAndRenew } from "../services/pubsub-manager.js";
 import type { SubscriptionMetadata, RenewalResult } from "../services/pubsub-manager.js";
+import { getGoogleMeetWebhooksStatus } from "../services/google-meet-webhooks.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -59,6 +60,59 @@ const PENDING_KV_KEY = resolveAppPath("webhooks/pending/google-meet");
 const FAILED_KV_KEY = resolveAppPath("webhooks/failed/google-meet");
 const SUBSCRIPTION_KV_KEY = resolveAppPath("webhooks/config/google-meet-subscription");
 const TRANSCRIPT_EVENT_TYPE = "google.workspace.meet.transcript.v2.fileGenerated";
+
+function getPubSubConfigDebug() {
+  const keyJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+  const pushUrl = process.env.GOOGLE_PUBSUB_PUSH_URL;
+  const result: {
+    serviceAccountKeyPresent: boolean;
+    pushUrlPresent: boolean;
+    parseable: boolean;
+    projectId?: string;
+    serviceAccountEmail?: string;
+    pushUrl?: string;
+    error?: string;
+  } = {
+    serviceAccountKeyPresent: Boolean(keyJson),
+    pushUrlPresent: Boolean(pushUrl),
+    parseable: false,
+  };
+
+  if (pushUrl) result.pushUrl = pushUrl;
+  if (!keyJson) {
+    result.error = "GOOGLE_SERVICE_ACCOUNT_KEY is not configured.";
+    return result;
+  }
+  if (!pushUrl) {
+    result.error = "GOOGLE_PUBSUB_PUSH_URL is not configured.";
+    return result;
+  }
+
+  try {
+    const parsed = JSON.parse(keyJson) as Record<string, unknown>;
+    if (typeof parsed.project_id === "string") result.projectId = parsed.project_id;
+    if (typeof parsed.client_email === "string") result.serviceAccountEmail = parsed.client_email;
+    result.parseable = Boolean(result.projectId && result.serviceAccountEmail);
+    if (!result.parseable) {
+      result.error = "GOOGLE_SERVICE_ACCOUNT_KEY is missing project_id or client_email.";
+    }
+  } catch {
+    result.error = "GOOGLE_SERVICE_ACCOUNT_KEY is not valid JSON.";
+  }
+
+  return result;
+}
+
+async function countJsonArray(backendKV: BackendKV, key: string): Promise<number> {
+  const result = await backendKV.get(key);
+  if (!result.ok || !result.data.data) return 0;
+  try {
+    const parsed = JSON.parse(result.data.data);
+    return Array.isArray(parsed) ? parsed.length : 0;
+  } catch {
+    return 0;
+  }
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -484,6 +538,82 @@ export function createGoogleMeetPushRouter(config: GoogleMeetPushConfig) {
             "Subscription expired. Please reconnect Google Meet to resume automatic syncing.",
         });
       }
+    });
+
+    router.get("/debug", auth, delegation, async (req: Request, res: Response) => {
+      const metaResult = await backendKV.get(SUBSCRIPTION_KV_KEY);
+      let subscriptionMetadata: {
+        exists: boolean;
+        parseable: boolean;
+        subscriptionName?: string;
+        googleUserId?: string;
+        expiresAt?: string;
+        active?: boolean;
+      } = {
+        exists: Boolean(metaResult.ok && metaResult.data.data),
+        parseable: false,
+      };
+
+      if (metaResult.ok && metaResult.data.data) {
+        try {
+          const metadata = JSON.parse(metaResult.data.data) as SubscriptionMetadata;
+          subscriptionMetadata = {
+            exists: true,
+            parseable: true,
+            subscriptionName: metadata.subscriptionName,
+            googleUserId: metadata.googleUserId,
+            expiresAt: metadata.expiresAt,
+            active: new Date(metadata.expiresAt).getTime() > Date.now(),
+          };
+        } catch {
+          subscriptionMetadata = { exists: true, parseable: false };
+        }
+      }
+
+      const tokensResult = await req.delegatedAccess!.kv.get(GOOGLE_TOKENS_PATH);
+      let googleTokens = {
+        exists: Boolean(tokensResult.ok && tokensResult.data.data),
+        parseable: false,
+        hasAccessToken: false,
+        hasRefreshToken: false,
+        hasGoogleUserId: false,
+      };
+
+      if (tokensResult.ok && tokensResult.data.data) {
+        try {
+          const tokens = JSON.parse(tokensResult.data.data as string) as Record<string, unknown>;
+          googleTokens = {
+            exists: true,
+            parseable: true,
+            hasAccessToken: typeof tokens.access_token === "string" && tokens.access_token !== "",
+            hasRefreshToken:
+              typeof tokens.refresh_token === "string" && tokens.refresh_token !== "",
+            hasGoogleUserId: typeof tokens.googleUserId === "string" && tokens.googleUserId !== "",
+          };
+        } catch {
+          googleTokens = { ...googleTokens, exists: true, parseable: false };
+        }
+      }
+
+      const [pendingCount, failedCount] = await Promise.all([
+        countJsonArray(backendKV, PENDING_KV_KEY),
+        countJsonArray(backendKV, FAILED_KV_KEY),
+      ]);
+
+      res.json({
+        runtime: getGoogleMeetWebhooksStatus(),
+        pubSub: getPubSubConfigDebug(),
+        expectedPushAuth: {
+          audience: expectedAudience,
+          serviceAccountEmail: expectedEmail,
+        },
+        subscription: subscriptionMetadata,
+        googleTokens,
+        queues: {
+          pendingCount,
+          failedCount,
+        },
+      });
     });
   }
 
