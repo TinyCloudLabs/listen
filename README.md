@@ -65,7 +65,7 @@ listen/
   `GRANOLA_API_KEY`, `ASSEMBLYAI_API_KEY`, and `DEEPGRAM_API_KEY`.
 - Listen stores backend secret values as encrypted vault entries under
   `vault/secrets/<NAME>`.
-- The frontend creates or discovers the default encryption network,
+- During TinyCloud sign-in, the SDK creates or discovers the default encryption network,
   `urn:tinycloud:encryption:<ownerDid>:default`, encrypts envelopes locally
   against the network public key, and delegates `tinycloud.encryption/decrypt`
   separately from the backend's KV and SQL reads.
