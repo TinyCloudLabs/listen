@@ -52,6 +52,22 @@ const STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 const GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo";
 
+function resolveRedirectUri(req: Request): string {
+  const configured = process.env.GOOGLE_REDIRECT_URI?.trim();
+  if (configured) return configured;
+
+  const forwardedProto = firstForwardedValue(req.get("x-forwarded-proto"));
+  const forwardedHost = firstForwardedValue(req.get("x-forwarded-host"));
+  const protocol = forwardedProto ?? req.protocol;
+  const host = forwardedHost ?? req.get("host");
+
+  return `${protocol}://${host}/api/auth/google/callback`;
+}
+
+function firstForwardedValue(value: string | undefined): string | undefined {
+  return value?.split(",")[0]?.trim() || undefined;
+}
+
 async function defaultFetchGoogleUserInfo(accessToken: string): Promise<{ sub: string }> {
   const res = await fetch(GOOGLE_USERINFO_URL, {
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -113,7 +129,7 @@ export function createGoogleAuthRouter(config: GoogleAuthRoutesConfig) {
     const state = randomUUID();
     pendingStates.set(state, { address: req.user!.address, createdAt: Date.now() });
 
-    const redirectUri = `${req.protocol}://${req.get("host")}/api/auth/google/callback`;
+    const redirectUri = resolveRedirectUri(req);
     const authUrl = buildAuthUrl(redirectUri, state);
 
     res.json({ authUrl });
@@ -146,7 +162,7 @@ export function createGoogleAuthRouter(config: GoogleAuthRoutesConfig) {
     pendingStates.delete(state); // consume — single use
     console.log("[google-auth] state valid for address:", stateEntry.address);
 
-    const redirectUri = `${req.protocol}://${req.get("host")}/api/auth/google/callback`;
+    const redirectUri = resolveRedirectUri(req);
     console.log("[google-auth] redirect URI for exchange:", redirectUri);
 
     try {

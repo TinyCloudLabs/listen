@@ -112,6 +112,7 @@ describe("Google Auth Routes", () => {
     await closeServer(server);
     delete process.env.GOOGLE_CLIENT_ID;
     delete process.env.GOOGLE_CLIENT_SECRET;
+    delete process.env.GOOGLE_REDIRECT_URI;
   });
 
   // ── GET /api/auth/google (initiate) ─────────────────────────────
@@ -138,6 +139,33 @@ describe("Google Auth Routes", () => {
       const url = new URL(body.authUrl);
       const redirectUri = url.searchParams.get("redirect_uri");
       expect(redirectUri).toContain("/api/auth/google/callback");
+    });
+
+    it("uses GOOGLE_REDIRECT_URI when configured", async () => {
+      process.env.GOOGLE_REDIRECT_URI = "https://api.listen.tinycloud.xyz/api/auth/google/callback";
+
+      const res = await fetch(`http://localhost:${port}/api/auth/google`);
+      const body = await res.json();
+      const url = new URL(body.authUrl);
+
+      expect(url.searchParams.get("redirect_uri")).toBe(
+        "https://api.listen.tinycloud.xyz/api/auth/google/callback",
+      );
+    });
+
+    it("uses forwarded proto and host when no redirect URI override is configured", async () => {
+      const res = await fetch(`http://localhost:${port}/api/auth/google`, {
+        headers: {
+          "x-forwarded-proto": "https",
+          "x-forwarded-host": "api.listen.tinycloud.xyz",
+        },
+      });
+      const body = await res.json();
+      const url = new URL(body.authUrl);
+
+      expect(url.searchParams.get("redirect_uri")).toBe(
+        "https://api.listen.tinycloud.xyz/api/auth/google/callback",
+      );
     });
   });
 
