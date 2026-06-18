@@ -67,7 +67,7 @@ function requestMethod(input: Parameters<typeof fetch>[0], init?: RequestInit): 
 
 export function listenDebugLog(step: string, event: string, details: DebugDetails = {}): void {
   if (!isListenDebugEnabled()) return;
-  console.info(`[listen] ${step} ${event}`, {
+  console.debug(`[listen] ${step} ${event}`, {
     at: timestamp(),
     ...details,
   });
@@ -108,7 +108,7 @@ function networkDebugLog(event: string, details: DebugDetails): void {
   const status = details.status != null ? ` ${details.status}` : "";
   const elapsed = details.elapsedMs != null ? ` ${details.elapsedMs}ms` : "";
 
-  console.info(
+  console.debug(
     `[listen] network.request ${event} #${requestId} ${method} ${path}${status}${elapsed}`,
     {
       at: timestamp(),

@@ -30,7 +30,7 @@ export function isDebugEnabled(): boolean {
 function setDebugEnabled(enabled: boolean): boolean {
   if (!canUseStorage()) return false;
   window.localStorage.setItem(DEBUG_STORAGE_KEY, enabled ? "true" : "false");
-  console.info(`[listen] debug ${enabled ? "enabled" : "disabled"}`);
+  console.debug(`[listen] debug ${enabled ? "enabled" : "disabled"}`);
   return enabled;
 }
 
@@ -49,7 +49,7 @@ if (typeof window !== "undefined") {
   target.debug = (enabled?: boolean): boolean => {
     if (enabled === undefined) {
       const current = isDebugEnabled();
-      console.info(`[listen] debug ${current ? "enabled" : "disabled"}`);
+      console.debug(`[listen] debug ${current ? "enabled" : "disabled"}`);
       return current;
     }
     return setDebugEnabled(Boolean(enabled));
