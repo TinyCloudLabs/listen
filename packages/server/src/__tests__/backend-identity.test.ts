@@ -55,6 +55,13 @@ describe("createBackendIdentity", () => {
           actions: ["get", "put", "del", "list", "metadata"],
           skipPrefix: true,
         },
+        {
+          service: "tinycloud.kv",
+          space: "listen-be",
+          path: "xyz.tinycloud.listen/",
+          actions: ["get", "put", "del", "list", "metadata"],
+          skipPrefix: true,
+        },
       ],
     });
   });

@@ -72,6 +72,33 @@ async function mockListenBackend(page: Page): Promise<void> {
       return;
     }
 
+    if (url.pathname === "/api/workspace-state") {
+      await fulfillJson(route, {
+        delegation: {
+          status: "active",
+          stored: true,
+          validPolicy: true,
+          expiresAt: "2026-05-21T00:00:00.000Z",
+          activation: "active",
+        },
+        backendReadableSecrets: {
+          fireflies: { readable: false },
+          granola: { readable: false },
+          assemblyai: { readable: false },
+          deepgram: { readable: false },
+        },
+        googleMeet: {
+          available: false,
+          connected: false,
+        },
+        conversations: {
+          hasAny: true,
+          total: 1,
+        },
+      });
+      return;
+    }
+
     if (/^\/api\/config\/[^/]+-key\/exists$/.test(url.pathname)) {
       await fulfillJson(route, { exists: false });
       return;
