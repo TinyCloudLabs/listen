@@ -42,6 +42,37 @@ function firefliesJob(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function granolaJob(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "granola-job-1",
+    source: "granola",
+    status: "queued",
+    mode: "incremental",
+    synced: 0,
+    skipped: 0,
+    failed: 0,
+    errors: [],
+    ...overrides,
+  };
+}
+
+function googleMeetJob(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "google-job-1",
+    source: "google-meet",
+    status: "queued",
+    mode: "incremental",
+    checked: 0,
+    synced: 0,
+    skipped: 0,
+    skippedExisting: 0,
+    skippedNoTranscript: 0,
+    failed: 0,
+    errors: [],
+    ...overrides,
+  };
+}
+
 describe("SyncControl", () => {
   let api: ApiClient;
   let onSyncComplete: ReturnType<typeof vi.fn>;
@@ -456,9 +487,77 @@ describe("SyncControl", () => {
         hasGoogleMeet={true}
       />,
     );
+    expect(screen.getByRole("button", { name: /sync all/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /sync fireflies/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /sync granola/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /sync google meet/i })).toBeInTheDocument();
+  });
+
+  it("starts all connected sources as background jobs", async () => {
+    const getMock = vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/config/webhook-status")
+        return Promise.resolve({ configured: false, pendingCount: 0, webhookUrl: "" });
+      if (url === "/api/webhooks/google-meet/status")
+        return Promise.resolve({
+          enabled: false,
+          subscriptionActive: false,
+          expiresAt: null,
+          pendingCount: 0,
+          failedCount: 0,
+        });
+      if (url === "/api/sync/fireflies/jobs/current") return Promise.resolve(null);
+      if (url === "/api/sync/granola/jobs/current") return Promise.resolve(null);
+      if (url === "/api/sync/google-meet/jobs/current") return Promise.resolve(null);
+      if (url === "/api/sync/fireflies/jobs/fireflies-job-1")
+        return Promise.resolve(
+          firefliesJob({ id: "fireflies-job-1", status: "completed", synced: 1 }),
+        );
+      if (url === "/api/sync/granola/jobs/granola-job-1")
+        return Promise.resolve(granolaJob({ status: "completed", synced: 1 }));
+      if (url === "/api/sync/google-meet/jobs/google-job-1")
+        return Promise.resolve(googleMeetJob({ status: "completed", synced: 1, checked: 1 }));
+      return Promise.resolve(null);
+    });
+    const postMock = vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/sync/fireflies/jobs") {
+        return Promise.resolve(firefliesJob({ id: "fireflies-job-1", status: "queued" }));
+      }
+      if (url === "/api/sync/granola/jobs") {
+        return Promise.resolve(granolaJob({ status: "queued" }));
+      }
+      if (url === "/api/sync/google-meet/jobs") {
+        return Promise.resolve(googleMeetJob({ status: "queued" }));
+      }
+      return Promise.resolve(null);
+    });
+    api = mockApi({ get: getMock, post: postMock });
+
+    render(
+      <SyncControl
+        api={api}
+        backendUrl="http://localhost:3001"
+        getAccessToken={getAccessToken}
+        onSyncComplete={onSyncComplete}
+        hasFireflies={true}
+        hasGranola={true}
+        hasGoogleMeet={true}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /sync all/i }));
+
+    await waitFor(() => {
+      expect(postMock).toHaveBeenCalledWith("/api/sync/fireflies/jobs", { mode: "incremental" });
+      expect(postMock).toHaveBeenCalledWith("/api/sync/granola/jobs", { mode: "incremental" });
+      expect(postMock).toHaveBeenCalledWith("/api/sync/google-meet/jobs", {
+        mode: "incremental",
+      });
+    });
+    await waitFor(() => {
+      expect(getMock).toHaveBeenCalledWith("/api/sync/fireflies/jobs/fireflies-job-1");
+      expect(getMock).toHaveBeenCalledWith("/api/sync/granola/jobs/granola-job-1");
+      expect(getMock).toHaveBeenCalledWith("/api/sync/google-meet/jobs/google-job-1");
+    });
   });
 
   // ── Google Meet webhook status tests ────────────────────────────────

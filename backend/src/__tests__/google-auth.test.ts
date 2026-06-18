@@ -83,6 +83,12 @@ describe("Google Auth Service", () => {
       );
     });
 
+    it("requests drive.meet.readonly scope for transcript document fallback", () => {
+      const url = buildAuthUrl("http://localhost:3001/callback", "s");
+      const params = new URL(url).searchParams;
+      expect(params.get("scope")).toContain("https://www.googleapis.com/auth/drive.meet.readonly");
+    });
+
     it("sets access_type=offline for refresh token", () => {
       const url = buildAuthUrl("http://localhost:3001/callback", "s");
       const params = new URL(url).searchParams;

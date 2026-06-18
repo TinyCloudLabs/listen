@@ -17,6 +17,7 @@ const EXPECTED_EMAIL = "sa@project.iam.gserviceaccount.com";
 const MOCK_TOKENS = {
   access_token: "ya29.test",
   refresh_token: "1//test-refresh",
+  googleUserId: "google-user-1",
 };
 
 const MOCK_METADATA: SubscriptionMetadata = {
@@ -84,6 +85,8 @@ describe("GET /api/webhooks/google-meet/check", () => {
   let backendKV: ReturnType<typeof createMockKV>;
   let mockAccess: ReturnType<typeof createMockAccess>;
   let checkAndRenewFn: ReturnType<typeof mock>;
+  let originalServiceAccountKey: string | undefined;
+  let originalPushUrl: string | undefined;
 
   function createApp(overrides?: { authMiddleware?: any; delegationMiddleware?: any }) {
     const delegationMiddleware =
@@ -115,6 +118,8 @@ describe("GET /api/webhooks/google-meet/check", () => {
   }
 
   beforeEach(async () => {
+    originalServiceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+    originalPushUrl = process.env.GOOGLE_PUBSUB_PUSH_URL;
     backendKV = createMockKV();
     mockAccess = createMockAccess();
 
@@ -130,10 +135,18 @@ describe("GET /api/webhooks/google-meet/check", () => {
 
   afterEach(async () => {
     if (server) await closeServer(server);
+    if (originalServiceAccountKey === undefined) delete process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+    else process.env.GOOGLE_SERVICE_ACCOUNT_KEY = originalServiceAccountKey;
+    if (originalPushUrl === undefined) delete process.env.GOOGLE_PUBSUB_PUSH_URL;
+    else process.env.GOOGLE_PUBSUB_PUSH_URL = originalPushUrl;
   });
 
   function getCheck() {
     return fetch(`http://localhost:${port}/api/webhooks/google-meet/check`);
+  }
+
+  function getDebug() {
+    return fetch(`http://localhost:${port}/api/webhooks/google-meet/debug`);
   }
 
   // ── Auth ─────────────────────────────────────────────────────────
@@ -169,6 +182,51 @@ describe("GET /api/webhooks/google-meet/check", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toEqual({ status: "not_configured" });
+  });
+
+  it("returns redacted webhook diagnostics", async () => {
+    process.env.GOOGLE_SERVICE_ACCOUNT_KEY = JSON.stringify({
+      project_id: "project-1",
+      client_email: EXPECTED_EMAIL,
+      private_key: "secret-private-key",
+    });
+    process.env.GOOGLE_PUBSUB_PUSH_URL = EXPECTED_AUDIENCE;
+    backendKV._data.set(SUBSCRIPTION_KV_KEY, JSON.stringify(MOCK_METADATA));
+    backendKV._data.set(PENDING_KV_KEY, JSON.stringify([{ conferenceRecordName: "cr-1" }]));
+    backendKV._data.set(FAILED_KV_KEY, JSON.stringify([{ conferenceRecordName: "cr-2" }]));
+
+    const res = await getDebug();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.pubSub).toMatchObject({
+      serviceAccountKeyPresent: true,
+      pushUrlPresent: true,
+      parseable: true,
+      projectId: "project-1",
+      serviceAccountEmail: EXPECTED_EMAIL,
+      pushUrl: EXPECTED_AUDIENCE,
+    });
+    expect(body.subscription).toMatchObject({
+      exists: true,
+      parseable: true,
+      subscriptionName: MOCK_METADATA.subscriptionName,
+      googleUserId: MOCK_METADATA.googleUserId,
+      active: true,
+    });
+    expect(body.googleTokens).toEqual({
+      exists: true,
+      parseable: true,
+      hasAccessToken: true,
+      hasRefreshToken: true,
+      hasGoogleUserId: true,
+    });
+    expect(body.queues).toEqual({ pendingCount: 1, failedCount: 1 });
+
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain("secret-private-key");
+    expect(serialized).not.toContain(MOCK_TOKENS.access_token);
+    expect(serialized).not.toContain(MOCK_TOKENS.refresh_token);
   });
 
   // ── Active ────────────────────────────────────────────────────────

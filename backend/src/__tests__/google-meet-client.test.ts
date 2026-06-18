@@ -25,6 +25,13 @@ function jsonResponse(data: unknown, status = 200): Response {
   });
 }
 
+function textResponse(data: string, status = 200): Response {
+  return new Response(data, {
+    status,
+    headers: { "Content-Type": "text/plain" },
+  });
+}
+
 function lastFetchCall() {
   const calls = mockFetch.mock.calls;
   return calls[calls.length - 1];
@@ -365,6 +372,28 @@ describe("GoogleMeetClient", () => {
       const full = await client.getFullConference(CONFERENCE);
 
       expect(full.entries).toHaveLength(2);
+    });
+
+    it("falls back to exporting the transcript Google Doc when entries are empty", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({ participants: [PARTICIPANT] }));
+      mockFetch.mockResolvedValueOnce(jsonResponse({ transcripts: [TRANSCRIPT] }));
+      mockFetch.mockResolvedValueOnce(jsonResponse({ transcriptEntries: [] }));
+      mockFetch.mockResolvedValueOnce(textResponse("Alice Smith\nHello from the exported doc."));
+
+      const full = await client.getFullConference(CONFERENCE);
+
+      expect(full.entries).toHaveLength(2);
+      expect(full.entries[0]).toMatchObject({
+        name: "conferenceRecords/abc123/transcripts/def456/entries/drive-doc-1",
+        text: "Alice Smith",
+        languageCode: "und",
+      });
+      expect(full.entries[1].text).toBe("Hello from the exported doc.");
+
+      const [url] = nthFetchCall(3);
+      expect(url).toContain("https://www.googleapis.com/drive/v3/files/");
+      expect(url).toContain("1kuceFZohVoCh6FulBHxwy6I15Ogpc4hP");
+      expect(url).toContain("mimeType=text%2Fplain");
     });
   });
 
