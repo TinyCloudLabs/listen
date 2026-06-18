@@ -101,6 +101,35 @@ export interface ItemListResponse {
 export interface DelegationResponse {
   status: DelegationStatus;
   expiresAt: string | null;
+  activation?: "active" | "pending";
+}
+
+export type WorkspaceSecretKey = "fireflies" | "granola" | "assemblyai" | "deepgram";
+
+export interface WorkspaceStateResponse {
+  delegation: {
+    status: "active" | "expired" | "none" | "stale";
+    stored: boolean;
+    validPolicy: boolean;
+    expiresAt: string | null;
+    activation: "active" | "pending" | "failed" | "unknown";
+    error?: string;
+  };
+  backendReadableSecrets: Record<
+    WorkspaceSecretKey,
+    {
+      readable: boolean | null;
+      error?: string;
+    }
+  >;
+  googleMeet: {
+    available: boolean;
+    connected: boolean | null;
+  };
+  conversations: {
+    hasAny: boolean | null;
+    total: number | null;
+  };
 }
 
 export interface ApiError {

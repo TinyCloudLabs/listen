@@ -1,3 +1,5 @@
+import { listenDebugFetch } from "./debug.js";
+
 // ── Types ────────────────────────────────────────────────────────────
 
 export interface VerifyResponse {
@@ -12,7 +14,12 @@ export interface VerifyResponse {
  * Request a nonce from the backend for SIWE authentication.
  */
 export async function requestNonce(backendUrl: string, address: string): Promise<string> {
-  const res = await fetch(`${backendUrl}/api/auth/nonce?address=${encodeURIComponent(address)}`);
+  const path = `/api/auth/nonce?address=${encodeURIComponent(address)}`;
+  const res = await listenDebugFetch(`${backendUrl}${path}`, undefined, {
+    client: "auth",
+    method: "GET",
+    path,
+  });
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: "unknown", message: res.statusText }));
@@ -34,14 +41,19 @@ export async function verifySession(
   siwe: string,
   signature: string,
 ): Promise<VerifyResponse> {
-  const res = await fetch(`${backendUrl}/api/auth/verify`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Requested-With": "Listen",
+  const path = "/api/auth/verify";
+  const res = await listenDebugFetch(
+    `${backendUrl}${path}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Requested-With": "Listen",
+      },
+      body: JSON.stringify({ message: siwe, signature }),
     },
-    body: JSON.stringify({ message: siwe, signature }),
-  });
+    { client: "auth", method: "POST", path },
+  );
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: "unknown", message: res.statusText }));

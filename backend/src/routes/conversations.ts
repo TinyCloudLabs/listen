@@ -4,13 +4,15 @@ import { Buffer } from "node:buffer";
 import type { NormalizedConversation } from "../adapters/types.js";
 import { resolveAppPath } from "../manifest.js";
 import { conversationSql, ensureSchema } from "../schema.js";
-import { persistConversation } from "../services/persist-conversation.js";
+import { persistConversation, persistTranscriptBlob } from "../services/persist-conversation.js";
 import {
   isBase64AudioStorage,
   normalizeConversationMetadata,
   normalizeTranscript,
   resolveAudioKey,
 } from "../services/conversation-normalization.js";
+import { FirefliesClient } from "../services/fireflies-client.js";
+import { readFirefliesApiKeyFromAccess } from "../services/fireflies-secret.js";
 import {
   TRANSCRIPTION_SECRET_NAMES,
   createTranscriptionProvider,
@@ -26,6 +28,7 @@ interface ConversationsRoutesConfig {
   authMiddleware: RequestHandler;
   delegationMiddleware: RequestHandler;
   transcriptionProviders?: Partial<Record<TranscriptionProviderName, TranscriptionProvider>>;
+  createFirefliesClient?: (apiKey: string) => Pick<FirefliesClient, "getTranscript">;
 }
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -55,6 +58,14 @@ interface TranscribeBody {
 interface SourceCount {
   source: string;
   total: number;
+}
+
+interface TranscriptStatus {
+  available: boolean;
+  missing: boolean;
+  repairable: boolean;
+  reason?: string;
+  message?: string;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -111,6 +122,46 @@ function parseParticipants(value: unknown): string[] {
 
 function audioFallbackUrl(id: string): string {
   return `/api/conversations/${encodeURIComponent(id)}/audio`;
+}
+
+function repairableFromFireflies(row: Record<string, unknown>): boolean {
+  return row.source === "fireflies" && typeof row.source_id === "string" && row.source_id !== "";
+}
+
+function missingTranscriptStatus(row: Record<string, unknown>, message?: string): TranscriptStatus {
+  return {
+    available: false,
+    missing: true,
+    repairable: repairableFromFireflies(row),
+    reason: "missing_kv_blob",
+    ...(message ? { message } : {}),
+  };
+}
+
+function transcriptReadErrorStatus(
+  row: Record<string, unknown>,
+  message: string,
+): TranscriptStatus {
+  return {
+    available: false,
+    missing: false,
+    repairable: repairableFromFireflies(row),
+    reason: "read_failed",
+    message,
+  };
+}
+
+function transcriptAvailableStatus(row: Record<string, unknown>): TranscriptStatus {
+  return {
+    available: true,
+    missing: false,
+    repairable: repairableFromFireflies(row),
+  };
+}
+
+function isMissingKvError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /key not found|not[_ -]?found|kv_not_found/i.test(message);
 }
 
 async function resolveAudioPlaybackMetadata(
@@ -379,7 +430,12 @@ function normalizeTranscription(
 // ── Conversations Routes ─────────────────────────────────────────────
 
 export function createConversationsRouter(config: ConversationsRoutesConfig) {
-  const { authMiddleware, delegationMiddleware, transcriptionProviders = {} } = config;
+  const {
+    authMiddleware,
+    delegationMiddleware,
+    transcriptionProviders = {},
+    createFirefliesClient = (apiKey: string) => new FirefliesClient(apiKey),
+  } = config;
   const router = Router();
 
   router.use(authMiddleware);
@@ -588,22 +644,95 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
       // Load transcript blob from KV
       const kvKey = resolveAppPath(`transcript/${id}`);
       console.log(`[conversations] Loading transcript from KV: ${kvKey}`);
-      const kvResult = await access.kv.get(kvKey);
-      console.log(
-        `[conversations] KV result ok=${kvResult.ok}, hasData=${kvResult.ok && kvResult.data?.data != null}, type=${kvResult.ok ? typeof kvResult.data?.data : "n/a"}`,
-      );
       let transcript: unknown = null;
-      if (kvResult.ok && kvResult.data.data) {
-        const raw = kvResult.data.data;
-        // KV may return already-parsed object or a JSON string
-        transcript = normalizeTranscript(raw);
+      let transcript_status: TranscriptStatus = missingTranscriptStatus(row);
+      try {
+        const kvResult = await access.kv.get(kvKey);
+        console.log(
+          `[conversations] KV result ok=${kvResult.ok}, hasData=${kvResult.ok && kvResult.data?.data != null}, type=${kvResult.ok ? typeof kvResult.data?.data : "n/a"}`,
+        );
+        if (kvResult.ok && kvResult.data.data) {
+          const raw = kvResult.data.data;
+          // KV may return already-parsed object or a JSON string
+          transcript = normalizeTranscript(raw);
+          transcript_status = transcriptAvailableStatus(row);
+        } else if (kvResult.ok) {
+          transcript_status = missingTranscriptStatus(row);
+        } else {
+          const message =
+            kvResult.error?.message ?? kvResult.error?.code ?? "Transcript KV read failed";
+          transcript_status = isMissingKvError(message)
+            ? missingTranscriptStatus(row, message)
+            : transcriptReadErrorStatus(row, message);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[conversations] transcript unavailable for ${id}: ${message}`);
+        transcript_status = isMissingKvError(err)
+          ? missingTranscriptStatus(row, message)
+          : transcriptReadErrorStatus(row, message);
       }
 
-      res.json({ conversation, participants, transcript });
+      res.json({ conversation, participants, transcript, transcript_status });
     } catch (err) {
       console.error("[conversations] detail failed:", err);
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: "detail_failed", message });
+    }
+  });
+
+  // ── POST /:id/transcript/repair — recover a missing transcript blob ──
+  router.post("/:id/transcript/repair", async (req: Request, res: Response) => {
+    const access = req.delegatedAccess!;
+    const { id } = req.params;
+
+    try {
+      await ensureSchema(access);
+      const sqlDb = conversationSql(access);
+      const convoResult = await sqlDb.query(
+        `SELECT id, source, source_id FROM conversation WHERE id = ?`,
+        [id],
+      );
+
+      if (!convoResult.ok || !convoResult.data.rows?.length) {
+        res.status(404).json({ error: "not_found", message: `Conversation ${id} not found` });
+        return;
+      }
+
+      const row = rowToObject(convoResult.data.rows[0] as unknown[], convoResult.data.columns);
+      if (!repairableFromFireflies(row)) {
+        res.status(400).json({
+          error: "repair_unavailable",
+          message: "Automatic transcript recovery is only available for Fireflies conversations.",
+        });
+        return;
+      }
+
+      const apiKey = await readFirefliesApiKeyFromAccess(access);
+      if (!apiKey) {
+        res.status(404).json({
+          error: "no_api_key",
+          message:
+            "No Fireflies API key configured. Store FIREFLIES_API_KEY with TinyCloud Secrets.",
+        });
+        return;
+      }
+
+      const sourceId = String(row.source_id);
+      const fireflies = createFirefliesClient(apiKey);
+      const transcriptDetail = await fireflies.getTranscript(sourceId);
+      const transcript = normalizeTranscript(transcriptDetail.sentences ?? []) ?? [];
+      await persistTranscriptBlob(access, id, transcript);
+
+      res.json({
+        ok: true,
+        transcript,
+        transcript_status: transcriptAvailableStatus(row),
+      });
+    } catch (err) {
+      console.error("[conversations] transcript repair failed:", err);
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: "repair_failed", message });
     }
   });
 

@@ -27,6 +27,7 @@ import { createHealthRouter } from "./routes/health.js";
 import { createManifestRouter } from "./routes/manifest.js";
 import { createServerInfoRouter } from "./routes/server-info.js";
 import { createDelegationRouter } from "./routes/delegations.js";
+import { createWorkspaceStateRouter } from "./routes/workspace-state.js";
 import { createConfigRouter } from "./routes/config.js";
 import { createFirefliesRouter } from "./routes/fireflies.js";
 import { createGranolaRouter } from "./routes/granola.js";
@@ -294,6 +295,17 @@ async function main() {
       cache: delegationCache,
       authMiddleware,
       writeLimiter: delegationLimiter,
+    }),
+  );
+
+  app.use(
+    "/api/workspace-state",
+    createWorkspaceStateRouter({
+      node,
+      did,
+      store: delegationStore,
+      cache: delegationCache,
+      authMiddleware,
     }),
   );
 

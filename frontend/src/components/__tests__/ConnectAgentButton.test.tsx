@@ -7,6 +7,14 @@ import type { ServerInfo } from "@listen/core";
 // Mock the named export from @listen/client BEFORE importing the component.
 vi.mock("@listen/client", () => ({
   createManifestDelegation: vi.fn(),
+  isListenDebugEnabled: vi.fn(() => false),
+  installListenDebugFetchLogger: vi.fn(),
+  listenDebugFetch: vi.fn((input: RequestInfo | URL, init?: RequestInit) => fetch(input, init)),
+  listenDebugLog: vi.fn(),
+  startListenDebugStep: vi.fn(() => ({
+    complete: vi.fn(),
+    fail: vi.fn(),
+  })),
 }));
 
 import { createManifestDelegation } from "@listen/client";

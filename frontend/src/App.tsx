@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComposedManifestRequest, TinyCloudWeb } from "@tinycloud/web-sdk";
-import type { ServerInfo } from "@listen/core";
+import type { ServerInfo, WorkspaceStateResponse } from "@listen/core";
 import {
   connectWallet,
   requestNonce,
@@ -10,7 +10,6 @@ import {
   createApiClient,
   createManifestDelegation,
   sendDelegation,
-  checkDelegationStatus,
   revokeDelegation,
   SessionStore,
   loadPersistedSession,
@@ -32,6 +31,7 @@ import { AppShell, type ShellRoute, type ShellSourceConfig } from "./components/
 import { MobileExperience } from "./components/mobile";
 import { useIsMobile } from "./hooks/useIsMobile";
 import { APP_MANIFEST } from "./lib/appManifest";
+import { debugFetch, debugLog, startDebugStep } from "./lib/debug";
 import { createTinyCloudConversationApi } from "./lib/tinycloudConversations";
 
 // ── Environment ─────────────────────────────────────────────────────
@@ -75,26 +75,58 @@ function isChatEnabled(): boolean {
 }
 
 async function fetchAgentInfo(endpoint: string): Promise<ServerInfo | null> {
+  const step = startDebugStep("bootstrap.agent-info", { endpoint });
   try {
-    const res = await fetch(`${endpoint}/info`);
-    if (!res.ok) return null;
-    return (await res.json()) as ServerInfo;
-  } catch {
+    const res = await debugFetch(`${endpoint}/info`, undefined, {
+      client: "bootstrap",
+      method: "GET",
+      path: "/info",
+    });
+    if (!res.ok) {
+      step.complete({ ok: false, status: res.status });
+      return null;
+    }
+    const info = (await res.json()) as ServerInfo;
+    step.complete({ ok: true, status: res.status, did: info.did });
+    return info;
+  } catch (err) {
+    step.fail(err);
     return null;
   }
 }
 
 async function fetchBackendInfo(): Promise<ServerInfo | null> {
+  const step = startDebugStep("bootstrap.backend-info", { endpoint: BACKEND_URL });
   try {
-    const res = await fetch(`${BACKEND_URL}/api/server-info`);
-    if (!res.ok) return null;
-    return (await res.json()) as ServerInfo;
-  } catch {
+    const res = await debugFetch(`${BACKEND_URL}/api/server-info`, undefined, {
+      client: "bootstrap",
+      method: "GET",
+      path: "/api/server-info",
+    });
+    if (!res.ok) {
+      step.complete({ ok: false, status: res.status });
+      return null;
+    }
+    const info = (await res.json()) as ServerInfo;
+    step.complete({
+      ok: true,
+      status: res.status,
+      did: info.did,
+      googleMeetAvailable: info.features?.googleMeet?.available ?? null,
+    });
+    return info;
+  } catch (err) {
+    step.fail(err);
     return null;
   }
 }
 
 async function loadAppBootstrapContext(ownerDid?: string): Promise<AppBootstrapContext> {
+  const step = startDebugStep("bootstrap.context", {
+    ownerDid,
+    agentEnabled: ENABLE_AGENT,
+    tinycloudHooksEnabled: ENABLE_TINYCLOUD_HOOKS,
+  });
   const [info, agent] = await Promise.all([
     fetchBackendInfo(),
     ENABLE_AGENT ? fetchAgentInfo(AGENT_ENDPOINT) : Promise.resolve(null),
@@ -109,12 +141,19 @@ async function loadAppBootstrapContext(ownerDid?: string): Promise<AppBootstrapC
     ...(info ? { decryptDelegateDid: info.did } : {}),
   });
 
-  return {
+  const context = {
     info,
     agent,
     composedRequest,
     conversationEventPathPrefix,
   };
+  step.complete({
+    hasBackendInfo: info !== null,
+    hasAgentInfo: agent !== null,
+    delegateeCount: delegatees.length,
+    conversationEventPathPrefix,
+  });
+  return context;
 }
 
 function localConversationEventPathPrefix(): string | null {
@@ -518,21 +557,42 @@ async function checkSecretExists(
   secretName: string,
   label: string,
 ): Promise<boolean> {
-  const result = await tcw.secrets.get(secretName);
-  if (result.ok) return Boolean(result.data);
+  const step = startDebugStep("secret.direct-exists", { label, secretName });
+  try {
+    const result = await tcw.secrets.get(secretName);
+    if (result.ok) {
+      const exists = Boolean(result.data);
+      step.complete({ exists });
+      return exists;
+    }
 
-  const code = result.error?.code?.toLowerCase();
-  if (code === "key_not_found" || code === "not_found") return false;
+    const code = result.error?.code?.toLowerCase();
+    if (code === "key_not_found" || code === "not_found") {
+      step.complete({ exists: false, code });
+      return false;
+    }
 
-  throw new Error(result.error?.message ?? `Failed to check ${label} API key`);
+    throw new Error(result.error?.message ?? `Failed to check ${label} API key`);
+  } catch (err) {
+    step.fail(err);
+    throw err;
+  }
 }
 
 async function checkSecretExistsFromBackend(
   api: ApiClient,
   source: ProviderSecretSource,
 ): Promise<boolean> {
-  const result = await api.get<{ exists: boolean }>(`/api/config/${source}-key/exists`);
-  return result.exists;
+  const path = `/api/config/${source}-key/exists`;
+  const step = startDebugStep("secret.backend-exists", { source, path });
+  try {
+    const result = await api.get<{ exists: boolean }>(path);
+    step.complete({ exists: result.exists });
+    return result.exists;
+  } catch (err) {
+    step.fail(err);
+    throw err;
+  }
 }
 
 function providerForTranscriptionSecret(secretName: string): TranscriptionProvider | null {
@@ -709,17 +769,27 @@ export function App() {
 
   const signInDirectTinyCloud = useCallback(
     async (addr: string, web3Provider: Parameters<typeof createAndSignIn>[0]) => {
-      const { tcw: tcwInstance } = await createAndSignIn(web3Provider, {
-        autoCreateSpace: true,
-        tinycloudHosts: TINYCLOUD_HOSTS,
-        manifest: APP_MANIFEST,
-      });
-      applyDirectTinyCloudSession(addr, tcwInstance);
+      const step = startDebugStep("auth.direct-tinycloud", { hasAddress: Boolean(addr) });
+      try {
+        const { tcw: tcwInstance } = await createAndSignIn(web3Provider, {
+          autoCreateSpace: true,
+          tinycloudHosts: TINYCLOUD_HOSTS,
+          manifest: APP_MANIFEST,
+        });
+        applyDirectTinyCloudSession(addr, tcwInstance);
+        step.complete({ did: tcwInstance.did ?? null, spaceId: tcwInstance.spaceId ?? null });
+      } catch (err) {
+        step.fail(err);
+        throw err;
+      }
     },
     [applyDirectTinyCloudSession],
   );
 
   const restoreStoredSession = useCallback(async (storedAddress?: string): Promise<boolean> => {
+    const step = startDebugStep("auth.restore-session", {
+      storedAddressProvided: Boolean(storedAddress),
+    });
     const sessionAddress = sessionStoreRef.current.getAddress();
     const addr = storedAddress ?? sessionAddress;
     if (
@@ -729,6 +799,14 @@ export function App() {
       !sessionStoreRef.current.hasSession() ||
       sessionStoreRef.current.isExpired()
     ) {
+      step.complete({
+        restored: false,
+        reason: "missing-or-expired-session",
+        hasAddress: Boolean(addr),
+        hasSessionAddress: Boolean(sessionAddress),
+        hasSession: sessionStoreRef.current.hasSession(),
+        expired: sessionStoreRef.current.isExpired(),
+      });
       return false;
     }
 
@@ -737,11 +815,15 @@ export function App() {
     let bootstrap: AppBootstrapContext;
     try {
       bootstrap = await loadAppBootstrapContext(ownerDid);
-    } catch {
+    } catch (err) {
+      step.fail(err, { restored: false, reason: "bootstrap-failed" });
       return false;
     }
     const { info, agent, composedRequest, conversationEventPathPrefix } = bootstrap;
-    if (!info) return false;
+    if (!info) {
+      step.complete({ restored: false, reason: "backend-info-unavailable" });
+      return false;
+    }
     const restoredTinyCloud = persistedSession
       ? await restoreTinyCloudWeb(addr, {
           autoCreateSpace: true,
@@ -765,106 +847,169 @@ export function App() {
     setLiveWritePathPrefix(conversationEventPathPrefix);
     setLiveWriteHost(restoredTinyCloud?.tcw.hosts[0] ?? null);
     setLiveWriteSpaceId(restoredTinyCloud?.tcw.spaceId ?? persistedSession?.spaceId ?? null);
+    step.complete({
+      restored: true,
+      hasPersistedTinyCloud: Boolean(persistedSession),
+      restoredTinyCloud: restoredTinyCloud !== null,
+      backendDid: info.did,
+      agentDid: agent?.did ?? null,
+    });
     return true;
   }, []);
 
   const renewBackendDelegation = useCallback(async () => {
+    const step = startDebugStep("delegation.renew", {
+      hasTinyCloud: Boolean(tcw),
+      hasBackendDid: Boolean(backendDid),
+      hasCapabilityRequest: Boolean(capabilityRequest),
+    });
     if (!tcw || !backendDid || !capabilityRequest) {
+      step.complete({ ok: false, reason: "missing-context" });
       throw new Error("Reconnect your wallet to finish source setup.");
     }
 
     const token = sessionStoreRef.current.getToken();
     if (!token) {
+      step.complete({ ok: false, reason: "missing-token" });
       throw new Error("Session expired. Sign in again to finish source setup.");
     }
 
-    const { serialized } = await createManifestDelegation(tcw, backendDid, capabilityRequest);
-    await sendDelegation(BACKEND_URL, serialized, token);
-    setHasBackendDelegation(true);
+    try {
+      const { serialized } = await createManifestDelegation(tcw, backendDid, capabilityRequest);
+      await sendDelegation(BACKEND_URL, serialized, token);
+      setHasBackendDelegation(true);
+      step.complete({ ok: true, backendDid });
+    } catch (err) {
+      step.fail(err);
+      throw err;
+    }
   }, [backendDid, capabilityRequest, tcw]);
 
   useEffect(() => {
     if (!api) {
       setHasBackendDelegation(tcw ? false : null);
-      return;
-    }
-
-    const token = sessionStoreRef.current.getToken();
-    if (!token) {
-      setHasBackendDelegation(false);
+      setHasFirefliesBackendAccess(null);
+      setHasGranolaBackendAccess(null);
+      setHasTranscriptionBackendAccess(EMPTY_TRANSCRIPTION_STATUS);
+      setHasGoogleMeet(null);
       return;
     }
 
     setHasBackendDelegation(null);
+    setHasFirefliesBackendAccess(null);
+    setHasGranolaBackendAccess(null);
+    setHasTranscriptionBackendAccess(EMPTY_TRANSCRIPTION_STATUS);
+    setHasGoogleMeet(null);
+
     let cancelled = false;
-    checkDelegationStatus(BACKEND_URL, token)
-      .then(async (status) => {
-        if (cancelled) return;
-        if (status.status === "active") {
-          setHasBackendDelegation(true);
+    const step = startDebugStep("workspace-state.backend", { path: "/api/workspace-state" });
+    api
+      .get<WorkspaceStateResponse>("/api/workspace-state")
+      .then((state) => {
+        if (cancelled) {
+          step.complete({ cancelled: true });
           return;
         }
-        await renewBackendDelegation();
+
+        const delegationActive = state.delegation.status === "active";
+        setHasBackendDelegation(delegationActive);
+
+        const backendSecretReadable = state.backendReadableSecrets;
+        const backendStatus = (readable: boolean | null) =>
+          readable ?? (delegationActive ? false : null);
+
+        setHasFirefliesBackendAccess(backendStatus(backendSecretReadable.fireflies.readable));
+        setHasGranolaBackendAccess(backendStatus(backendSecretReadable.granola.readable));
+        setHasTranscriptionBackendAccess({
+          assemblyai: backendStatus(backendSecretReadable.assemblyai.readable),
+          deepgram: backendStatus(backendSecretReadable.deepgram.readable),
+        });
+        setHasGoogleMeet(state.googleMeet.connected ?? (delegationActive ? false : null));
+
+        if (!tcw) {
+          setHasKey(backendSecretReadable.fireflies.readable === true);
+          setHasGranolaKey(backendSecretReadable.granola.readable === true);
+          setHasTranscriptionKeys({
+            assemblyai: backendSecretReadable.assemblyai.readable === true,
+            deepgram: backendSecretReadable.deepgram.readable === true,
+          });
+        }
+
+        if (state.conversations.hasAny !== null) {
+          setHasExistingConversations(state.conversations.hasAny);
+        } else if (!tcw && delegationActive) {
+          setHasExistingConversations(false);
+        }
+        step.complete({
+          delegationStatus: state.delegation.status,
+          firefliesReadable: backendSecretReadable.fireflies.readable,
+          granolaReadable: backendSecretReadable.granola.readable,
+          assemblyaiReadable: backendSecretReadable.assemblyai.readable,
+          deepgramReadable: backendSecretReadable.deepgram.readable,
+          googleMeetConnected: state.googleMeet.connected,
+          hasConversations: state.conversations.hasAny,
+        });
+      })
+      .catch((err) => {
+        if (cancelled) {
+          step.complete({ cancelled: true });
+          return;
+        }
+        step.fail(err);
+        setHasBackendDelegation(false);
+        setHasFirefliesBackendAccess(null);
+        setHasGranolaBackendAccess(null);
+        setHasTranscriptionBackendAccess(EMPTY_TRANSCRIPTION_STATUS);
+        setHasGoogleMeet(false);
+        if (!tcw) {
+          setHasKey(false);
+          setHasGranolaKey(false);
+          setHasTranscriptionKeys({ assemblyai: false, deepgram: false });
+          setHasExistingConversations(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, refreshKey, tcw]);
+
+  useEffect(() => {
+    if (!tcw) return;
+
+    let cancelled = false;
+    setHasKey(null);
+    checkSecretExists(tcw, FIREFLIES_SECRET_NAME, "Fireflies")
+      .then((exists) => {
+        if (!cancelled) setHasKey(exists);
       })
       .catch(() => {
-        if (!cancelled) setHasBackendDelegation(false);
+        if (!cancelled) setHasKey(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [api, renewBackendDelegation, tcw]);
+  }, [tcw]);
 
   useEffect(() => {
-    if (hasBackendDelegation === null) {
-      setHasKey(null);
-      return;
-    }
+    if (!tcw) return;
 
-    if (tcw) {
-      checkSecretExists(tcw, FIREFLIES_SECRET_NAME, "Fireflies")
-        .then((exists) => setHasKey(exists))
-        .catch(() => setHasKey(false));
-      return;
-    }
-
-    if (api && hasBackendDelegation === true) {
-      checkSecretExistsFromBackend(api, "fireflies")
-        .then((exists) => setHasKey(exists))
-        .catch(() => setHasKey(false));
-      return;
-    }
-
-    setHasKey(false);
-  }, [api, tcw, hasBackendDelegation]);
+    let cancelled = false;
+    setHasGranolaKey(null);
+    checkSecretExists(tcw, GRANOLA_SECRET_NAME, "Granola")
+      .then((exists) => {
+        if (!cancelled) setHasGranolaKey(exists);
+      })
+      .catch(() => {
+        if (!cancelled) setHasGranolaKey(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tcw]);
 
   useEffect(() => {
-    if (hasBackendDelegation === null) {
-      setHasGranolaKey(null);
-      return;
-    }
-
-    if (tcw) {
-      checkSecretExists(tcw, GRANOLA_SECRET_NAME, "Granola")
-        .then((exists) => setHasGranolaKey(exists))
-        .catch(() => setHasGranolaKey(false));
-      return;
-    }
-
-    if (api && hasBackendDelegation === true) {
-      checkSecretExistsFromBackend(api, "granola")
-        .then((exists) => setHasGranolaKey(exists))
-        .catch(() => setHasGranolaKey(false));
-      return;
-    }
-
-    setHasGranolaKey(false);
-  }, [api, tcw, hasBackendDelegation]);
-
-  useEffect(() => {
-    if (hasBackendDelegation === null) {
-      setHasTranscriptionKeys(EMPTY_TRANSCRIPTION_STATUS);
-      return;
-    }
+    if (!tcw) return;
 
     let cancelled = false;
     const providers = [
@@ -874,13 +1019,7 @@ export function App() {
 
     setHasTranscriptionKeys(EMPTY_TRANSCRIPTION_STATUS);
     for (const [provider, secretName] of providers) {
-      const check = tcw
-        ? checkSecretExists(tcw, secretName, provider)
-        : api && hasBackendDelegation === true
-          ? checkSecretExistsFromBackend(api, provider)
-          : Promise.resolve(false);
-
-      check
+      checkSecretExists(tcw, secretName, provider)
         .then((exists) => {
           if (!cancelled) {
             setHasTranscriptionKeys((state) => ({ ...state, [provider]: exists }));
@@ -896,106 +1035,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [api, tcw, hasBackendDelegation]);
-
-  useEffect(() => {
-    if (!api || hasKey !== true) {
-      setHasFirefliesBackendAccess(null);
-      return;
-    }
-
-    if (hasBackendDelegation === false) {
-      setHasFirefliesBackendAccess(false);
-      return;
-    }
-
-    if (hasBackendDelegation !== true) {
-      setHasFirefliesBackendAccess(null);
-      return;
-    }
-
-    setHasFirefliesBackendAccess(null);
-    checkSecretExistsFromBackend(api, "fireflies")
-      .then((exists) => setHasFirefliesBackendAccess(exists))
-      .catch(() => setHasFirefliesBackendAccess(false));
-  }, [api, hasBackendDelegation, hasKey]);
-
-  useEffect(() => {
-    if (!api || hasGranolaKey !== true) {
-      setHasGranolaBackendAccess(null);
-      return;
-    }
-
-    if (hasBackendDelegation === false) {
-      setHasGranolaBackendAccess(false);
-      return;
-    }
-
-    if (hasBackendDelegation !== true) {
-      setHasGranolaBackendAccess(null);
-      return;
-    }
-
-    setHasGranolaBackendAccess(null);
-    checkSecretExistsFromBackend(api, "granola")
-      .then((exists) => setHasGranolaBackendAccess(exists))
-      .catch(() => setHasGranolaBackendAccess(false));
-  }, [api, hasBackendDelegation, hasGranolaKey]);
-
-  useEffect(() => {
-    if (!api) {
-      setHasTranscriptionBackendAccess(EMPTY_TRANSCRIPTION_STATUS);
-      return;
-    }
-
-    let cancelled = false;
-    const providers = ["assemblyai", "deepgram"] as const;
-    setHasTranscriptionBackendAccess(EMPTY_TRANSCRIPTION_STATUS);
-
-    for (const provider of providers) {
-      if (hasTranscriptionKeys[provider] !== true) {
-        setHasTranscriptionBackendAccess((state) => ({ ...state, [provider]: null }));
-        continue;
-      }
-
-      if (hasBackendDelegation === false) {
-        setHasTranscriptionBackendAccess((state) => ({ ...state, [provider]: false }));
-        continue;
-      }
-
-      if (hasBackendDelegation !== true) {
-        setHasTranscriptionBackendAccess((state) => ({ ...state, [provider]: null }));
-        continue;
-      }
-
-      checkSecretExistsFromBackend(api, provider)
-        .then((exists) => {
-          if (!cancelled) {
-            setHasTranscriptionBackendAccess((state) => ({ ...state, [provider]: exists }));
-          }
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setHasTranscriptionBackendAccess((state) => ({ ...state, [provider]: false }));
-          }
-        });
-    }
-
-    return () => {
-      cancelled = true;
-    };
-  }, [api, hasBackendDelegation, hasTranscriptionKeys]);
-
-  useEffect(() => {
-    if (!api || hasBackendDelegation !== true) {
-      setHasGoogleMeet(null);
-      return;
-    }
-    api
-      .get<{ connected: boolean }>("/api/config/google-meet/connected")
-      .then((res) => setHasGoogleMeet(res.connected))
-      .catch(() => setHasGoogleMeet(false));
-  }, [api, hasBackendDelegation]);
+  }, [tcw]);
 
   useEffect(() => {
     if (!conversationApi || (!tcw && hasBackendDelegation !== true)) {
@@ -1003,10 +1043,21 @@ export function App() {
       return;
     }
 
+    const step = startDebugStep("conversations.exists", {
+      path: "/api/conversations?limit=1&offset=0",
+      directTinyCloud: tcw !== null,
+      backendDelegation: hasBackendDelegation,
+    });
     conversationApi
       .get<{ total: number }>("/api/conversations?limit=1&offset=0")
-      .then((res) => setHasExistingConversations(res.total > 0))
-      .catch(() => setHasExistingConversations(false));
+      .then((res) => {
+        step.complete({ total: res.total, hasAny: res.total > 0 });
+        setHasExistingConversations(res.total > 0);
+      })
+      .catch((err) => {
+        step.fail(err);
+        setHasExistingConversations(false);
+      });
   }, [conversationApi, hasBackendDelegation, refreshKey, tcw]);
 
   useEffect(() => {
@@ -1069,19 +1120,30 @@ export function App() {
 
   const handleSignIn = useCallback(
     async (options?: { forceWallet?: boolean }) => {
+      const step = startDebugStep("auth.sign-in", { forceWallet: options?.forceWallet === true });
       setAuthLoading(true);
       setAuthError(null);
       setWorkspaceActionError(null);
       try {
         if (!options?.forceWallet) {
+          debugLog("auth.sign-in", "restore-before-wallet");
           const restored = await restoreStoredSession();
-          if (restored) return;
+          if (restored) {
+            step.complete({ mode: "restored-before-wallet" });
+            return;
+          }
         }
 
+        debugLog("auth.sign-in", "wallet-connect-started", { host: OPENKEY_HOST });
         const { address: addr, web3Provider } = await connectWallet({ host: OPENKEY_HOST });
+        debugLog("auth.sign-in", "wallet-connect-completed", { hasAddress: Boolean(addr) });
         if (!options?.forceWallet) {
+          debugLog("auth.sign-in", "restore-after-wallet");
           const restored = await restoreStoredSession(addr);
-          if (restored) return;
+          if (restored) {
+            step.complete({ mode: "restored-after-wallet" });
+            return;
+          }
         }
 
         clearPersistedSession(addr);
@@ -1090,27 +1152,38 @@ export function App() {
         const bootstrap = await loadAppBootstrapContext(ownerDid).catch(() => null);
         if (!bootstrap) {
           await signInDirectTinyCloud(addr, web3Provider);
+          step.complete({ mode: "direct-tinycloud", reason: "bootstrap-unavailable" });
           return;
         }
 
         if (!bootstrap.info) {
           await signInDirectTinyCloud(addr, web3Provider);
+          step.complete({ mode: "direct-tinycloud", reason: "backend-info-unavailable" });
           return;
         }
 
+        debugLog("auth.sign-in", "nonce-request-started", { backendUrl: BACKEND_URL });
         const nonce = await requestNonce(BACKEND_URL, addr).catch(() => null);
         if (!nonce) {
           await signInDirectTinyCloud(addr, web3Provider);
+          step.complete({ mode: "direct-tinycloud", reason: "nonce-unavailable" });
           return;
         }
+        debugLog("auth.sign-in", "nonce-request-completed");
 
         const { info, agent, composedRequest, conversationEventPathPrefix } = bootstrap;
+        debugLog("auth.sign-in", "tinycloud-sign-in-started", { backendDid: info.did });
         const { tcw: tcwInstance, session } = await createAndSignIn(web3Provider, {
           nonce,
           autoCreateSpace: true,
           tinycloudHosts: TINYCLOUD_HOSTS,
           capabilityRequest: composedRequest,
         });
+        debugLog("auth.sign-in", "tinycloud-sign-in-completed", {
+          did: tcwInstance.did ?? null,
+          spaceId: tcwInstance.spaceId ?? null,
+        });
+        debugLog("auth.sign-in", "backend-session-verify-started");
         const verified = await verifySession(BACKEND_URL, session.siwe, session.signature).catch(
           () => null,
         );
@@ -1121,8 +1194,12 @@ export function App() {
             // Continue into direct TinyCloud mode when backend verification is unavailable.
           }
           await signInDirectTinyCloud(addr, web3Provider);
+          step.complete({ mode: "direct-tinycloud", reason: "backend-verification-failed" });
           return;
         }
+        debugLog("auth.sign-in", "backend-session-verify-completed", {
+          expiresIn: verified.expiresIn,
+        });
 
         sessionStoreRef.current.setSession(verified.token, verified.expiresIn, addr);
         const apiClient = createApiClient(BACKEND_URL, {
@@ -1139,7 +1216,15 @@ export function App() {
         setLiveWritePathPrefix(conversationEventPathPrefix);
         setLiveWriteHost(tcwInstance.hosts[0] ?? null);
         setLiveWriteSpaceId(tcwInstance.spaceId ?? null);
+        step.complete({
+          mode: "backend",
+          backendDid: info.did,
+          agentDid: agent?.did ?? null,
+          did: tcwInstance.did ?? null,
+          spaceId: tcwInstance.spaceId ?? null,
+        });
       } catch (err) {
+        step.fail(err);
         setAuthError(err instanceof Error ? err.message : String(err));
       } finally {
         setAuthLoading(false);
@@ -1257,6 +1342,74 @@ export function App() {
     [api, backendDid, ensureBackendAccess, tcw],
   );
 
+  const autoAccessRenewalKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!api || !tcw || !backendDid) return;
+
+    const sources: Array<"fireflies" | "granola"> = [];
+    if (
+      hasKey === true &&
+      (hasBackendDelegation === false || hasFirefliesBackendAccess === false)
+    ) {
+      sources.push("fireflies");
+    }
+    if (
+      hasGranolaKey === true &&
+      (hasBackendDelegation === false || hasGranolaBackendAccess === false)
+    ) {
+      sources.push("granola");
+    }
+
+    if (sources.length === 0) return;
+
+    const renewalKey = [
+      address,
+      sources.join(","),
+      hasBackendDelegation,
+      hasFirefliesBackendAccess,
+      hasGranolaBackendAccess,
+    ].join("|");
+    if (autoAccessRenewalKeyRef.current === renewalKey) return;
+    autoAccessRenewalKeyRef.current = renewalKey;
+
+    let cancelled = false;
+    setWorkspaceActionLoading(true);
+    setWorkspaceActionError(null);
+
+    (async () => {
+      try {
+        if (sources.includes("fireflies")) {
+          await ensureFirefliesBackendAccess();
+        }
+        if (sources.includes("granola")) {
+          await ensureGranolaBackendAccess();
+        }
+        if (!cancelled) setRefreshKey((k) => k + 1);
+      } catch (err) {
+        if (!cancelled) setWorkspaceActionError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!cancelled) setWorkspaceActionLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    address,
+    api,
+    backendDid,
+    ensureFirefliesBackendAccess,
+    ensureGranolaBackendAccess,
+    hasBackendDelegation,
+    hasFirefliesBackendAccess,
+    hasGranolaBackendAccess,
+    hasGranolaKey,
+    hasKey,
+    tcw,
+  ]);
+
   const handleFinishFirefliesAccess = useCallback(async () => {
     setWorkspaceActionLoading(true);
     setWorkspaceActionError(null);
@@ -1373,6 +1526,17 @@ export function App() {
     backendUnavailable &&
     workspaceChecksReady &&
     (!hasUsableInbox || activePage === "sources" || activePage === "connections");
+  const showOptimisticInbox =
+    isSignedIn &&
+    activePage === "inbox" &&
+    !selectedConversationId &&
+    conversationApi !== null &&
+    showWorkspaceLoading;
+  const showInbox =
+    activePage === "inbox" &&
+    !selectedConversationId &&
+    conversationApi !== null &&
+    (hasUsableInbox || showOptimisticInbox);
 
   if (!isSignedIn) {
     return <LandingPage loading={authLoading} error={authError} onSignIn={handleSignIn} />;
@@ -1384,7 +1548,7 @@ export function App() {
     ? "welcome"
     : selectedConversationId
       ? "library / transcript"
-      : showWorkspaceLoading
+      : showWorkspaceLoading && !showOptimisticInbox
         ? "workspace / checking"
         : showBackendOfflineState
           ? "workspace / backend offline"
@@ -1400,14 +1564,14 @@ export function App() {
                     ? "settings / sources"
                     : activePage === "chat"
                       ? "library / chat"
-                      : hasUsableInbox
+                      : hasUsableInbox || showOptimisticInbox
                         ? `inbox · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`
                         : "onboarding / sources";
   const pageTitle = !isSignedIn
     ? "Capture thoughts. Transform them into insights."
     : selectedConversationId
       ? "Transcript detail"
-      : showWorkspaceLoading
+      : showWorkspaceLoading && !showOptimisticInbox
         ? "Checking workspace."
         : showBackendOfflineState
           ? "Backend offline."
@@ -1423,7 +1587,7 @@ export function App() {
                     ? "Connections."
                     : activePage === "chat"
                       ? "Ask your transcripts."
-                      : hasUsableInbox
+                      : hasUsableInbox || showOptimisticInbox
                         ? "Everything you've said."
                         : "Connect what you already have.";
 
@@ -1594,8 +1758,8 @@ export function App() {
 
   if (
     isMobile &&
-    hasUsableInbox &&
-    !showWorkspaceLoading &&
+    (hasUsableInbox || showOptimisticInbox) &&
+    (!showWorkspaceLoading || showOptimisticInbox) &&
     !needsFirefliesAccess &&
     !needsGranolaAccess &&
     !showOnboarding &&
@@ -1641,7 +1805,7 @@ export function App() {
       sources={sourceItems}
       folders={[]}
     >
-      {showWorkspaceLoading && <WorkspaceStatusPanel mode="checking" />}
+      {showWorkspaceLoading && !showOptimisticInbox && <WorkspaceStatusPanel mode="checking" />}
 
       {showBackendOfflineState && <WorkspaceStatusPanel mode="backend-offline" />}
 
@@ -1833,8 +1997,16 @@ export function App() {
         />
       )}
 
-      {hasUsableInbox && activePage === "inbox" && !selectedConversationId && (
+      {showInbox && (
         <>
+          {showWorkspaceLoading && (
+            <div style={s.pendingBanner}>
+              <span>
+                Checking workspace access. Cached conversations are available while Listen refreshes
+                source state.
+              </span>
+            </div>
+          )}
           {backendUnavailable && (
             <div style={s.pendingBanner}>
               <span>
@@ -1843,7 +2015,7 @@ export function App() {
               </span>
             </div>
           )}
-          {api && (
+          {api && hasUsableInbox && (
             <SyncControl
               api={api}
               backendUrl={BACKEND_URL}

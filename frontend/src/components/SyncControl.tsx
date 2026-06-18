@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useRef, type FC } from "react";
 import type { ApiClient } from "@listen/client";
+import { debugFetch, debugLog, startDebugStep } from "../lib/debug";
 
 const LAST_SYNC_KEY = "lastSyncTimestamp";
+const FIREFLIES_JOB_NOT_FOUND_RETRY_LIMIT = 8;
 
 interface SyncResult {
   synced: number;
@@ -13,6 +15,7 @@ interface SyncResult {
 
 interface SyncProgress {
   phase: "queued" | "listing" | "syncing";
+  batch?: number;
   totalListed?: number;
   current?: number;
   total?: number;
@@ -35,6 +38,7 @@ interface FirefliesSyncJob {
   status: FirefliesSyncJobStatus;
   mode: "incremental" | "full";
   message?: string;
+  batch?: number;
   totalListed?: number;
   current?: number;
   total?: number;
@@ -132,6 +136,14 @@ function isActiveFirefliesJob(job: FirefliesSyncJob): boolean {
   return job.status === "queued" || job.status === "listing" || job.status === "syncing";
 }
 
+function isFirefliesJobNotFoundError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    err.message.includes("API error (404)") &&
+    err.message.includes("Sync job not found")
+  );
+}
+
 function progressFromFirefliesJob(job: FirefliesSyncJob): SyncProgress {
   if (job.status === "syncing") {
     return {
@@ -147,6 +159,7 @@ function progressFromFirefliesJob(job: FirefliesSyncJob): SyncProgress {
   if (job.status === "listing") {
     return {
       phase: "listing",
+      batch: job.batch,
       totalListed: job.totalListed,
     };
   }
@@ -195,6 +208,16 @@ export const SyncControl: FC<SyncControlProps> = ({
 
   const applyFirefliesJob = useCallback(
     (job: FirefliesSyncJob) => {
+      debugLog("sync.fireflies.job", "received", {
+        jobId: job.id,
+        status: job.status,
+        mode: job.mode,
+        current: job.current ?? null,
+        total: job.total ?? null,
+        synced: job.synced,
+        skipped: job.skipped,
+        failed: job.failed,
+      });
       if (isActiveFirefliesJob(job)) {
         activeFirefliesJobRef.current = job.id;
         setSyncing(true);
@@ -245,21 +268,58 @@ export const SyncControl: FC<SyncControlProps> = ({
 
   const pollFirefliesJob = useCallback(
     (jobId: string) => {
+      debugLog("sync.fireflies.poll-loop", "started", { jobId, intervalMs: 1500 });
       clearFirefliesPoll();
       let inFlight = false;
+      let notFoundAttempts = 0;
 
       const refresh = async () => {
         if (inFlight) return;
         inFlight = true;
+        const step = startDebugStep("sync.fireflies.poll", { jobId });
         try {
           const job = await api.get<FirefliesSyncJob>(`/api/sync/fireflies/jobs/${jobId}`);
-          if (!isFirefliesJob(job)) return;
+          if (!isFirefliesJob(job)) {
+            step.complete({ validJob: false });
+            return;
+          }
+          notFoundAttempts = 0;
           applyFirefliesJob(job);
           if (!isActiveFirefliesJob(job)) {
             clearFirefliesPoll();
+            debugLog("sync.fireflies.poll-loop", "stopped", {
+              jobId,
+              reason: "terminal-status",
+              status: job.status,
+            });
           }
+          step.complete({
+            validJob: true,
+            status: job.status,
+            current: job.current ?? null,
+            total: job.total ?? null,
+          });
         } catch (err) {
+          if (
+            isFirefliesJobNotFoundError(err) &&
+            notFoundAttempts < FIREFLIES_JOB_NOT_FOUND_RETRY_LIMIT
+          ) {
+            notFoundAttempts += 1;
+            step.fail(err, {
+              retrying: true,
+              notFoundAttempts,
+              retryLimit: FIREFLIES_JOB_NOT_FOUND_RETRY_LIMIT,
+            });
+            debugLog("sync.fireflies.poll", "retrying-not-found", {
+              jobId,
+              notFoundAttempts,
+              retryLimit: FIREFLIES_JOB_NOT_FOUND_RETRY_LIMIT,
+            });
+            return;
+          }
+          step.fail(err);
           clearFirefliesPoll();
+          debugLog("sync.fireflies.poll-loop", "stopped", { jobId, reason: "poll-error" });
           setSyncing(false);
           setSyncSource(null);
           setProgress(null);
@@ -278,32 +338,59 @@ export const SyncControl: FC<SyncControlProps> = ({
   useEffect(() => {
     api
       .get<WebhookStatus>("/api/config/webhook-status")
-      .then((status) => setWebhookStatus(status))
-      .catch(() => {});
+      .then((status) => {
+        debugLog("sync.webhook-status", "completed", {
+          configured: status.configured,
+          pendingCount: status.pendingCount,
+        });
+        setWebhookStatus(status);
+      })
+      .catch((err) => debugLog("sync.webhook-status", "failed", { error: String(err) }));
   }, [api]);
 
   useEffect(() => {
     if (!hasGM) return;
     api
       .get<GoogleMeetWebhookStatus>("/api/webhooks/google-meet/status")
-      .then((status) => setGmWebhookStatus(status))
-      .catch(() => {});
+      .then((status) => {
+        debugLog("sync.google-meet.webhook-status", "completed", {
+          enabled: status.enabled,
+          subscriptionActive: status.subscriptionActive,
+          pendingCount: status.pendingCount,
+          failedCount: status.failedCount,
+        });
+        setGmWebhookStatus(status);
+      })
+      .catch((err) =>
+        debugLog("sync.google-meet.webhook-status", "failed", { error: String(err) }),
+      );
   }, [api, hasGM]);
 
   useEffect(() => {
     if (!hasFireflies) return;
 
     let canceled = false;
+    const step = startDebugStep("sync.fireflies.current-job", {
+      path: "/api/sync/fireflies/jobs/current",
+    });
     api
       .get<FirefliesSyncJob | null>("/api/sync/fireflies/jobs/current")
       .then((job) => {
-        if (canceled || !isFirefliesJob(job)) return;
+        if (canceled) {
+          step.complete({ canceled: true });
+          return;
+        }
+        if (!isFirefliesJob(job)) {
+          step.complete({ hasJob: false });
+          return;
+        }
         applyFirefliesJob(job);
         if (isActiveFirefliesJob(job)) {
           pollFirefliesJob(job.id);
         }
+        step.complete({ hasJob: true, jobId: job.id, status: job.status });
       })
-      .catch(() => {});
+      .catch((err) => step.fail(err));
 
     return () => {
       canceled = true;
@@ -322,6 +409,7 @@ export const SyncControl: FC<SyncControlProps> = ({
 
   const startFirefliesJob = useCallback(
     async (mode: "incremental" | "full") => {
+      const step = startDebugStep("sync.fireflies.start-job", { mode });
       setSyncing(true);
       setSyncSource("fireflies");
       setResult(null);
@@ -337,7 +425,9 @@ export const SyncControl: FC<SyncControlProps> = ({
         if (isActiveFirefliesJob(job)) {
           pollFirefliesJob(job.id);
         }
+        step.complete({ jobId: job.id, status: job.status, mode: job.mode });
       } catch (err) {
+        step.fail(err);
         setError(err instanceof Error ? err.message : String(err));
         setProgress(null);
         setSyncing(false);
@@ -349,6 +439,7 @@ export const SyncControl: FC<SyncControlProps> = ({
 
   const startStreamSync = useCallback(
     async (mode: "incremental" | "full", source: "granola" | "google-meet") => {
+      const step = startDebugStep(`sync.${source}.stream`, { mode, source });
       setSyncing(true);
       setSyncSource(source);
       setResult(null);
@@ -364,14 +455,23 @@ export const SyncControl: FC<SyncControlProps> = ({
           source === "google-meet"
             ? `${backendUrl}/api/sync/google-meet/stream`
             : `${backendUrl}/api/sync/granola/stream?mode=${mode}`;
-        const response = await fetch(url, {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: controller.signal,
-        });
+        const response = await debugFetch(
+          url,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: controller.signal,
+          },
+          {
+            client: "sync-stream",
+            method: "GET",
+            source,
+          },
+        );
 
         if (!response.ok || !response.body) {
           throw new Error(`Stream failed: ${response.status} ${response.statusText}`);
         }
+        debugLog(`sync.${source}.stream`, "response-opened", { status: response.status });
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
@@ -391,14 +491,24 @@ export const SyncControl: FC<SyncControlProps> = ({
             switch (event.type) {
               case "status":
                 setProgress((prev) => ({ ...prev, phase: data.phase, total: data.total }));
+                debugLog(`sync.${source}.stream`, "status", {
+                  phase: data.phase,
+                  total: data.total,
+                });
                 break;
               case "progress":
                 if (data.phase === "listing") {
                   setProgress((prev) => ({
                     ...prev,
                     phase: "listing",
+                    batch: data.batch,
                     totalListed: data.totalListed,
                   }));
+                  debugLog(`sync.${source}.stream`, "progress", {
+                    phase: data.phase,
+                    batch: data.batch,
+                    totalListed: data.totalListed,
+                  });
                 } else {
                   setProgress({
                     phase: "syncing",
@@ -407,6 +517,13 @@ export const SyncControl: FC<SyncControlProps> = ({
                     synced: data.synced,
                     failed: data.failed,
                     lastTitle: data.lastTitle,
+                  });
+                  debugLog(`sync.${source}.stream`, "progress", {
+                    phase: data.phase,
+                    current: data.current,
+                    total: data.total,
+                    synced: data.synced,
+                    failed: data.failed,
                   });
                 }
                 break;
@@ -423,18 +540,28 @@ export const SyncControl: FC<SyncControlProps> = ({
                 localStorage.setItem(LAST_SYNC_KEY, ts);
                 setLastSync(ts);
                 onSyncComplete();
+                step.complete({
+                  synced: data.synced,
+                  repaired: data.repaired ?? 0,
+                  skipped: data.skipped,
+                  failed: data.failed,
+                });
                 break;
               }
               case "error":
                 setError(data.message);
                 setProgress(null);
+                step.complete({ streamError: data.message });
                 break;
             }
           }
         }
       } catch (err) {
         if ((err as Error).name !== "AbortError") {
+          step.fail(err);
           setError(err instanceof Error ? err.message : String(err));
+        } else {
+          step.complete({ aborted: true });
         }
         setProgress(null);
       } finally {
@@ -468,10 +595,14 @@ export const SyncControl: FC<SyncControlProps> = ({
     try {
       await api.del("/api/sync/conversations");
     } catch (err) {
+      debugLog("sync.fireflies.full-resync", "clear-failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
       setError(err instanceof Error ? err.message : String(err));
       setSyncing(false);
       return;
     }
+    debugLog("sync.fireflies.full-resync", "clear-completed");
     setSyncing(false);
     startFirefliesJob("full");
   }, [api, startFirefliesJob]);
@@ -479,15 +610,21 @@ export const SyncControl: FC<SyncControlProps> = ({
   const handleCancel = useCallback(() => {
     const firefliesJobId = activeFirefliesJobRef.current;
     if (syncSource === "fireflies" && firefliesJobId) {
+      const step = startDebugStep("sync.fireflies.cancel", { jobId: firefliesJobId });
       api
         .post<FirefliesSyncJob>(`/api/sync/fireflies/jobs/${firefliesJobId}/cancel`)
         .then((job) => {
           if (isFirefliesJob(job)) applyFirefliesJob(job);
+          step.complete({ status: isFirefliesJob(job) ? job.status : "invalid-job" });
         })
-        .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+        .catch((err) => {
+          step.fail(err);
+          setError(err instanceof Error ? err.message : String(err));
+        });
       return;
     }
 
+    debugLog("sync.stream.cancel", "abort");
     abortRef.current?.abort();
   }, [api, applyFirefliesJob, syncSource]);
 
@@ -572,10 +709,17 @@ export const SyncControl: FC<SyncControlProps> = ({
               "Waiting to start\u2026"
             ) : progress.totalListed != null ? (
               <>
-                <span style={s.statNum}>{progress.totalListed}</span> transcripts found
+                {progress.batch != null && (
+                  <>
+                    <span style={s.statLabel}>Batch </span>
+                    <span style={s.statNum}>{progress.batch}</span>
+                    <span style={s.statDividerInline}>/</span>
+                  </>
+                )}
+                <span style={s.statNum}>{progress.totalListed}</span> checked so far
               </>
             ) : (
-              "Fetching transcript list\u2026"
+              "Checking transcript history\u2026"
             )}
           </p>
           {syncSource === "fireflies" && (
@@ -914,6 +1058,10 @@ const s: Record<string, React.CSSProperties> = {
     width: 1,
     height: 16,
     background: "var(--lst-rule-soft)",
+  },
+  statDividerInline: {
+    color: "var(--lst-ink-35)",
+    margin: "0 8px",
   },
   currentTitle: {
     fontFamily: FONT,

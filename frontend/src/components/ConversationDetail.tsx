@@ -21,6 +21,7 @@ interface ConversationData {
   id: string;
   title: string;
   source: string;
+  source_id: string | null;
   source_url: string | null;
   started_at: string | null;
   duration_secs: number | null;
@@ -28,10 +29,19 @@ interface ConversationData {
   metadata: Record<string, unknown>;
 }
 
+interface TranscriptStatus {
+  available: boolean;
+  missing: boolean;
+  repairable: boolean;
+  reason?: string;
+  message?: string;
+}
+
 interface DetailResponse {
   conversation: ConversationData;
   participants: Participant[];
   transcript: TranscriptSentence[] | null;
+  transcript_status?: TranscriptStatus;
 }
 
 interface ConversationDetailProps {
@@ -173,6 +183,7 @@ function normalizeDetailResponse(response: DetailResponse): DetailResponse {
       metadata: normalizeConversationMetadata(response.conversation.metadata),
     },
     transcript: normalizeTranscript(response.transcript),
+    transcript_status: response.transcript_status,
   };
 }
 
@@ -199,6 +210,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [repairingTranscript, setRepairingTranscript] = useState(false);
 
   useEffect(() => {
     const cached = readConversationDetailCache<DetailResponse>(conversationId);
@@ -206,6 +218,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
 
     setError(null);
     setNotice(null);
+    setRepairingTranscript(false);
     if (cached) {
       setData(normalizeDetailResponse(cached.data));
       setLoading(false);
@@ -273,6 +286,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
 
   const { conversation, participants, transcript } = data;
   const audioUrl = audioPlaybackUrl(conversation);
+  const transcriptStatus = data.transcript_status;
 
   const copySummary = async () => {
     if (!conversation.summary) return;
@@ -286,6 +300,28 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
       exportText(conversation, transcript),
     );
     setNotice("Transcript exported");
+  };
+
+  const repairTranscript = async () => {
+    setRepairingTranscript(true);
+    setNotice(null);
+    try {
+      const repaired = await api.post<Pick<DetailResponse, "transcript" | "transcript_status">>(
+        `/api/conversations/${conversation.id}/transcript/repair`,
+      );
+      const next: DetailResponse = normalizeDetailResponse({
+        ...data,
+        transcript: repaired.transcript,
+        transcript_status: repaired.transcript_status,
+      });
+      setData(next);
+      writeConversationDetailCache(conversation.id, next);
+      setNotice("Transcript recovered");
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRepairingTranscript(false);
+    }
   };
 
   return (
@@ -397,7 +433,35 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
         </aside>
 
         {/* Transcript pane */}
-        <TranscriptPane transcript={transcript} />
+        <div style={s.transcriptColumn}>
+          {transcriptStatus && !transcriptStatus.available && (
+            <div style={s.recoveryCard}>
+              <div>
+                <div style={s.recoveryTitle}>
+                  {transcriptStatus.missing
+                    ? "Transcript content is missing"
+                    : "Transcript unavailable"}
+                </div>
+                <div style={s.recoveryCopy}>
+                  {transcriptStatus.missing
+                    ? "The conversation metadata loaded, but the transcript blob is not in TinyCloud KV."
+                    : (transcriptStatus.message ?? "Listen could not read the transcript blob.")}
+                </div>
+              </div>
+              {transcriptStatus.repairable && (
+                <button
+                  style={{ ...s.actionBtn, ...(repairingTranscript ? s.actionBtnDisabled : {}) }}
+                  type="button"
+                  disabled={repairingTranscript}
+                  onClick={() => void repairTranscript()}
+                >
+                  {repairingTranscript ? "Recovering..." : "Recover from Fireflies"}
+                </button>
+              )}
+            </div>
+          )}
+          <TranscriptPane transcript={transcript} />
+        </div>
 
         {/* Notes pane */}
         <NotesPane conversationId={conversation.id} />
@@ -469,6 +533,10 @@ const s: Record<string, React.CSSProperties> = {
     alignItems: "center",
     gap: 6,
     whiteSpace: "nowrap" as const,
+  },
+  actionBtnDisabled: {
+    opacity: 0.55,
+    cursor: "not-allowed",
   },
 
   // title block
@@ -560,6 +628,35 @@ const s: Record<string, React.CSSProperties> = {
     gridTemplateColumns: "340px minmax(0, 1fr) 320px",
     overflow: "hidden",
     minHeight: 0,
+  },
+  transcriptColumn: {
+    display: "flex",
+    flexDirection: "column" as const,
+    minWidth: 0,
+    minHeight: 0,
+    overflow: "hidden",
+  },
+  recoveryCard: {
+    borderBottom: "var(--lst-border)",
+    background: "var(--lst-ink-08)",
+    padding: "14px 32px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 16,
+  },
+  recoveryTitle: {
+    fontFamily: FONT,
+    fontSize: 13,
+    fontWeight: 600,
+    color: "var(--lst-blue)",
+    marginBottom: 3,
+  },
+  recoveryCopy: {
+    fontFamily: FONT,
+    fontSize: 12,
+    color: "var(--lst-ink-55)",
+    lineHeight: 1.4,
   },
 
   // summary pane

@@ -28,8 +28,18 @@ interface SyncRoutesConfig {
 }
 
 interface BackendKV {
-  get(key: string): Promise<{ ok: boolean; data: { data: string | null } }>;
-  put(key: string, value: string): Promise<{ ok: boolean }>;
+  get(key: string): Promise<{
+    ok: boolean;
+    data?: { data: string | null };
+    error?: { code?: string; message?: string };
+  }>;
+  put(
+    key: string,
+    value: string,
+  ): Promise<{
+    ok: boolean;
+    error?: { code?: string; message?: string };
+  }>;
 }
 
 interface ExistingFirefliesConversation {
@@ -100,6 +110,8 @@ interface RunningFirefliesJob {
   cancelRequested: boolean;
 }
 
+type PersistFirefliesJob = (job: FirefliesSyncJob) => Promise<void>;
+
 // ── Helpers ─────────────────────────────────────────────────────────
 
 function normalizeOwnerAddress(req: Request): string {
@@ -114,6 +126,17 @@ function currentJobKey(ownerAddress: string): string {
 
 function jobRecordKey(ownerAddress: string, jobId: string): string {
   return `${FIREFLIES_JOB_PREFIX}/${ownerAddress}/${jobId}`;
+}
+
+function firefliesJobCacheKey(ownerAddress: string, jobId: string): string {
+  return `${ownerAddress}/${jobId}`;
+}
+
+function cloneFirefliesJob(job: FirefliesSyncJob): FirefliesSyncJob {
+  return {
+    ...job,
+    errors: [...job.errors],
+  };
 }
 
 function isActiveJob(job: FirefliesSyncJob | null): job is FirefliesSyncJob {
@@ -139,8 +162,13 @@ function createQueuedJob(ownerAddress: string, mode: "incremental" | "full"): Fi
 }
 
 async function readJob(backendKV: BackendKV, ownerAddress: string, jobId: string) {
-  const result = await backendKV.get(jobRecordKey(ownerAddress, jobId));
-  if (!result.ok || !result.data.data) return null;
+  const key = jobRecordKey(ownerAddress, jobId);
+  const result = await backendKV.get(key);
+  if (!result.ok) {
+    const message = result.error?.message ?? result.error?.code ?? "backend KV read failed";
+    throw new Error(`Failed to read Fireflies sync job state (${key}): ${message}`);
+  }
+  if (!result.data?.data) return null;
 
   try {
     const parsed = JSON.parse(result.data.data) as FirefliesSyncJob;
@@ -152,13 +180,23 @@ async function readJob(backendKV: BackendKV, ownerAddress: string, jobId: string
 
 async function readCurrentJob(backendKV: BackendKV, ownerAddress: string) {
   const current = await backendKV.get(currentJobKey(ownerAddress));
-  const jobId = current.ok && current.data.data ? current.data.data : null;
+  const jobId = current.ok && current.data?.data ? current.data.data : null;
   return jobId ? readJob(backendKV, ownerAddress, jobId) : null;
 }
 
 async function writeJob(backendKV: BackendKV, job: FirefliesSyncJob): Promise<void> {
-  await backendKV.put(jobRecordKey(job.ownerAddress, job.id), JSON.stringify(job));
-  await backendKV.put(currentJobKey(job.ownerAddress), job.id);
+  const recordKey = jobRecordKey(job.ownerAddress, job.id);
+  const currentKey = currentJobKey(job.ownerAddress);
+  await writeBackendKv(backendKV, recordKey, JSON.stringify(job));
+  await writeBackendKv(backendKV, currentKey, job.id);
+}
+
+async function writeBackendKv(backendKV: BackendKV, key: string, value: string): Promise<void> {
+  const result = await backendKV.put(key, value);
+  if (result.ok) return;
+
+  const message = result.error?.message ?? result.error?.code ?? "backend KV write failed";
+  throw new Error(`Failed to write Fireflies sync job state (${key}): ${message}`);
 }
 
 function rowValue(row: unknown, columns: unknown[] | undefined, name: string, index: number) {
@@ -320,21 +358,21 @@ async function processFirefliesSyncWork({
 }
 
 function runFirefliesJob({
-  backendKV,
   runningJobs,
   job,
   access,
   client,
   limit,
   delayMs,
+  persistJob,
 }: {
-  backendKV: BackendKV;
   runningJobs: Map<string, RunningFirefliesJob>;
   job: FirefliesSyncJob;
   access: DelegatedAccess;
   client: FirefliesSyncClient;
   limit: number;
   delayMs: number;
+  persistJob: PersistFirefliesJob;
 }): void {
   if (runningJobs.has(job.ownerAddress)) return;
 
@@ -343,7 +381,7 @@ function runFirefliesJob({
 
   const updateJob = async (patch: Partial<FirefliesSyncJob>) => {
     Object.assign(job, patch, { updatedAt: new Date().toISOString() });
-    await writeJob(backendKV, job);
+    await persistJob(job);
   };
 
   void (async () => {
@@ -471,7 +509,57 @@ export function createSyncRouter(config: SyncRoutesConfig) {
   const makeClient = config.createClient ?? ((key: string) => new FirefliesClient(key));
   const delayMs = config.syncDelayMs ?? SYNC_DELAY_MS;
   const runningFirefliesJobs = new Map<string, RunningFirefliesJob>();
+  const cachedFirefliesJobs = new Map<string, FirefliesSyncJob>();
+  const latestFirefliesJobByOwner = new Map<string, string>();
   const router = Router();
+
+  const cacheFirefliesJob = (job: FirefliesSyncJob) => {
+    cachedFirefliesJobs.set(firefliesJobCacheKey(job.ownerAddress, job.id), cloneFirefliesJob(job));
+    latestFirefliesJobByOwner.set(job.ownerAddress, job.id);
+  };
+
+  const cachedFirefliesJob = (ownerAddress: string, jobId: string) =>
+    cachedFirefliesJobs.get(firefliesJobCacheKey(ownerAddress, jobId)) ?? null;
+
+  const persistFirefliesJob: PersistFirefliesJob = async (job) => {
+    cacheFirefliesJob(job);
+    await writeJob(backendKV!, job);
+    cacheFirefliesJob(job);
+  };
+
+  const readFirefliesJob = async (ownerAddress: string, jobId: string) => {
+    try {
+      const job = await readJob(backendKV!, ownerAddress, jobId);
+      if (job) cacheFirefliesJob(job);
+      return job ?? cachedFirefliesJob(ownerAddress, jobId);
+    } catch (err) {
+      const cached = cachedFirefliesJob(ownerAddress, jobId);
+      if (!cached) throw err;
+      console.warn(
+        `[sync] failed to read Fireflies job ${jobId} from backend KV; serving cached state`,
+        err,
+      );
+      return cached;
+    }
+  };
+
+  const readCurrentFirefliesJob = async (ownerAddress: string) => {
+    try {
+      const job = await readCurrentJob(backendKV!, ownerAddress);
+      if (job) cacheFirefliesJob(job);
+      const cachedJobId = latestFirefliesJobByOwner.get(ownerAddress);
+      return job ?? (cachedJobId ? cachedFirefliesJob(ownerAddress, cachedJobId) : null);
+    } catch (err) {
+      const cachedJobId = latestFirefliesJobByOwner.get(ownerAddress);
+      const cached = cachedJobId ? cachedFirefliesJob(ownerAddress, cachedJobId) : null;
+      if (!cached) throw err;
+      console.warn(
+        "[sync] failed to read current Fireflies job from backend KV; serving cached state",
+        err,
+      );
+      return cached;
+    }
+  };
 
   // All sync routes require auth + delegation
   router.use(authMiddleware);
@@ -495,7 +583,7 @@ export function createSyncRouter(config: SyncRoutesConfig) {
       if (limit < 1) limit = DEFAULT_LIMIT;
       if (limit > MAX_LIMIT) limit = MAX_LIMIT;
 
-      const current = await readCurrentJob(backendKV, ownerAddress);
+      const current = await readCurrentFirefliesJob(ownerAddress);
       if (isActiveJob(current)) {
         if (!runningFirefliesJobs.has(ownerAddress)) {
           const apiKey = await readFirefliesApiKey(req);
@@ -508,18 +596,18 @@ export function createSyncRouter(config: SyncRoutesConfig) {
               message: "No Fireflies API key configured.",
               errors: [...current.errors, "No Fireflies API key configured."],
             } satisfies FirefliesSyncJob;
-            await writeJob(backendKV, failedJob);
+            await persistFirefliesJob(failedJob);
             res.status(404).json(failedJob);
             return;
           } else {
             runFirefliesJob({
-              backendKV,
               runningJobs: runningFirefliesJobs,
               job: current,
               access: req.delegatedAccess!,
               client: makeClient(apiKey),
               limit,
               delayMs,
+              persistJob: persistFirefliesJob,
             });
           }
         }
@@ -539,15 +627,15 @@ export function createSyncRouter(config: SyncRoutesConfig) {
       }
 
       const job = createQueuedJob(ownerAddress, mode);
-      await writeJob(backendKV, job);
+      await persistFirefliesJob(job);
       runFirefliesJob({
-        backendKV,
         runningJobs: runningFirefliesJobs,
         job,
         access: req.delegatedAccess!,
         client: makeClient(apiKey),
         limit,
         delayMs,
+        persistJob: persistFirefliesJob,
       });
 
       res.status(202).json(job);
@@ -567,36 +655,41 @@ export function createSyncRouter(config: SyncRoutesConfig) {
       return;
     }
 
-    const ownerAddress = normalizeOwnerAddress(req);
-    const job = await readCurrentJob(backendKV, ownerAddress);
-    if (isActiveJob(job) && !runningFirefliesJobs.has(ownerAddress)) {
-      const apiKey = await readFirefliesApiKey(req);
-      if (apiKey) {
-        runFirefliesJob({
-          backendKV,
-          runningJobs: runningFirefliesJobs,
-          job,
-          access: req.delegatedAccess!,
-          client: makeClient(apiKey),
-          limit: DEFAULT_LIMIT,
-          delayMs,
-        });
-      } else {
-        const failedJob = {
-          ...job,
-          status: "failed",
-          updatedAt: new Date().toISOString(),
-          completedAt: new Date().toISOString(),
-          message: "No Fireflies API key configured.",
-          errors: [...job.errors, "No Fireflies API key configured."],
-        } satisfies FirefliesSyncJob;
-        await writeJob(backendKV, failedJob);
-        res.json(failedJob);
-        return;
+    try {
+      const ownerAddress = normalizeOwnerAddress(req);
+      const job = await readCurrentFirefliesJob(ownerAddress);
+      if (isActiveJob(job) && !runningFirefliesJobs.has(ownerAddress)) {
+        const apiKey = await readFirefliesApiKey(req);
+        if (apiKey) {
+          runFirefliesJob({
+            runningJobs: runningFirefliesJobs,
+            job,
+            access: req.delegatedAccess!,
+            client: makeClient(apiKey),
+            limit: DEFAULT_LIMIT,
+            delayMs,
+            persistJob: persistFirefliesJob,
+          });
+        } else {
+          const failedJob = {
+            ...job,
+            status: "failed",
+            updatedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            message: "No Fireflies API key configured.",
+            errors: [...job.errors, "No Fireflies API key configured."],
+          } satisfies FirefliesSyncJob;
+          await persistFirefliesJob(failedJob);
+          res.json(failedJob);
+          return;
+        }
       }
-    }
 
-    res.json(job);
+      res.json(job);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: "sync_job_read_failed", message });
+    }
   });
 
   // ── GET /api/sync/fireflies/jobs/:id — read a backend-owned sync job ──
@@ -609,14 +702,19 @@ export function createSyncRouter(config: SyncRoutesConfig) {
       return;
     }
 
-    const ownerAddress = normalizeOwnerAddress(req);
-    const job = await readJob(backendKV, ownerAddress, req.params.id);
-    if (!job) {
-      res.status(404).json({ error: "sync_job_not_found", message: "Sync job not found." });
-      return;
-    }
+    try {
+      const ownerAddress = normalizeOwnerAddress(req);
+      const job = await readFirefliesJob(ownerAddress, req.params.id);
+      if (!job) {
+        res.status(404).json({ error: "sync_job_not_found", message: "Sync job not found." });
+        return;
+      }
 
-    res.json(job);
+      res.json(job);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: "sync_job_read_failed", message });
+    }
   });
 
   // ── POST /api/sync/fireflies/jobs/:id/cancel — request job cancellation ──
@@ -629,10 +727,19 @@ export function createSyncRouter(config: SyncRoutesConfig) {
       return;
     }
 
-    const ownerAddress = normalizeOwnerAddress(req);
-    const job = await readJob(backendKV, ownerAddress, req.params.id);
-    if (!job) {
-      res.status(404).json({ error: "sync_job_not_found", message: "Sync job not found." });
+    let ownerAddress: string;
+    let job: FirefliesSyncJob;
+    try {
+      ownerAddress = normalizeOwnerAddress(req);
+      const found = await readFirefliesJob(ownerAddress, req.params.id);
+      if (!found) {
+        res.status(404).json({ error: "sync_job_not_found", message: "Sync job not found." });
+        return;
+      }
+      job = found;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: "sync_job_read_failed", message });
       return;
     }
 
@@ -644,7 +751,7 @@ export function createSyncRouter(config: SyncRoutesConfig) {
         updatedAt: new Date().toISOString(),
         message: "Cancel requested.",
       };
-      await writeJob(backendKV, updated);
+      await persistFirefliesJob(updated);
       res.json(updated);
       return;
     }
@@ -657,7 +764,7 @@ export function createSyncRouter(config: SyncRoutesConfig) {
         completedAt: new Date().toISOString(),
         message: "Sync canceled.",
       };
-      await writeJob(backendKV, updated);
+      await persistFirefliesJob(updated);
       res.json(updated);
       return;
     }

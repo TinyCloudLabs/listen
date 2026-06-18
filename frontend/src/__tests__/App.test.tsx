@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
 import {
-  checkDelegationStatus,
   composeManifestWithDelegatees,
   connectWallet,
   createAndSignIn,
@@ -92,7 +91,6 @@ vi.mock("@listen/client", () => {
     clearPersistedSession: vi.fn(),
     loadPersistedSession: vi.fn(() => null),
     sendDelegation: vi.fn(),
-    checkDelegationStatus: vi.fn().mockResolvedValue({ status: "active" }),
     revokeDelegation: vi.fn(),
     loadAppManifest: vi.fn().mockResolvedValue({
       app_id: "com.test.listen",
@@ -138,6 +136,14 @@ vi.mock("@listen/client", () => {
     resolveManifestPermissionPath: vi
       .fn()
       .mockReturnValue("com.test.listen/conversations/conversation"),
+    isListenDebugEnabled: vi.fn(() => false),
+    installListenDebugFetchLogger: vi.fn(),
+    listenDebugFetch: vi.fn((input: RequestInfo | URL, init?: RequestInit) => fetch(input, init)),
+    listenDebugLog: vi.fn(),
+    startListenDebugStep: vi.fn(() => ({
+      complete: vi.fn(),
+      fail: vi.fn(),
+    })),
     SessionStore: MockSessionStore,
   };
 });
@@ -166,6 +172,36 @@ function jsonResponse(body: unknown): Response {
     statusText: "OK",
     json: () => Promise.resolve(body),
   } as Response;
+}
+
+function workspaceState(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    delegation: {
+      status: "active",
+      stored: true,
+      validPolicy: true,
+      expiresAt: "2026-05-18T00:00:00.000Z",
+      activation: "active",
+      ...(overrides.delegation as Record<string, unknown> | undefined),
+    },
+    backendReadableSecrets: {
+      fireflies: { readable: true },
+      granola: { readable: true },
+      assemblyai: { readable: true },
+      deepgram: { readable: true },
+      ...(overrides.backendReadableSecrets as Record<string, unknown> | undefined),
+    },
+    googleMeet: {
+      available: true,
+      connected: false,
+      ...(overrides.googleMeet as Record<string, unknown> | undefined),
+    },
+    conversations: {
+      hasAny: false,
+      total: 0,
+      ...(overrides.conversations as Record<string, unknown> | undefined),
+    },
+  };
 }
 
 function toArrayRows(objects: Record<string, unknown>[]): { rows: unknown[][]; columns: string[] } {
@@ -220,7 +256,6 @@ function mockAuthFlow() {
     session: { siwe: "mock-siwe", signature: "mock-signature" },
   });
   vi.mocked(verifySession).mockResolvedValue({ token: "mock-token", expiresIn: 3600 });
-  vi.mocked(checkDelegationStatus).mockResolvedValue({ status: "active" });
   vi.mocked(createManifestDelegation).mockResolvedValue({
     serialized: "mock-delegation",
     prompted: false,
@@ -336,6 +371,9 @@ describe("App manual sign-in processing", () => {
 
     // Default: fireflies key exists, google-meet not connected, webhook status OK, no pending
     mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(workspaceState());
+      }
       if (url === "/api/config/fireflies-key/exists") {
         return Promise.resolve({ exists: true });
       }
@@ -426,10 +464,7 @@ describe("App manual sign-in processing", () => {
       }),
     );
     await waitFor(() => {
-      expect(checkDelegationStatus).toHaveBeenCalledWith(
-        "http://localhost:3001",
-        "persisted-token",
-      );
+      expect(mockGet).toHaveBeenCalledWith("/api/workspace-state");
     });
   });
 
@@ -465,9 +500,31 @@ describe("App manual sign-in processing", () => {
   });
 
   it("posts backend delegation after manual sign-in when none is stored", async () => {
-    vi.mocked(checkDelegationStatus)
-      .mockResolvedValueOnce({ status: "none", expiresAt: null })
-      .mockResolvedValue({ status: "active" });
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(
+          workspaceState({
+            delegation: {
+              status: "none",
+              stored: false,
+              validPolicy: false,
+              expiresAt: null,
+              activation: "unknown",
+            },
+            backendReadableSecrets: {
+              fireflies: { readable: null },
+              granola: { readable: null },
+              assemblyai: { readable: null },
+              deepgram: { readable: null },
+            },
+          }),
+        );
+      }
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({ conversations: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
 
     await renderAndSignIn();
 
@@ -489,28 +546,33 @@ describe("App manual sign-in processing", () => {
     );
   });
 
-  it("keeps the frontend signed in when the backend delegation status check fails", async () => {
-    vi.mocked(checkDelegationStatus).mockRejectedValueOnce(
-      new Error("Failed to check delegation status: Too many delegation requests"),
-    );
+  it("keeps the frontend signed in when the workspace state check fails", async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.reject(new Error("Too many workspace state requests"));
+      }
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({ conversations: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
 
     await renderAndSignIn();
 
     await waitFor(() => {
-      expect(checkDelegationStatus).toHaveBeenCalledWith("http://localhost:3001", "mock-token");
+      expect(mockGet).toHaveBeenCalledWith("/api/workspace-state");
     });
     expect(await screen.findByText("0xabc1…c123")).toBeInTheDocument();
-    expect(createManifestDelegation).not.toHaveBeenCalled();
-    expect(sendDelegation).not.toHaveBeenCalled();
   });
 
-  it("renders direct TinyCloud conversations while backend delegation status is still loading", async () => {
-    let resolveDelegationStatus!: (value: { status: "active" }) => void;
-    vi.mocked(checkDelegationStatus).mockReturnValue(
-      new Promise((resolve) => {
-        resolveDelegationStatus = resolve;
-      }),
-    );
+  it("renders direct TinyCloud conversations while backend workspace state is still loading", async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") return new Promise(() => {});
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({ conversations: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
     mockTinyCloudConversationPage([
       {
         id: "01ABC",
@@ -529,8 +591,50 @@ describe("App manual sign-in processing", () => {
 
     expect(await screen.findByText("Planning")).toBeInTheDocument();
     expect(mockGet).not.toHaveBeenCalledWith(expect.stringMatching(/^\/api\/conversations/));
+  });
 
-    resolveDelegationStatus({ status: "active" });
+  it("renders cached backend conversations while workspace checks are still loading", async () => {
+    storeBackendSession();
+    vi.mocked(loadPersistedSession).mockReturnValue({
+      address: "0xabc123",
+      chainId: 1,
+      did: "did:pkh:eip155:1:0xabc123",
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      spaceId: "tinycloud:pkh:eip155:1:0xabc123:applications",
+    });
+    vi.mocked(restoreTinyCloudWeb).mockResolvedValue(null);
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") return new Promise(() => {});
+      if (url.startsWith("/api/conversations")) return new Promise(() => {});
+      return Promise.resolve({});
+    });
+    localStorage.setItem(
+      "listen:conversation-page:v1:/api/conversations?limit=20&offset=0",
+      JSON.stringify({
+        conversations: [
+          {
+            id: "cached-1",
+            title: "Cached Planning",
+            source: "fireflies",
+            source_url: null,
+            started_at: "2026-05-14T14:00:00Z",
+            duration_secs: 1200,
+            summary: "Roadmap",
+            created_at: "2026-05-14T14:30:00Z",
+            participant_count: 2,
+          },
+        ],
+        total: 1,
+        cachedAt: "2026-05-14T14:30:00.000Z",
+      }),
+    );
+
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: /open app/i })[0]);
+
+    expect(await screen.findByText("Cached Planning")).toBeInTheDocument();
+    expect(screen.queryByText("Checking workspace state.")).not.toBeInTheDocument();
+    expect(screen.getByText(/checking workspace access/i)).toBeInTheDocument();
   });
 
   it("falls back to direct TinyCloud sign-in when backend bootstrap is offline", async () => {
@@ -594,14 +698,34 @@ describe("App manual sign-in processing", () => {
     );
     expectLastSignInUsedLocalManifest();
     expect(createApiClient).not.toHaveBeenCalled();
-    expect(checkDelegationStatus).not.toHaveBeenCalled();
     expect(sendDelegation).not.toHaveBeenCalled();
   });
 
   it("renews backend delegation when the connected workspace sees an expired record", async () => {
-    vi.mocked(checkDelegationStatus).mockResolvedValueOnce({
-      status: "expired",
-      expiresAt: "2026-05-10T00:46:27.000Z",
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(
+          workspaceState({
+            delegation: {
+              status: "expired",
+              stored: false,
+              validPolicy: false,
+              expiresAt: "2026-05-10T00:46:27.000Z",
+              activation: "unknown",
+            },
+            backendReadableSecrets: {
+              fireflies: { readable: null },
+              granola: { readable: null },
+              assemblyai: { readable: null },
+              deepgram: { readable: null },
+            },
+          }),
+        );
+      }
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({ conversations: [], total: 0 });
+      }
+      return Promise.resolve({});
     });
 
     await renderAndSignIn();
@@ -617,6 +741,18 @@ describe("App manual sign-in processing", () => {
 
   it("requires Fireflies access when the backend cannot read the shared secret", async () => {
     mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(
+          workspaceState({
+            backendReadableSecrets: {
+              fireflies: { readable: false },
+              granola: { readable: true },
+              assemblyai: { readable: true },
+              deepgram: { readable: true },
+            },
+          }),
+        );
+      }
       if (url === "/api/config/fireflies-key/exists") {
         return Promise.resolve({ exists: false });
       }
@@ -639,6 +775,9 @@ describe("App manual sign-in processing", () => {
 
   it("shows banner when pending items were processed", async () => {
     mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(workspaceState());
+      }
       if (url === "/api/config/fireflies-key/exists") {
         return Promise.resolve({ exists: true });
       }
@@ -683,6 +822,9 @@ describe("App manual sign-in processing", () => {
 
   it("does not block app load if pending processing fails", async () => {
     mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(workspaceState());
+      }
       if (url === "/api/config/fireflies-key/exists") {
         return Promise.resolve({ exists: true });
       }
@@ -711,6 +853,9 @@ describe("App manual sign-in processing", () => {
 
   it("shows singular message for 1 processed transcript", async () => {
     mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(workspaceState());
+      }
       if (url === "/api/config/fireflies-key/exists") {
         return Promise.resolve({ exists: true });
       }
@@ -742,11 +887,11 @@ describe("App manual sign-in processing", () => {
     });
   });
 
-  it("checks google-meet connected status after manual sign-in", async () => {
+  it("checks workspace state after manual sign-in", async () => {
     await renderAndSignIn();
 
     await waitFor(() => {
-      expect(mockGet).toHaveBeenCalledWith("/api/config/google-meet/connected");
+      expect(mockGet).toHaveBeenCalledWith("/api/workspace-state");
     });
   });
 
@@ -809,6 +954,13 @@ describe("App manual sign-in processing", () => {
  */
 function gmMockGet(overrides: Record<string, unknown> = {}) {
   return (url: string) => {
+    if (url === "/api/workspace-state") {
+      return Promise.resolve(
+        workspaceState({
+          googleMeet: { available: true, connected: true },
+        }),
+      );
+    }
     if (url === "/api/config/fireflies-key/exists") {
       return Promise.resolve({ exists: true });
     }

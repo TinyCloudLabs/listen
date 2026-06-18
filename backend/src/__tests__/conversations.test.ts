@@ -9,9 +9,18 @@ import { createConversationsRouter } from "../routes/conversations.js";
 
 function createMockKV() {
   const data = new Map<string, string>();
+  let throwNextGet: string | null = null;
   return {
     _data: data,
+    _throwNextGet(message: string) {
+      throwNextGet = message;
+    },
     get: async (key: string) => {
+      if (throwNextGet) {
+        const message = throwNextGet;
+        throwNextGet = null;
+        throw new Error(message);
+      }
       const val = data.get(key);
       if (val === undefined) return { ok: true, data: { data: null } };
       return { ok: true, data: { data: val } };
@@ -130,6 +139,9 @@ function createApp(
     transcriptionProviders?: Parameters<
       typeof createConversationsRouter
     >[0]["transcriptionProviders"];
+    createFirefliesClient?: Parameters<
+      typeof createConversationsRouter
+    >[0]["createFirefliesClient"];
   } = {},
 ) {
   const mockDelegationMiddleware = (req: Request, _res: Response, next: NextFunction) => {
@@ -155,6 +167,7 @@ function createApp(
       authMiddleware: mockAuthMiddleware,
       delegationMiddleware: mockDelegationMiddleware,
       transcriptionProviders: opts.transcriptionProviders,
+      createFirefliesClient: opts.createFirefliesClient,
     }),
   );
   return app;
@@ -412,6 +425,54 @@ describe("Conversations Routes — GET /api/conversations/:id", () => {
     expect(body.conversation.id).toBe("conv-1");
     expect(body.participants).toEqual([]);
     expect(body.transcript).toBeNull();
+    expect(body.transcript_status).toMatchObject({
+      available: false,
+      missing: true,
+      repairable: true,
+      reason: "missing_kv_blob",
+    });
+  });
+
+  it("still returns conversation metadata when transcript KV read throws key not found", async () => {
+    mockKV = createMockKV();
+    mockKV._throwNextGet(
+      "Key not found: xyz.tinycloud.listen/transcript/5b2f89b3-cdfe-4412-861e-ce4139afb114",
+    );
+
+    mockSQL = createMockSQL({
+      detailRow: {
+        id: "conv-1",
+        title: "Sprint Planning",
+        source: "fireflies",
+        source_id: "ff-123",
+        source_url: null,
+        started_at: "2026-03-20T10:00:00Z",
+        ended_at: null,
+        duration_secs: null,
+        summary: "Planning summary",
+        metadata: "{}",
+        created_at: "2026-03-20T12:00:00Z",
+        updated_at: "2026-03-20T12:00:00Z",
+      },
+      participantRows: [{ id: "p-1", name: "Alice", email: null, speaker_label: "0" }],
+    });
+    const app = createApp(mockKV, mockSQL);
+    ({ server, port } = await startServer(app));
+
+    const res = await fetch(`http://localhost:${port}/api/conversations/conv-1`);
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    expect(body.conversation.title).toBe("Sprint Planning");
+    expect(body.participants).toHaveLength(1);
+    expect(body.transcript).toBeNull();
+    expect(body.transcript_status).toMatchObject({
+      available: false,
+      missing: true,
+      repairable: true,
+      reason: "missing_kv_blob",
+    });
+    expect(body.transcript_status.message).toContain("Key not found");
   });
 
   it("adds audio playback URL when stored Fireflies audio exists", async () => {
@@ -704,6 +765,93 @@ describe("Conversations Routes — GET /api/conversations/:id", () => {
     );
     expect(participantCall).toBeDefined();
     expect(participantCall!.params).toContain("conv-abc");
+  });
+});
+
+// ── Tests — POST /api/conversations/:id/transcript/repair ──────────
+
+describe("Conversations Routes — POST /api/conversations/:id/transcript/repair", () => {
+  let mockKV: ReturnType<typeof createMockKV>;
+  let mockSQL: ReturnType<typeof createMockSQL>;
+  let server: Server;
+  let port: number;
+
+  afterEach(async () => {
+    await closeServer(server);
+  });
+
+  it("repairs a missing Fireflies transcript blob from the Fireflies API", async () => {
+    mockKV = createMockKV();
+    mockSQL = createMockSQL({
+      detailRow: {
+        id: "conv-1",
+        source: "fireflies",
+        source_id: "ff-123",
+      },
+    });
+    const clientCalls: string[] = [];
+    const app = createApp(mockKV, mockSQL, {
+      secrets: new Map([["FIREFLIES_API_KEY", "fireflies-key"]]),
+      createFirefliesClient: (apiKey: string) => {
+        expect(apiKey).toBe("fireflies-key");
+        return {
+          getTranscript: async (id: string) => {
+            clientCalls.push(id);
+            return {
+              id,
+              title: "Sprint Planning",
+              date: 0,
+              duration: 60,
+              organizer_email: "alice@example.com",
+              transcript_url: "https://app.fireflies.ai/view/ff-123",
+              speakers: [],
+              meeting_attendees: [],
+              sentences: [
+                {
+                  index: 0,
+                  speaker_id: "alice",
+                  speaker_name: "Alice",
+                  text: "Recovered transcript",
+                  raw_text: "Recovered transcript",
+                  start_time: 0,
+                  end_time: 5,
+                  ai_filters: {
+                    task: false,
+                    pricing: false,
+                    metric: false,
+                    question: false,
+                    date_and_time: false,
+                    sentiment: "neutral",
+                  },
+                },
+              ],
+              summary: {
+                keywords: [],
+                action_items: [],
+                overview: "",
+                shorthand_bullet: "",
+                meeting_type: "",
+              },
+              audio_url: "",
+            };
+          },
+        };
+      },
+    });
+    ({ server, port } = await startServer(app));
+
+    const res = await fetch(`http://localhost:${port}/api/conversations/conv-1/transcript/repair`, {
+      method: "POST",
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(clientCalls).toEqual(["ff-123"]);
+    expect(body.transcript[0].text).toBe("Recovered transcript");
+    expect(body.transcript_status).toMatchObject({ available: true, missing: false });
+
+    const stored = JSON.parse(mockKV._data.get("xyz.tinycloud.listen/transcript/conv-1")!);
+    expect(stored[0].text).toBe("Recovered transcript");
   });
 });
 

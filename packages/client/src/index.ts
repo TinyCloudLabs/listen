@@ -39,3 +39,13 @@ export { requestNonce, verifySession, type VerifyResponse } from "./auth.js";
 export { SessionStore, type StoredSession } from "./tokens.js";
 
 export { createApiClient, type ApiClient, type ApiClientConfig } from "./api.js";
+
+export {
+  isListenDebugEnabled,
+  installListenDebugFetchLogger,
+  listenDebugFetch,
+  listenDebugLog,
+  startListenDebugStep,
+  type DebugDetails,
+  type DebugStep,
+} from "./debug.js";

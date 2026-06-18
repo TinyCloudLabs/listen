@@ -567,8 +567,9 @@
               <h2>Landing, sign-in, delegation, and sync.</h2>
             </div>
             <p class="section-note">
-              This follows <code>frontend/src/App.tsx</code>, the local app manifest,
-              <code>/api/server-info</code>, Fireflies and Google Meet sync routes, and the manual
+              This follows <code>frontend/src/App.tsx</code>, the local app manifest, cached
+              <code>/api/server-info</code>, <code>/api/workspace-state</code>, direct TinyCloud
+              reads, backend-owned Fireflies job state, Google Meet sync routes, and the manual
               transcript import endpoint.
             </p>
           </div>
@@ -586,43 +587,55 @@ sequenceDiagram
   participant Google as Google Meet API
 
   User-&gt;&gt;Landing: Open app
-  Landing-&gt;&gt;OpenKey: connectWallet()
-  OpenKey--&gt;&gt;Frontend: address + web3Provider
+  Landing-&gt;&gt;Frontend: render app immediately
   Frontend-&gt;&gt;Backend: GET /api/server-info
-  alt backend reachable
-    Backend--&gt;&gt;Frontend: backend DID + backend-specific policy
-  else backend unavailable
-    Frontend--&gt;&gt;Frontend: continue with local manifest only
+  Backend--&gt;&gt;Frontend: 200/304 backend DID + policy + features
+  opt agent enabled
+    Frontend-&gt;&gt;Backend: GET agent /info
+    Backend--&gt;&gt;Frontend: agent DID + policy
   end
   Frontend-&gt;&gt;Frontend: compose local manifest + reachable delegatees
+  Landing-&gt;&gt;OpenKey: connectWallet()
+  OpenKey--&gt;&gt;Frontend: address + web3Provider
   Frontend-&gt;&gt;TinyCloud: createAndSignIn(autoCreateSpace, local manifest, capabilityRequest)
   TinyCloud--&gt;&gt;Frontend: TinyCloudWeb + SIWE session
   opt backend reachable
     Frontend-&gt;&gt;Backend: requestNonce(address)
     Frontend-&gt;&gt;Backend: POST /api/auth/verify
     Backend--&gt;&gt;Frontend: bearer token
-    Frontend-&gt;&gt;Backend: GET /api/delegations/status
-    alt backend delegation missing or stale
+    par backend workspace state
+      Frontend-&gt;&gt;Backend: GET /api/workspace-state
+      Backend-&gt;&gt;TinyCloud: activate stored delegation if needed
+      Backend-&gt;&gt;TinyCloud: delegated secret probes + Google token check + conversation count
+      Backend--&gt;&gt;Frontend: delegation + backend-readable secrets + existing rows
+    and direct browser checks
+      Frontend-&gt;&gt;TinyCloud: secrets.get(FIREFLIES/GRANOLA/transcription)
+      Frontend-&gt;&gt;TinyCloud: SQL query newest conversations
+      TinyCloud--&gt;&gt;Frontend: secret existence + inbox rows
+    end
+    alt secret exists but backend delegation missing, expired, or stale
       Frontend-&gt;&gt;TinyCloud: createManifestDelegation(backend caps + default network decrypt)
       Frontend-&gt;&gt;Backend: POST /api/delegations {serialized}
       Backend-&gt;&gt;TinyCloud: activatePortableDelegation()
       Backend--&gt;&gt;Frontend: status active
     end
   end
-  alt inbox read
-    Frontend-&gt;&gt;TinyCloud: SQL query newest conversations
-    TinyCloud--&gt;&gt;Frontend: inbox rows
+  alt direct or cached inbox read
+    Frontend-&gt;&gt;Frontend: render inbox while slower checks finish
   else backend-only manual transcript import
     User-&gt;&gt;Frontend: paste or upload .txt/.md/.srt/.vtt
     Frontend-&gt;&gt;Backend: POST /api/conversations/import
     Backend-&gt;&gt;TinyCloud: normalize manual transcript + SQL/KV writes
   else backend-owned Fireflies sync
     Frontend-&gt;&gt;Backend: POST /api/sync/fireflies/jobs
+    Backend-&gt;&gt;TinyCloud: backend-owned KV put sync/fireflies/jobs/{owner}/{jobId}
+    Backend-&gt;&gt;TinyCloud: backend-owned KV put sync/fireflies/jobs/{owner}/current
     Backend--&gt;&gt;Frontend: job id + queued state
     Backend-&gt;&gt;TinyCloud: delegated KV read + network decrypt for FIREFLIES_API_KEY
     Backend-&gt;&gt;Fireflies: listAllTranscripts()
     Backend-&gt;&gt;TinyCloud: SQL dedup + INSERT conversation/participant
     Backend-&gt;&gt;TinyCloud: KV put transcript/{conversationId}
+    Backend-&gt;&gt;TinyCloud: backend-owned KV put job progress
     Frontend-&gt;&gt;Backend: GET /api/sync/fireflies/jobs/{id}
     Backend--&gt;&gt;Frontend: progress or complete state
   else backend-only Google Meet sync
@@ -675,9 +688,10 @@ sequenceDiagram
                 <div class="rule-row">
                   <strong>Expiration</strong>
                   <p>
-                    <code>GET /api/delegations/status</code> returns <code>none</code>,
-                    <code>expired</code>, or <code>active</code>. Expired or stale-policy
-                    delegations are removed before the app continues.
+                    <code>GET /api/workspace-state</code> returns delegation status, backend secret
+                    readability, Google Meet connection state, and whether existing conversations
+                    are available. Expired or stale-policy delegations are removed before
+                    backend-only workflows continue.
                   </p>
                 </div>
               </div>
@@ -788,7 +802,9 @@ stateDiagram-v2
               space. The browser uses the local app manifest for sign-in, then composes reachable
               delegatees from <code>/api/server-info</code>. The backend policy is limited to
               backend-specific KV/SQL/secret-read permissions plus the separate default-network
-              decrypt grant. That composition requires an SDK release that already supports
+              decrypt grant. Backend-owned operational state, including webhook queues and Fireflies
+              job progress, lives under the backend identity's <code>xyz.tinycloud.listen/</code> KV
+              namespace. That composition requires an SDK release that already supports
               <code>tinycloud.encryption</code> manifest entries. The backend SQL helper opens
               <code>xyz.tinycloud.listen/conversations</code> rather than the SDK default database.
             </p>
@@ -804,6 +820,7 @@ flowchart LR
 
   subgraph BackendKV["Backend-owned TinyCloud KV"]
     Webhooks["webhook config\npending queues\nfailed webhook events"]
+    Jobs["sync/fireflies/jobs/{owner}/{jobId}\nsync/fireflies/jobs/{owner}/current"]
   end
 
   subgraph Secrets["TinyCloud Secrets space"]
@@ -815,6 +832,7 @@ flowchart LR
   Backend["Listen backend"] -- "delegated kv get/put/list" --&gt; KV
   Backend -- "delegated sql read/write" --&gt; SQL
   Backend -- "backend session kv get/put" --&gt; Webhooks
+  Backend -- "backend session kv get/put" --&gt; Jobs
   Backend -- "delegated secrets.get via KV + decrypt" --&gt; Vault
   Backend -- "SSE sync + webhooks" --&gt; Browser
   Agent["TinyCloud agent"] -. "optional delegatee" .-&gt; UserSpace</pre

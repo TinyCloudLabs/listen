@@ -6,6 +6,7 @@ import {
   type ResourceCapability,
 } from "@tinycloud/web-sdk";
 import { type DelegationResponse } from "@listen/core";
+import { listenDebugFetch } from "./debug.js";
 
 // ── Create Delegation ────────────────────────────────────────────────
 
@@ -106,15 +107,20 @@ export async function sendDelegation(
   serialized: string,
   sessionToken: string,
 ): Promise<DelegationResponse> {
-  const res = await fetch(`${backendUrl}/api/delegations`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${sessionToken}`,
-      "X-Requested-With": "Listen",
+  const path = "/api/delegations";
+  const res = await listenDebugFetch(
+    `${backendUrl}${path}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${sessionToken}`,
+        "X-Requested-With": "Listen",
+      },
+      body: JSON.stringify({ serialized }),
     },
-    body: JSON.stringify({ serialized }),
-  });
+    { client: "delegation", method: "POST", path },
+  );
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: "unknown", message: res.statusText }));
@@ -130,12 +136,17 @@ export async function checkDelegationStatus(
   backendUrl: string,
   sessionToken: string,
 ): Promise<DelegationResponse> {
-  const res = await fetch(`${backendUrl}/api/delegations/status`, {
-    headers: {
-      Authorization: `Bearer ${sessionToken}`,
-      "X-Requested-With": "Listen",
+  const path = "/api/delegations/status";
+  const res = await listenDebugFetch(
+    `${backendUrl}${path}`,
+    {
+      headers: {
+        Authorization: `Bearer ${sessionToken}`,
+        "X-Requested-With": "Listen",
+      },
     },
-  });
+    { client: "delegation", method: "GET", path },
+  );
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: "unknown", message: res.statusText }));
@@ -148,13 +159,18 @@ export async function checkDelegationStatus(
 // ── Revoke Delegation ────────────────────────────────────────────────
 
 export async function revokeDelegation(backendUrl: string, sessionToken: string): Promise<void> {
-  const res = await fetch(`${backendUrl}/api/delegations`, {
-    method: "DELETE",
-    headers: {
-      Authorization: `Bearer ${sessionToken}`,
-      "X-Requested-With": "Listen",
+  const path = "/api/delegations";
+  const res = await listenDebugFetch(
+    `${backendUrl}${path}`,
+    {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${sessionToken}`,
+        "X-Requested-With": "Listen",
+      },
     },
-  });
+    { client: "delegation", method: "DELETE", path },
+  );
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: "unknown", message: res.statusText }));
