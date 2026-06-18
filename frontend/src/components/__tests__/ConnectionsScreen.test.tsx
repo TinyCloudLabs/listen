@@ -109,4 +109,24 @@ describe("ConnectionsScreen", () => {
       expect(screen.getAllByText("sync failed")).toHaveLength(1);
     });
   });
+
+  it("runs the transcript migration from maintenance", async () => {
+    api.post.mockResolvedValueOnce({
+      scanned: 3,
+      migrated: 2,
+      skipped: 1,
+      missing: 0,
+      failed: 0,
+    });
+    const onRefresh = vi.fn();
+    renderConnections({ onRefresh });
+
+    fireEvent.click(screen.getByRole("button", { name: /migrate transcripts/i }));
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith("/api/config/migrate-transcripts", {});
+    });
+    expect(await screen.findByText(/migrated 2 transcripts/i)).toBeInTheDocument();
+    expect(onRefresh).toHaveBeenCalled();
+  });
 });

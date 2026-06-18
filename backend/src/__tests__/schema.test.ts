@@ -36,6 +36,8 @@ describe("schema", () => {
       const calls = access.sql.execute.mock.calls;
       const allSql = calls.map((c: any) => c[0]).join("\n");
       expect(allSql).toContain("CREATE TABLE IF NOT EXISTS conversation");
+      expect(allSql).toContain("transcript_json TEXT");
+      expect(allSql).toContain("transcript_text TEXT");
     });
 
     it("executes CREATE TABLE for participant table", async () => {
@@ -71,6 +73,21 @@ describe("schema", () => {
       expect(access.sql.db).toHaveBeenCalled();
       expect(dbHandle.execute.mock.calls.length).toBe(2);
       expect(access.sql.execute.mock.calls.length).toBe(0);
+    });
+
+    it("adds transcript columns when an existing conversation table is missing them", async () => {
+      access.sql.query.mockImplementation(async (sql: string) => {
+        if (sql.includes("transcript_json")) {
+          return { ok: false, error: { message: "no such column: transcript_json" } };
+        }
+        return { ok: true, data: { rows: [], columns: [] } };
+      });
+
+      await ensureSchema(access);
+
+      const allSql = access.sql.execute.mock.calls.map((c: any) => c[0]).join("\n");
+      expect(allSql).toContain("ALTER TABLE conversation ADD COLUMN transcript_json TEXT");
+      expect(allSql).toContain("ALTER TABLE conversation ADD COLUMN transcript_text TEXT");
     });
 
     it("no-ops on subsequent calls with the same access", async () => {

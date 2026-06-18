@@ -382,6 +382,43 @@ describe("Conversations Routes — GET /api/conversations/:id", () => {
     expect(body.transcript[0].language).toBe("en");
   });
 
+  it("prefers SQL transcript rows over the KV fallback", async () => {
+    mockKV = createMockKV();
+    mockKV._data.set(
+      "xyz.tinycloud.listen/transcript/conv-1",
+      JSON.stringify([{ speakerName: "KV", text: "Old transcript" }]),
+    );
+
+    mockSQL = createMockSQL({
+      detailRow: {
+        id: "conv-1",
+        title: "Sprint Planning",
+        source: "fireflies",
+        source_id: "ff-123",
+        source_url: null,
+        started_at: "2026-03-20T10:00:00Z",
+        ended_at: null,
+        duration_secs: null,
+        summary: null,
+        metadata: "{}",
+        transcript_json: JSON.stringify([{ speakerName: "SQL", text: "Current transcript" }]),
+        transcript_text: "SQL: Current transcript",
+        created_at: "2026-03-20T12:00:00Z",
+        updated_at: "2026-03-20T12:00:00Z",
+      },
+      participantRows: [],
+    });
+    const app = createApp(mockKV, mockSQL);
+    ({ server, port } = await startServer(app));
+
+    const res = await fetch(`http://localhost:${port}/api/conversations/conv-1`);
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    expect(body.transcript[0].speaker_name).toBe("SQL");
+    expect(body.transcript[0].text).toBe("Current transcript");
+  });
+
   it("returns 404 when conversation not found", async () => {
     mockKV = createMockKV();
     mockSQL = createMockSQL({ detailRow: undefined, participantRows: [] });
@@ -850,6 +887,15 @@ describe("Conversations Routes — POST /api/conversations/:id/transcript/repair
     expect(body.transcript[0].text).toBe("Recovered transcript");
     expect(body.transcript_status).toMatchObject({ available: true, missing: false });
 
+    const transcriptUpdate = mockSQL._calls.find(
+      (call) =>
+        call.method === "execute" && call.sql.includes("UPDATE conversation SET transcript_json"),
+    );
+    expect(transcriptUpdate).toBeDefined();
+    expect(JSON.parse(transcriptUpdate!.params![0])[0].text).toBe("Recovered transcript");
+    expect(transcriptUpdate!.params![1]).toContain("Alice: Recovered transcript");
+    expect(transcriptUpdate!.params![3]).toBe("conv-1");
+
     const stored = JSON.parse(mockKV._data.get("xyz.tinycloud.listen/transcript/conv-1")!);
     expect(stored[0].text).toBe("Recovered transcript");
   });
@@ -902,6 +948,11 @@ describe("Conversations Routes — POST /api/conversations/import", () => {
     );
     expect(participantInserts).toHaveLength(1);
     expect(participantInserts[0].params).toHaveLength(10);
+
+    const transcriptFromSql = JSON.parse(conversationInsert!.params![10]);
+    expect(transcriptFromSql).toHaveLength(2);
+    expect(transcriptFromSql[0].speaker_name).toBe("Sam");
+    expect(conversationInsert!.params![11]).toContain("Sam: Hello");
 
     const transcriptKey = `xyz.tinycloud.listen/transcript/${body.conversationId}`;
     expect(mockKV._data.has(transcriptKey)).toBe(true);
@@ -1001,6 +1052,8 @@ describe("Conversations Routes — POST /api/conversations/transcribe", () => {
     const transcript = JSON.parse(
       mockKV._data.get(`xyz.tinycloud.listen/transcript/${body.conversationId}`)!,
     );
+    expect(JSON.parse(conversationInsert!.params![10])).toEqual(transcript);
+    expect(conversationInsert!.params![11]).toContain("Speaker A: Hello from audio");
     expect(transcript[0].speaker_name).toBe("Speaker A");
     expect(transcript[0].text).toBe("Hello from audio");
   });

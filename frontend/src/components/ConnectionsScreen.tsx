@@ -38,6 +38,14 @@ interface SourceRow {
   finishSetup?: () => Promise<void>;
 }
 
+interface MigrationResult {
+  scanned: number;
+  migrated: number;
+  skipped: number;
+  missing: number;
+  failed: number;
+}
+
 export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
   api,
   hasFireflies,
@@ -55,7 +63,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
   onFinishTranscriptionProviderAccess,
   onRefresh,
 }) => {
-  const [busySource, setBusySource] = useState<SourceId | "all" | null>(null);
+  const [busySource, setBusySource] = useState<SourceId | "all" | "migration" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showLocalImporter, setShowLocalImporter] = useState(false);
@@ -180,6 +188,23 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
     }
   };
 
+  const migrateTranscripts = async () => {
+    setBusySource("migration");
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await api.post<MigrationResult>("/api/config/migrate-transcripts", {});
+      setMessage(
+        `Migrated ${result.migrated} transcript${result.migrated === 1 ? "" : "s"} (${result.skipped} current, ${result.missing} missing legacy KV).`,
+      );
+      onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusySource(null);
+    }
+  };
+
   return (
     <section style={s.shell}>
       <header style={s.header}>
@@ -277,6 +302,30 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
             </div>
           ))
         )}
+
+        <div style={{ ...s.sectionLabelRow, marginTop: 28 }}>
+          <span style={s.sectionLabel}>· maintenance</span>
+          <span style={s.sectionRule} />
+        </div>
+
+        <div style={isMobile ? { ...s.maintenancePanel, ...s.cardStacked } : s.maintenancePanel}>
+          <span style={s.markIdle} />
+          <div>
+            <div style={s.sourceName}>Transcript SQL fields</div>
+            <p style={s.availableDesc}>
+              Backfill existing conversations from legacy KV transcript blobs into the conversation
+              SQL record.
+            </p>
+          </div>
+          <button
+            type="button"
+            style={s.btnGhostSm}
+            onClick={() => void migrateTranscripts()}
+            disabled={busySource !== null}
+          >
+            {busySource === "migration" ? "Migrating" : "Migrate transcripts"}
+          </button>
+        </div>
 
         <div style={{ ...s.sectionLabelRow, marginTop: 28 }}>
           <span style={s.sectionLabel}>· available · {availableCount}</span>
@@ -498,6 +547,16 @@ const s: Record<string, React.CSSProperties> = {
     gap: 14,
     alignItems: "center",
     marginBottom: 8,
+  },
+  maintenancePanel: {
+    border: "var(--lst-border)",
+    padding: "15px 18px",
+    display: "grid",
+    gridTemplateColumns: "28px minmax(0, 1fr) auto",
+    gap: 14,
+    alignItems: "center",
+    marginBottom: 8,
+    background: "var(--lst-ink-08)",
   },
   // Narrow-width override: drop the grid and stack the mark, content, and
   // actions so the description spans full width instead of being crushed.

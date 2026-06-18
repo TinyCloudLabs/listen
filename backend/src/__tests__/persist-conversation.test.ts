@@ -93,7 +93,7 @@ describe("persistConversation", () => {
 
   // ── Test 1: inserts conversation row with correct SQL and params ──
 
-  it("inserts conversation row with 12 params", async () => {
+  it("inserts conversation row with transcript fields", async () => {
     const normalized = createNormalized();
 
     await persistConversation(mockAccess as any, normalized);
@@ -103,13 +103,15 @@ describe("persistConversation", () => {
     );
     expect(inserts).toHaveLength(1);
     expect(inserts[0].params).toBeDefined();
-    expect(inserts[0].params!.length).toBe(12);
+    expect(inserts[0].params!.length).toBe(14);
 
     const params = inserts[0].params!;
     expect(params[0]).toBe("conv-123"); // id
     expect(params[1]).toBe("Test Meeting"); // title
     expect(params[2]).toBe("fireflies"); // source
     expect(params[3]).toBe("ff-1"); // source_id
+    expect(JSON.parse(params[10] as string)[0].text).toBe("Hello everyone");
+    expect(params[11]).toBe("[00:00] Alice: Hello everyone");
   });
 
   // ── Test 2: inserts participant rows ──────────────────────────────
@@ -131,12 +133,19 @@ describe("persistConversation", () => {
     expect(inserts[0].params![7]).toBe("Bob");
   });
 
-  // ── Test 3: writes transcript blob to KV ──────────────────────────
+  // ── Test 3: writes transcript fields and KV mirror ────────────────
 
-  it("writes transcript blob to KV", async () => {
+  it("writes transcript to SQL and KV", async () => {
     const normalized = createNormalized();
 
     await persistConversation(mockAccess as any, normalized);
+
+    const conversationInsert = mockSQL._calls.find(
+      (c) => c.method === "execute" && c.sql.includes("INSERT INTO conversation"),
+    );
+    const sqlParsed = JSON.parse(conversationInsert!.params?.[10] as string);
+    expect(sqlParsed[0].text).toBe("Hello everyone");
+    expect(conversationInsert!.params?.[11]).toBe("[00:00] Alice: Hello everyone");
 
     const kvKey = `xyz.tinycloud.listen/transcript/conv-123`;
     const stored = mockKV._data.get(kvKey);
@@ -215,6 +224,8 @@ describe("persistConversation", () => {
     const storedTranscript = JSON.parse(
       mockKV._data.get("xyz.tinycloud.listen/transcript/conv-123")!,
     );
+    const storedSqlTranscript = JSON.parse(inserts[0].params![10]);
+
     expect(storedTranscript).toEqual([
       {
         index: 0,
@@ -226,5 +237,7 @@ describe("persistConversation", () => {
         language: "en",
       },
     ]);
+    expect(storedSqlTranscript).toEqual(storedTranscript);
+    expect(inserts[0].params![11]).toBe("Ada: Hello world");
   });
 });

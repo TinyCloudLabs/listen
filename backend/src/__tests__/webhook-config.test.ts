@@ -27,6 +27,34 @@ function createMockKV() {
   };
 }
 
+function createMockSQL() {
+  const calls: Array<{ method: string; sql: string; params?: unknown[] }> = [];
+  return {
+    _calls: calls,
+    query: async (sql: string) => {
+      calls.push({ method: "query", sql });
+      if (sql.includes("SELECT id, transcript_json FROM conversation")) {
+        return {
+          ok: true,
+          data: {
+            columns: ["id", "transcript_json"],
+            rows: [
+              ["conv-1", null],
+              ["conv-2", JSON.stringify([{ speaker_name: "Ada", text: "Current" }])],
+              ["conv-3", null],
+            ],
+          },
+        };
+      }
+      return { ok: true, data: { rows: [], columns: [] } };
+    },
+    execute: async (sql: string, params?: unknown[]) => {
+      calls.push({ method: "execute", sql, params });
+      return { ok: true, data: { changes: 1 } };
+    },
+  };
+}
+
 // ── Test Helpers ─────────────────────────────────────────────────────
 
 const TEST_SUB = "test-sub";
@@ -38,10 +66,14 @@ function mockAuthMiddleware(req: Request, _res: Response, next: NextFunction) {
   next();
 }
 
-function createApp(backendKV: ReturnType<typeof createMockKV>, frontendUrl?: string) {
+function createApp(
+  backendKV: ReturnType<typeof createMockKV>,
+  frontendUrl?: string,
+  delegatedAccess?: Record<string, unknown>,
+) {
   const delegationKV = createMockKV();
   const mockDelegationMiddleware = (req: Request, _res: Response, next: NextFunction) => {
-    req.delegatedAccess = { kv: delegationKV } as any;
+    req.delegatedAccess = { kv: delegationKV, ...delegatedAccess } as any;
     next();
   };
 
@@ -225,6 +257,48 @@ describe("Webhook Config Routes", () => {
 
       const body = await res.json();
       expect(JSON.stringify(body)).not.toContain("super-secret-value");
+    });
+  });
+
+  describe("POST /api/config/migrate-transcripts", () => {
+    it("migrates missing SQL transcript fields from legacy KV blobs", async () => {
+      const userKV = createMockKV();
+      const userSQL = createMockSQL();
+      userKV._data.set(
+        "xyz.tinycloud.listen/transcript/conv-1",
+        JSON.stringify([{ speakerName: "Sam", text: "Hello", startTime: 0 }]),
+      );
+      const app = createApp(backendKV, "http://localhost:3001", { kv: userKV, sql: userSQL });
+      const { server: s, port: p } = await startServer(app);
+
+      try {
+        const res = await fetch(`http://localhost:${p}/api/config/migrate-transcripts`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        expect(body).toMatchObject({
+          scanned: 3,
+          migrated: 1,
+          skipped: 1,
+          missing: 1,
+          failed: 0,
+        });
+
+        const update = userSQL._calls.find(
+          (call) =>
+            call.method === "execute" &&
+            call.sql.includes("UPDATE conversation SET transcript_json = ?"),
+        );
+        expect(update).toBeDefined();
+        expect(JSON.parse(update!.params![0] as string)[0].speaker_name).toBe("Sam");
+        expect(update!.params![1]).toBe("[00:00] Sam: Hello");
+      } finally {
+        await closeServer(s);
+      }
     });
   });
 

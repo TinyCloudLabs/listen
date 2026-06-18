@@ -169,6 +169,61 @@ describe("createTinyCloudConversationApi", () => {
     expect(backendGet).not.toHaveBeenCalled();
   });
 
+  it("prefers SQL transcript rows over KV when reading detail directly", async () => {
+    const backendGet = vi.fn();
+    const api = mockApi({ get: backendGet });
+    const kvGet = vi.fn(async () => ({
+      ok: true,
+      data: { data: JSON.stringify([{ speakerName: "KV", text: "Old" }]) },
+    }));
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes("FROM conversation") && sql.includes("WHERE id = ?")) {
+        return {
+          ok: true,
+          data: toArrayRows([
+            {
+              id: "01ABC",
+              title: "Planning",
+              source: "fireflies",
+              source_id: "ff-1",
+              source_url: null,
+              started_at: "2026-05-14T14:00:00Z",
+              ended_at: "2026-05-14T14:20:00Z",
+              duration_secs: 1200,
+              summary: "Roadmap",
+              metadata: "{}",
+              transcript_json: JSON.stringify([{ speakerName: "SQL", text: "Current" }]),
+              transcript_text: "SQL: Current",
+              created_at: "2026-05-14T14:30:00Z",
+              updated_at: "2026-05-14T14:30:00Z",
+            },
+          ]),
+        };
+      }
+      if (sql.includes("FROM participant")) {
+        return { ok: true, data: toArrayRows([]) };
+      }
+      return { ok: true, data: toArrayRows([]) };
+    });
+    const client = createTinyCloudConversationApi(api, {
+      sql: {
+        db: vi.fn(() => ({ query })),
+      },
+      kv: {
+        get: kvGet,
+      },
+    } as unknown as TinyCloudWeb);
+
+    const result = await client.get<{
+      transcript: Array<{ speaker_name: string; text: string }>;
+    }>("/api/conversations/01ABC");
+
+    expect(result.transcript[0]?.speaker_name).toBe("SQL");
+    expect(result.transcript[0]?.text).toBe("Current");
+    expect(kvGet).not.toHaveBeenCalled();
+    expect(backendGet).not.toHaveBeenCalled();
+  });
+
   it("surfaces direct TinyCloud read failures instead of falling back to the backend", async () => {
     const backendGet = vi.fn().mockResolvedValue({ conversations: [], total: 0 });
     const api = mockApi({ get: backendGet });

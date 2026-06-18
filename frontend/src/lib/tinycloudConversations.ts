@@ -420,7 +420,7 @@ async function getConversationDetail(
 ): Promise<DetailResponse> {
   const conversationRows = rowsToObjects(
     await access.sql.query(
-      `SELECT id, title, source, source_id, source_url, started_at, ended_at, duration_secs, summary, metadata, created_at, updated_at
+      `SELECT id, title, source, source_id, source_url, started_at, ended_at, duration_secs, summary, metadata, transcript_json, transcript_text, created_at, updated_at
          FROM conversation WHERE id = ?`,
       [id],
     ),
@@ -445,7 +445,9 @@ async function getConversationDetail(
     ),
   );
 
-  const transcriptRaw = kvData(await access.kv.get(resolveAppKvPath(`transcript/${id}`)));
+  const transcriptRaw =
+    rawConversation.transcript_json ??
+    kvData(await access.kv.get(resolveAppKvPath(`transcript/${id}`)));
   const transcript = transcriptRaw == null ? null : normalizeTranscript(transcriptRaw);
 
   return { conversation, participants, transcript };
