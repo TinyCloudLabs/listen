@@ -125,16 +125,29 @@ function createMockFullConference(conferenceRecord: ConferenceRecord): FullConfe
   };
 }
 
+function createMockFullConferenceWithoutEntries(
+  conferenceRecord: ConferenceRecord,
+): FullConference {
+  return {
+    ...createMockFullConference(conferenceRecord),
+    entries: [],
+  };
+}
+
 // ── Mock Google Meet Client Factory ──────────────────────────────────
 
 function createMockGoogleMeetClientFactory() {
   let conferences: ConferenceRecord[] = [];
   const fullConferenceOverrides = new Map<string, FullConference | Error>();
   let lastTokens: { accessToken: string; refreshToken?: string } | null = null;
+  let fullConferenceDelayMs = 0;
 
   return {
     setConferences(records: ConferenceRecord[]) {
       conferences = records;
+    },
+    setFullConferenceDelay(ms: number) {
+      fullConferenceDelayMs = ms;
     },
     setFullConference(name: string, result: FullConference | Error) {
       fullConferenceOverrides.set(name, result);
@@ -147,6 +160,9 @@ function createMockGoogleMeetClientFactory() {
       return {
         listConferenceRecords: async () => conferences,
         getFullConference: async (record: ConferenceRecord) => {
+          if (fullConferenceDelayMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, fullConferenceDelayMs));
+          }
           const override = fullConferenceOverrides.get(record.name);
           if (override instanceof Error) throw override;
           if (override) return override;
@@ -169,7 +185,7 @@ const TEST_TOKENS = JSON.stringify({
 });
 
 function mockAuthMiddleware(req: Request, _res: Response, next: NextFunction) {
-  req.user = { sub: "test-sub" };
+  req.user = { sub: "test-sub", address: "0xTest" };
   next();
 }
 
@@ -216,6 +232,21 @@ function parseSSEText(text: string): ParsedSSEEvent[] {
   return events;
 }
 
+async function waitForGoogleMeetJob(
+  baseUrl: string,
+  jobId: string,
+  predicate: (job: any) => boolean,
+) {
+  for (let i = 0; i < 50; i++) {
+    const res = await fetch(`${baseUrl}/api/sync/google-meet/jobs/${jobId}`);
+    expect(res.status).toBe(200);
+    const job = await res.json();
+    if (predicate(job)) return job;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for Google Meet sync job");
+}
+
 // ── App Setup ────────────────────────────────────────────────────────
 
 async function createTestApp(
@@ -238,6 +269,7 @@ async function createTestApp(
     createGoogleMeetSyncRouter({
       authMiddleware: mockAuthMiddleware,
       delegationMiddleware: mockDelegationMiddleware,
+      backendKV: mockKV,
       createClient: clientFactory.factory,
       syncDelayMs: 0,
     }),
@@ -477,6 +509,99 @@ describe("Google Meet Sync Routes — GET /api/sync/google-meet/stream", () => {
     expect(complete).toBeDefined();
     expect(complete!.data.synced).toBe(1);
     expect(complete!.data.skipped).toBe(1);
+  });
+});
+
+// ── Tests: Google Meet background jobs ───────────────────────────────
+
+describe("Google Meet Sync Routes — /api/sync/google-meet/jobs", () => {
+  let mockKV: ReturnType<typeof createMockKV>;
+  let mockSQL: ReturnType<typeof createMockSQL>;
+  let clientFactory: ReturnType<typeof createMockGoogleMeetClientFactory>;
+  let server: Server;
+  let port: number;
+
+  beforeEach(async () => {
+    process.env.GOOGLE_CLIENT_ID = "test-client-id";
+    mockKV = createMockKV();
+    mockSQL = createMockSQL();
+    clientFactory = createMockGoogleMeetClientFactory();
+    const app = await createTestApp(mockKV, mockSQL, clientFactory);
+    ({ server, port } = await startServer(app));
+  });
+
+  afterEach(async () => {
+    await closeServer(server);
+    delete process.env.GOOGLE_CLIENT_ID;
+  });
+
+  it("returns the active job instead of starting a duplicate", async () => {
+    mockKV._data.set(GOOGLE_TOKENS_PATH, TEST_TOKENS);
+    mockSQL._setDedupSourceIds([]);
+
+    clientFactory.setConferences([
+      createMockConferenceRecord({ name: "conferenceRecords/c1" }),
+      createMockConferenceRecord({ name: "conferenceRecords/c2" }),
+    ]);
+    clientFactory.setFullConferenceDelay(50);
+
+    const first = await fetch(`http://localhost:${port}/api/sync/google-meet/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "incremental" }),
+    });
+    const firstJob = await first.json();
+
+    const second = await fetch(`http://localhost:${port}/api/sync/google-meet/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "incremental" }),
+    });
+    const secondJob = await second.json();
+
+    expect(first.status).toBe(202);
+    expect(second.status).toBe(202);
+    expect(secondJob.id).toBe(firstJob.id);
+
+    const current = await fetch(`http://localhost:${port}/api/sync/google-meet/jobs/current`);
+    const currentJob = await current.json();
+    expect(currentJob.id).toBe(firstJob.id);
+  });
+
+  it("tracks checked conferences and skipped reasons", async () => {
+    mockKV._data.set(GOOGLE_TOKENS_PATH, TEST_TOKENS);
+    mockSQL._setDedupSourceIds(["conferenceRecords/existing"]);
+
+    const existing = createMockConferenceRecord({ name: "conferenceRecords/existing" });
+    const noTranscript = createMockConferenceRecord({ name: "conferenceRecords/no-transcript" });
+    const created = createMockConferenceRecord({ name: "conferenceRecords/created" });
+    clientFactory.setConferences([existing, noTranscript, created]);
+    clientFactory.setFullConference(
+      noTranscript.name,
+      createMockFullConferenceWithoutEntries(noTranscript),
+    );
+
+    const start = await fetch(`http://localhost:${port}/api/sync/google-meet/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "incremental" }),
+    });
+    expect(start.status).toBe(202);
+    const started = await start.json();
+
+    const completed = await waitForGoogleMeetJob(
+      `http://localhost:${port}`,
+      started.id,
+      (job) => job.status === "completed",
+    );
+
+    expect(completed.checked).toBe(3);
+    expect(completed.total).toBe(3);
+    expect(completed.synced).toBe(1);
+    expect(completed.skipped).toBe(2);
+    expect(completed.skippedExisting).toBe(1);
+    expect(completed.skippedNoTranscript).toBe(1);
+    expect(completed.failed).toBe(0);
   });
 });
 

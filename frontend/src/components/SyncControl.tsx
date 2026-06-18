@@ -9,6 +9,8 @@ interface SyncResult {
   synced: number;
   repaired: number;
   skipped: number;
+  skippedExisting?: number;
+  skippedNoTranscript?: number;
   failed: number;
   errors: string[];
 }
@@ -19,7 +21,11 @@ interface SyncProgress {
   totalListed?: number;
   current?: number;
   total?: number;
+  checked?: number;
   synced?: number;
+  skipped?: number;
+  skippedExisting?: number;
+  skippedNoTranscript?: number;
   failed?: number;
   lastTitle?: string;
 }
@@ -45,6 +51,33 @@ interface FirefliesSyncJob {
   synced: number;
   repaired: number;
   skipped: number;
+  failed: number;
+  errors: string[];
+  lastTitle?: string;
+}
+
+type GoogleMeetSyncJobStatus =
+  | "queued"
+  | "listing"
+  | "syncing"
+  | "completed"
+  | "failed"
+  | "canceled";
+
+interface GoogleMeetSyncJob {
+  id: string;
+  source: "google-meet";
+  status: GoogleMeetSyncJobStatus;
+  mode: "incremental" | "full";
+  message?: string;
+  checked: number;
+  totalListed?: number;
+  current?: number;
+  total?: number;
+  synced: number;
+  skipped: number;
+  skippedExisting: number;
+  skippedNoTranscript: number;
   failed: number;
   errors: string[];
   lastTitle?: string;
@@ -136,6 +169,19 @@ function isActiveFirefliesJob(job: FirefliesSyncJob): boolean {
   return job.status === "queued" || job.status === "listing" || job.status === "syncing";
 }
 
+function isGoogleMeetJob(value: unknown): value is GoogleMeetSyncJob {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { source?: unknown }).source === "google-meet" &&
+    typeof (value as { id?: unknown }).id === "string"
+  );
+}
+
+function isActiveGoogleMeetJob(job: GoogleMeetSyncJob): boolean {
+  return job.status === "queued" || job.status === "listing" || job.status === "syncing";
+}
+
 function isFirefliesJobNotFoundError(err: unknown): boolean {
   return (
     err instanceof Error &&
@@ -161,6 +207,33 @@ function progressFromFirefliesJob(job: FirefliesSyncJob): SyncProgress {
       phase: "listing",
       batch: job.batch,
       totalListed: job.totalListed,
+    };
+  }
+
+  return { phase: "queued" };
+}
+
+function progressFromGoogleMeetJob(job: GoogleMeetSyncJob): SyncProgress {
+  if (job.status === "syncing") {
+    return {
+      phase: "syncing",
+      current: job.current ?? job.checked,
+      total: job.total ?? job.totalListed ?? 0,
+      checked: job.checked,
+      synced: job.synced,
+      skipped: job.skipped,
+      skippedExisting: job.skippedExisting,
+      skippedNoTranscript: job.skippedNoTranscript,
+      failed: job.failed,
+      lastTitle: job.lastTitle,
+    };
+  }
+
+  if (job.status === "listing") {
+    return {
+      phase: "listing",
+      totalListed: job.totalListed,
+      checked: job.checked,
     };
   }
 
@@ -196,13 +269,23 @@ export const SyncControl: FC<SyncControlProps> = ({
   const [gmWebhookStatus, setGmWebhookStatus] = useState<GoogleMeetWebhookStatus | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const firefliesPollRef = useRef<number | null>(null);
+  const googleMeetPollRef = useRef<number | null>(null);
   const activeFirefliesJobRef = useRef<string | null>(null);
+  const activeGoogleMeetJobRef = useRef<string | null>(null);
   const completedFirefliesJobsRef = useRef<Set<string>>(new Set());
+  const completedGoogleMeetJobsRef = useRef<Set<string>>(new Set());
 
   const clearFirefliesPoll = useCallback(() => {
     if (firefliesPollRef.current != null) {
       window.clearInterval(firefliesPollRef.current);
       firefliesPollRef.current = null;
+    }
+  }, []);
+
+  const clearGoogleMeetPoll = useCallback(() => {
+    if (googleMeetPollRef.current != null) {
+      window.clearInterval(googleMeetPollRef.current);
+      googleMeetPollRef.current = null;
     }
   }, []);
 
@@ -261,6 +344,72 @@ export const SyncControl: FC<SyncControlProps> = ({
         });
       } else if (job.status === "failed") {
         setError(job.message ?? "Fireflies sync failed.");
+      }
+    },
+    [onSyncComplete],
+  );
+
+  const applyGoogleMeetJob = useCallback(
+    (job: GoogleMeetSyncJob) => {
+      debugLog("sync.google-meet.job", "received", {
+        jobId: job.id,
+        status: job.status,
+        mode: job.mode,
+        checked: job.checked,
+        total: job.total ?? null,
+        synced: job.synced,
+        skipped: job.skipped,
+        skippedExisting: job.skippedExisting,
+        skippedNoTranscript: job.skippedNoTranscript,
+        failed: job.failed,
+      });
+      if (isActiveGoogleMeetJob(job)) {
+        activeGoogleMeetJobRef.current = job.id;
+        setSyncing(true);
+        setSyncSource("google-meet");
+        setResult(null);
+        setError(null);
+        setProgress(progressFromGoogleMeetJob(job));
+        return;
+      }
+
+      if (activeGoogleMeetJobRef.current === job.id) {
+        activeGoogleMeetJobRef.current = null;
+      }
+      setSyncing(false);
+      setSyncSource(null);
+      setProgress(null);
+
+      if (job.status === "completed") {
+        setResult({
+          synced: job.synced,
+          repaired: 0,
+          skipped: job.skipped,
+          skippedExisting: job.skippedExisting,
+          skippedNoTranscript: job.skippedNoTranscript,
+          failed: job.failed,
+          errors: job.errors,
+        });
+
+        if (!completedGoogleMeetJobsRef.current.has(job.id)) {
+          completedGoogleMeetJobsRef.current.add(job.id);
+          const ts = new Date().toISOString();
+          localStorage.setItem(LAST_SYNC_KEY, ts);
+          setLastSync(ts);
+          onSyncComplete();
+        }
+      } else if (job.status === "canceled") {
+        setResult({
+          synced: job.synced,
+          repaired: 0,
+          skipped: job.skipped,
+          skippedExisting: job.skippedExisting,
+          skippedNoTranscript: job.skippedNoTranscript,
+          failed: job.failed,
+          errors: job.errors,
+        });
+      } else if (job.status === "failed") {
+        setError(job.message ?? "Google Meet sync failed.");
       }
     },
     [onSyncComplete],
@@ -335,6 +484,56 @@ export const SyncControl: FC<SyncControlProps> = ({
     [api, applyFirefliesJob, clearFirefliesPoll],
   );
 
+  const pollGoogleMeetJob = useCallback(
+    (jobId: string) => {
+      debugLog("sync.google-meet.poll-loop", "started", { jobId, intervalMs: 1500 });
+      clearGoogleMeetPoll();
+      let inFlight = false;
+
+      const refresh = async () => {
+        if (inFlight) return;
+        inFlight = true;
+        const step = startDebugStep("sync.google-meet.poll", { jobId });
+        try {
+          const job = await api.get<GoogleMeetSyncJob>(`/api/sync/google-meet/jobs/${jobId}`);
+          if (!isGoogleMeetJob(job)) {
+            step.complete({ validJob: false });
+            return;
+          }
+          applyGoogleMeetJob(job);
+          if (!isActiveGoogleMeetJob(job)) {
+            clearGoogleMeetPoll();
+            debugLog("sync.google-meet.poll-loop", "stopped", {
+              jobId,
+              reason: "terminal-status",
+              status: job.status,
+            });
+          }
+          step.complete({
+            validJob: true,
+            status: job.status,
+            checked: job.checked,
+            total: job.total ?? null,
+          });
+        } catch (err) {
+          step.fail(err);
+          clearGoogleMeetPoll();
+          debugLog("sync.google-meet.poll-loop", "stopped", { jobId, reason: "poll-error" });
+          setSyncing(false);
+          setSyncSource(null);
+          setProgress(null);
+          setError(err instanceof Error ? err.message : String(err));
+        } finally {
+          inFlight = false;
+        }
+      };
+
+      void refresh();
+      googleMeetPollRef.current = window.setInterval(refresh, 1500);
+    },
+    [api, applyGoogleMeetJob, clearGoogleMeetPoll],
+  );
+
   useEffect(() => {
     api
       .get<WebhookStatus>("/api/config/webhook-status")
@@ -397,7 +596,39 @@ export const SyncControl: FC<SyncControlProps> = ({
     };
   }, [api, hasFireflies, applyFirefliesJob, pollFirefliesJob]);
 
+  useEffect(() => {
+    if (!hasGM) return;
+
+    let canceled = false;
+    const step = startDebugStep("sync.google-meet.current-job", {
+      path: "/api/sync/google-meet/jobs/current",
+    });
+    api
+      .get<GoogleMeetSyncJob | null>("/api/sync/google-meet/jobs/current")
+      .then((job) => {
+        if (canceled) {
+          step.complete({ canceled: true });
+          return;
+        }
+        if (!isGoogleMeetJob(job)) {
+          step.complete({ hasJob: false });
+          return;
+        }
+        applyGoogleMeetJob(job);
+        if (isActiveGoogleMeetJob(job)) {
+          pollGoogleMeetJob(job.id);
+        }
+        step.complete({ hasJob: true, jobId: job.id, status: job.status });
+      })
+      .catch((err) => step.fail(err));
+
+    return () => {
+      canceled = true;
+    };
+  }, [api, hasGM, applyGoogleMeetJob, pollGoogleMeetJob]);
+
   useEffect(() => () => clearFirefliesPoll(), [clearFirefliesPoll]);
+  useEffect(() => () => clearGoogleMeetPoll(), [clearGoogleMeetPoll]);
 
   useEffect(() => {
     if (!lastSync) return;
@@ -435,6 +666,36 @@ export const SyncControl: FC<SyncControlProps> = ({
       }
     },
     [api, applyFirefliesJob, pollFirefliesJob],
+  );
+
+  const startGoogleMeetJob = useCallback(
+    async (mode: "incremental" | "full") => {
+      const step = startDebugStep("sync.google-meet.start-job", { mode });
+      setSyncing(true);
+      setSyncSource("google-meet");
+      setResult(null);
+      setError(null);
+      setProgress({ phase: "queued" });
+
+      try {
+        const job = await api.post<GoogleMeetSyncJob>("/api/sync/google-meet/jobs", { mode });
+        if (!isGoogleMeetJob(job)) {
+          throw new Error("Google Meet sync did not return a job.");
+        }
+        applyGoogleMeetJob(job);
+        if (isActiveGoogleMeetJob(job)) {
+          pollGoogleMeetJob(job.id);
+        }
+        step.complete({ jobId: job.id, status: job.status, mode: job.mode });
+      } catch (err) {
+        step.fail(err);
+        setError(err instanceof Error ? err.message : String(err));
+        setProgress(null);
+        setSyncing(false);
+        setSyncSource(null);
+      }
+    },
+    [api, applyGoogleMeetJob, pollGoogleMeetJob],
   );
 
   const startStreamSync = useCallback(
@@ -579,8 +840,8 @@ export const SyncControl: FC<SyncControlProps> = ({
   );
 
   const handleGoogleMeetSync = useCallback(
-    () => startStreamSync("incremental", "google-meet"),
-    [startStreamSync],
+    () => startGoogleMeetJob("incremental"),
+    [startGoogleMeetJob],
   );
 
   const handleGranolaSync = useCallback(
@@ -624,9 +885,25 @@ export const SyncControl: FC<SyncControlProps> = ({
       return;
     }
 
+    const googleMeetJobId = activeGoogleMeetJobRef.current;
+    if (syncSource === "google-meet" && googleMeetJobId) {
+      const step = startDebugStep("sync.google-meet.cancel", { jobId: googleMeetJobId });
+      api
+        .post<GoogleMeetSyncJob>(`/api/sync/google-meet/jobs/${googleMeetJobId}/cancel`)
+        .then((job) => {
+          if (isGoogleMeetJob(job)) applyGoogleMeetJob(job);
+          step.complete({ status: isGoogleMeetJob(job) ? job.status : "invalid-job" });
+        })
+        .catch((err) => {
+          step.fail(err);
+          setError(err instanceof Error ? err.message : String(err));
+        });
+      return;
+    }
+
     debugLog("sync.stream.cancel", "abort");
     abortRef.current?.abort();
-  }, [api, applyFirefliesJob, syncSource]);
+  }, [api, applyFirefliesJob, applyGoogleMeetJob, syncSource]);
 
   const pct =
     progress?.phase === "syncing" && progress.total
@@ -639,6 +916,12 @@ export const SyncControl: FC<SyncControlProps> = ({
       : syncSource === "granola"
         ? "Scanning Granola"
         : "Scanning Fireflies";
+  const queuedLabel =
+    syncSource === "google-meet"
+      ? "Queued Google Meet sync"
+      : syncSource === "fireflies"
+        ? "Queued Fireflies sync"
+        : "Queued sync";
 
   // ── Render ────────────────────────────────────────────────────────
 
@@ -701,13 +984,13 @@ export const SyncControl: FC<SyncControlProps> = ({
           <div style={s.phaseRow}>
             <span style={s.phaseDot} />
             <span style={s.phaseLabel}>
-              {progress.phase === "queued" ? "Queued Fireflies sync" : listingLabel}
+              {progress.phase === "queued" ? queuedLabel : listingLabel}
             </span>
           </div>
           <p style={s.phaseDetail}>
             {progress.phase === "queued" ? (
               "Waiting to start\u2026"
-            ) : progress.totalListed != null ? (
+            ) : progress.totalListed != null || progress.checked != null ? (
               <>
                 {progress.batch != null && (
                   <>
@@ -716,13 +999,14 @@ export const SyncControl: FC<SyncControlProps> = ({
                     <span style={s.statDividerInline}>/</span>
                   </>
                 )}
-                <span style={s.statNum}>{progress.totalListed}</span> checked so far
+                <span style={s.statNum}>{progress.totalListed ?? progress.checked}</span> checked so
+                far
               </>
             ) : (
               "Checking transcript history\u2026"
             )}
           </p>
-          {syncSource === "fireflies" && (
+          {(syncSource === "fireflies" || syncSource === "google-meet") && (
             <p style={s.phaseSubtle}>The backend will keep syncing if this page reloads.</p>
           )}
         </div>
@@ -748,6 +1032,15 @@ export const SyncControl: FC<SyncControlProps> = ({
               <span style={s.statNum}>{progress.synced ?? 0}</span>
               <span style={s.statLabel}>synced</span>
             </div>
+            {(progress.skipped ?? 0) > 0 && (
+              <>
+                <div style={s.statDivider} />
+                <div style={s.stat}>
+                  <span style={s.statNum}>{progress.skipped}</span>
+                  <span style={s.statLabel}>skipped</span>
+                </div>
+              </>
+            )}
             {(progress.failed ?? 0) > 0 && (
               <>
                 <div style={s.statDivider} />
@@ -761,7 +1054,14 @@ export const SyncControl: FC<SyncControlProps> = ({
 
           {/* Current transcript */}
           {progress.lastTitle && <p style={s.currentTitle}>{truncate(progress.lastTitle, 52)}</p>}
-          {syncSource === "fireflies" && (
+          {syncSource === "google-meet" &&
+            ((progress.skippedExisting ?? 0) > 0 || (progress.skippedNoTranscript ?? 0) > 0) && (
+              <p style={s.currentTitle}>
+                {progress.skippedExisting ?? 0} already in library ·{" "}
+                {progress.skippedNoTranscript ?? 0} without transcripts
+              </p>
+            )}
+          {(syncSource === "fireflies" || syncSource === "google-meet") && (
             <p style={s.currentTitle}>The backend will keep syncing if this page reloads.</p>
           )}
         </div>
@@ -779,6 +1079,18 @@ export const SyncControl: FC<SyncControlProps> = ({
               <div style={s.resultStat}>
                 <span style={s.resultNum}>{result.skipped}</span>
                 <span style={s.resultLabel}>skipped</span>
+              </div>
+            )}
+            {(result.skippedExisting ?? 0) > 0 && (
+              <div style={s.resultStat}>
+                <span style={s.resultNum}>{result.skippedExisting}</span>
+                <span style={s.resultLabel}>already synced</span>
+              </div>
+            )}
+            {(result.skippedNoTranscript ?? 0) > 0 && (
+              <div style={s.resultStat}>
+                <span style={s.resultNum}>{result.skippedNoTranscript}</span>
+                <span style={s.resultLabel}>no transcript</span>
               </div>
             )}
             {result.repaired > 0 && (

@@ -394,6 +394,7 @@ async function main() {
     createGoogleMeetSyncRouter({
       authMiddleware,
       delegationMiddleware,
+      backendKV,
     }),
   );
 
