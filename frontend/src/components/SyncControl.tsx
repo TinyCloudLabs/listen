@@ -83,25 +83,6 @@ interface GoogleMeetSyncJob {
   lastTitle?: string;
 }
 
-type GranolaSyncJobStatus = "queued" | "listing" | "syncing" | "completed" | "failed" | "canceled";
-
-interface GranolaSyncJob {
-  id: string;
-  source: "granola";
-  status: GranolaSyncJobStatus;
-  mode: "incremental" | "full";
-  message?: string;
-  batch?: number;
-  totalListed?: number;
-  current?: number;
-  total?: number;
-  synced: number;
-  skipped: number;
-  failed: number;
-  errors: string[];
-  lastTitle?: string;
-}
-
 interface WebhookStatus {
   configured: boolean;
   pendingCount: number;
@@ -201,19 +182,6 @@ function isActiveGoogleMeetJob(job: GoogleMeetSyncJob): boolean {
   return job.status === "queued" || job.status === "listing" || job.status === "syncing";
 }
 
-function isGranolaJob(value: unknown): value is GranolaSyncJob {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    (value as { source?: unknown }).source === "granola" &&
-    typeof (value as { id?: unknown }).id === "string"
-  );
-}
-
-function isActiveGranolaJob(job: GranolaSyncJob): boolean {
-  return job.status === "queued" || job.status === "listing" || job.status === "syncing";
-}
-
 function isFirefliesJobNotFoundError(err: unknown): boolean {
   return (
     err instanceof Error &&
@@ -272,30 +240,6 @@ function progressFromGoogleMeetJob(job: GoogleMeetSyncJob): SyncProgress {
   return { phase: "queued" };
 }
 
-function progressFromGranolaJob(job: GranolaSyncJob): SyncProgress {
-  if (job.status === "syncing") {
-    return {
-      phase: "syncing",
-      current: job.current ?? 0,
-      total: job.total ?? 0,
-      synced: job.synced,
-      skipped: job.skipped,
-      failed: job.failed,
-      lastTitle: job.lastTitle,
-    };
-  }
-
-  if (job.status === "listing") {
-    return {
-      phase: "listing",
-      batch: job.batch,
-      totalListed: job.totalListed,
-    };
-  }
-
-  return { phase: "queued" };
-}
-
 // ── Component ───────────────────────────────────────────────────────
 
 export const SyncControl: FC<SyncControlProps> = ({
@@ -325,13 +269,10 @@ export const SyncControl: FC<SyncControlProps> = ({
   const [gmWebhookStatus, setGmWebhookStatus] = useState<GoogleMeetWebhookStatus | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const firefliesPollRef = useRef<number | null>(null);
-  const granolaPollRef = useRef<number | null>(null);
   const googleMeetPollRef = useRef<number | null>(null);
   const activeFirefliesJobRef = useRef<string | null>(null);
-  const activeGranolaJobRef = useRef<string | null>(null);
   const activeGoogleMeetJobRef = useRef<string | null>(null);
   const completedFirefliesJobsRef = useRef<Set<string>>(new Set());
-  const completedGranolaJobsRef = useRef<Set<string>>(new Set());
   const completedGoogleMeetJobsRef = useRef<Set<string>>(new Set());
 
   const clearFirefliesPoll = useCallback(() => {
@@ -345,13 +286,6 @@ export const SyncControl: FC<SyncControlProps> = ({
     if (googleMeetPollRef.current != null) {
       window.clearInterval(googleMeetPollRef.current);
       googleMeetPollRef.current = null;
-    }
-  }, []);
-
-  const clearGranolaPoll = useCallback(() => {
-    if (granolaPollRef.current != null) {
-      window.clearInterval(granolaPollRef.current);
-      granolaPollRef.current = null;
     }
   }, []);
 
@@ -410,66 +344,6 @@ export const SyncControl: FC<SyncControlProps> = ({
         });
       } else if (job.status === "failed") {
         setError(job.message ?? "Fireflies sync failed.");
-      }
-    },
-    [onSyncComplete],
-  );
-
-  const applyGranolaJob = useCallback(
-    (job: GranolaSyncJob) => {
-      debugLog("sync.granola.job", "received", {
-        jobId: job.id,
-        status: job.status,
-        mode: job.mode,
-        current: job.current ?? null,
-        total: job.total ?? null,
-        synced: job.synced,
-        skipped: job.skipped,
-        failed: job.failed,
-      });
-      if (isActiveGranolaJob(job)) {
-        activeGranolaJobRef.current = job.id;
-        setSyncing(true);
-        setSyncSource("granola");
-        setResult(null);
-        setError(null);
-        setProgress(progressFromGranolaJob(job));
-        return;
-      }
-
-      if (activeGranolaJobRef.current === job.id) {
-        activeGranolaJobRef.current = null;
-      }
-      setSyncing(false);
-      setSyncSource(null);
-      setProgress(null);
-
-      if (job.status === "completed") {
-        setResult({
-          synced: job.synced,
-          repaired: 0,
-          skipped: job.skipped,
-          failed: job.failed,
-          errors: job.errors,
-        });
-
-        if (!completedGranolaJobsRef.current.has(job.id)) {
-          completedGranolaJobsRef.current.add(job.id);
-          const ts = new Date().toISOString();
-          localStorage.setItem(LAST_SYNC_KEY, ts);
-          setLastSync(ts);
-          onSyncComplete();
-        }
-      } else if (job.status === "canceled") {
-        setResult({
-          synced: job.synced,
-          repaired: 0,
-          skipped: job.skipped,
-          failed: job.failed,
-          errors: job.errors,
-        });
-      } else if (job.status === "failed") {
-        setError(job.message ?? "Granola sync failed.");
       }
     },
     [onSyncComplete],
@@ -610,56 +484,6 @@ export const SyncControl: FC<SyncControlProps> = ({
     [api, applyFirefliesJob, clearFirefliesPoll],
   );
 
-  const pollGranolaJob = useCallback(
-    (jobId: string) => {
-      debugLog("sync.granola.poll-loop", "started", { jobId, intervalMs: 1500 });
-      clearGranolaPoll();
-      let inFlight = false;
-
-      const refresh = async () => {
-        if (inFlight) return;
-        inFlight = true;
-        const step = startDebugStep("sync.granola.poll", { jobId });
-        try {
-          const job = await api.get<GranolaSyncJob>(`/api/sync/granola/jobs/${jobId}`);
-          if (!isGranolaJob(job)) {
-            step.complete({ validJob: false });
-            return;
-          }
-          applyGranolaJob(job);
-          if (!isActiveGranolaJob(job)) {
-            clearGranolaPoll();
-            debugLog("sync.granola.poll-loop", "stopped", {
-              jobId,
-              reason: "terminal-status",
-              status: job.status,
-            });
-          }
-          step.complete({
-            validJob: true,
-            status: job.status,
-            current: job.current ?? null,
-            total: job.total ?? null,
-          });
-        } catch (err) {
-          step.fail(err);
-          clearGranolaPoll();
-          debugLog("sync.granola.poll-loop", "stopped", { jobId, reason: "poll-error" });
-          setSyncing(false);
-          setSyncSource(null);
-          setProgress(null);
-          setError(err instanceof Error ? err.message : String(err));
-        } finally {
-          inFlight = false;
-        }
-      };
-
-      void refresh();
-      granolaPollRef.current = window.setInterval(refresh, 1500);
-    },
-    [api, applyGranolaJob, clearGranolaPoll],
-  );
-
   const pollGoogleMeetJob = useCallback(
     (jobId: string) => {
       debugLog("sync.google-meet.poll-loop", "started", { jobId, intervalMs: 1500 });
@@ -773,37 +597,6 @@ export const SyncControl: FC<SyncControlProps> = ({
   }, [api, hasFireflies, applyFirefliesJob, pollFirefliesJob]);
 
   useEffect(() => {
-    if (!hasGranola) return;
-
-    let canceled = false;
-    const step = startDebugStep("sync.granola.current-job", {
-      path: "/api/sync/granola/jobs/current",
-    });
-    api
-      .get<GranolaSyncJob | null>("/api/sync/granola/jobs/current")
-      .then((job) => {
-        if (canceled) {
-          step.complete({ canceled: true });
-          return;
-        }
-        if (!isGranolaJob(job)) {
-          step.complete({ hasJob: false });
-          return;
-        }
-        applyGranolaJob(job);
-        if (isActiveGranolaJob(job)) {
-          pollGranolaJob(job.id);
-        }
-        step.complete({ hasJob: true, jobId: job.id, status: job.status });
-      })
-      .catch((err) => step.fail(err));
-
-    return () => {
-      canceled = true;
-    };
-  }, [api, hasGranola, applyGranolaJob, pollGranolaJob]);
-
-  useEffect(() => {
     if (!hasGM) return;
 
     let canceled = false;
@@ -835,7 +628,6 @@ export const SyncControl: FC<SyncControlProps> = ({
   }, [api, hasGM, applyGoogleMeetJob, pollGoogleMeetJob]);
 
   useEffect(() => () => clearFirefliesPoll(), [clearFirefliesPoll]);
-  useEffect(() => () => clearGranolaPoll(), [clearGranolaPoll]);
   useEffect(() => () => clearGoogleMeetPoll(), [clearGoogleMeetPoll]);
 
   useEffect(() => {
@@ -874,36 +666,6 @@ export const SyncControl: FC<SyncControlProps> = ({
       }
     },
     [api, applyFirefliesJob, pollFirefliesJob],
-  );
-
-  const startGranolaJob = useCallback(
-    async (mode: "incremental" | "full") => {
-      const step = startDebugStep("sync.granola.start-job", { mode });
-      setSyncing(true);
-      setSyncSource("granola");
-      setResult(null);
-      setError(null);
-      setProgress({ phase: "queued" });
-
-      try {
-        const job = await api.post<GranolaSyncJob>("/api/sync/granola/jobs", { mode });
-        if (!isGranolaJob(job)) {
-          throw new Error("Granola sync did not return a job.");
-        }
-        applyGranolaJob(job);
-        if (isActiveGranolaJob(job)) {
-          pollGranolaJob(job.id);
-        }
-        step.complete({ jobId: job.id, status: job.status, mode: job.mode });
-      } catch (err) {
-        step.fail(err);
-        setError(err instanceof Error ? err.message : String(err));
-        setProgress(null);
-        setSyncing(false);
-        setSyncSource(null);
-      }
-    },
-    [api, applyGranolaJob, pollGranolaJob],
   );
 
   const startGoogleMeetJob = useCallback(
@@ -1082,7 +844,10 @@ export const SyncControl: FC<SyncControlProps> = ({
     [startGoogleMeetJob],
   );
 
-  const handleGranolaSync = useCallback(() => startGranolaJob("incremental"), [startGranolaJob]);
+  const handleGranolaSync = useCallback(
+    () => startStreamSync("incremental", "granola"),
+    [startStreamSync],
+  );
 
   const handleClearAndResync = useCallback(async () => {
     setSyncing(true);
@@ -1120,22 +885,6 @@ export const SyncControl: FC<SyncControlProps> = ({
       return;
     }
 
-    const granolaJobId = activeGranolaJobRef.current;
-    if (syncSource === "granola" && granolaJobId) {
-      const step = startDebugStep("sync.granola.cancel", { jobId: granolaJobId });
-      api
-        .post<GranolaSyncJob>(`/api/sync/granola/jobs/${granolaJobId}/cancel`)
-        .then((job) => {
-          if (isGranolaJob(job)) applyGranolaJob(job);
-          step.complete({ status: isGranolaJob(job) ? job.status : "invalid-job" });
-        })
-        .catch((err) => {
-          step.fail(err);
-          setError(err instanceof Error ? err.message : String(err));
-        });
-      return;
-    }
-
     const googleMeetJobId = activeGoogleMeetJobRef.current;
     if (syncSource === "google-meet" && googleMeetJobId) {
       const step = startDebugStep("sync.google-meet.cancel", { jobId: googleMeetJobId });
@@ -1154,7 +903,7 @@ export const SyncControl: FC<SyncControlProps> = ({
 
     debugLog("sync.stream.cancel", "abort");
     abortRef.current?.abort();
-  }, [api, applyFirefliesJob, applyGranolaJob, applyGoogleMeetJob, syncSource]);
+  }, [api, applyFirefliesJob, applyGoogleMeetJob, syncSource]);
 
   const pct =
     progress?.phase === "syncing" && progress.total
@@ -1170,11 +919,9 @@ export const SyncControl: FC<SyncControlProps> = ({
   const queuedLabel =
     syncSource === "google-meet"
       ? "Queued Google Meet sync"
-      : syncSource === "granola"
-        ? "Queued Granola sync"
-        : syncSource === "fireflies"
-          ? "Queued Fireflies sync"
-          : "Queued sync";
+      : syncSource === "fireflies"
+        ? "Queued Fireflies sync"
+        : "Queued sync";
 
   // ── Render ────────────────────────────────────────────────────────
 
@@ -1259,9 +1006,7 @@ export const SyncControl: FC<SyncControlProps> = ({
               "Checking transcript history\u2026"
             )}
           </p>
-          {(syncSource === "fireflies" ||
-            syncSource === "granola" ||
-            syncSource === "google-meet") && (
+          {(syncSource === "fireflies" || syncSource === "google-meet") && (
             <p style={s.phaseSubtle}>The backend will keep syncing if this page reloads.</p>
           )}
         </div>
@@ -1316,9 +1061,7 @@ export const SyncControl: FC<SyncControlProps> = ({
                 {progress.skippedNoTranscript ?? 0} without transcripts
               </p>
             )}
-          {(syncSource === "fireflies" ||
-            syncSource === "granola" ||
-            syncSource === "google-meet") && (
+          {(syncSource === "fireflies" || syncSource === "google-meet") && (
             <p style={s.currentTitle}>The backend will keep syncing if this page reloads.</p>
           )}
         </div>
