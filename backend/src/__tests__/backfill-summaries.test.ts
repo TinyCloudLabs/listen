@@ -122,15 +122,20 @@ function createMockFullTranscript(overrides: Partial<FullTranscript> = {}): Full
 
 function createMockClientFactory() {
   const getResults = new Map<string, FullTranscript | Error>();
+  const getCalls: string[] = [];
 
   return {
     setGetResult(id: string, result: FullTranscript | Error) {
       getResults.set(id, result);
     },
+    getGetCalls() {
+      return getCalls;
+    },
     factory(_apiKey: string) {
       return {
         listTranscripts: async () => [],
         getTranscript: async (id: string) => {
+          getCalls.push(id);
           const result = getResults.get(id);
           if (result instanceof Error) throw result;
           if (!result) throw new Error(`No mock transcript for id=${id}`);
@@ -307,6 +312,44 @@ describe("Backfill Summaries — POST /api/sync/backfill-summaries", () => {
     expect(meta.keywords).toEqual(["roadmap"]);
     expect(meta.meeting_type).toBe("planning");
     expect(meta.audio_url).toBe("https://audio.example.com/ff-1.mp3");
+  });
+
+  it("limits each no-body backfill request to a small batch", async () => {
+    mockKV._data.set(KV_KEY, "test-api-key");
+
+    const rows = Array.from({ length: 12 }, (_, i) => ({
+      id: `conv-${i + 1}`,
+      source_id: `ff-${i + 1}`,
+    }));
+    mockSQL._setMissingRows(rows);
+    for (const row of rows) {
+      mockSQL._setMetadata(row.id, JSON.stringify({}));
+      clientFactory.setGetResult(
+        row.source_id,
+        createMockFullTranscript({
+          id: row.source_id,
+          summary: {
+            keywords: [],
+            action_items: [],
+            overview: `Summary ${row.source_id}`,
+            shorthand_bullet: "",
+            meeting_type: "",
+          },
+        }),
+      );
+    }
+
+    const res = await fetch(`http://localhost:${port}/api/sync/backfill-summaries`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.updated).toBe(10);
+    expect(body.checked).toBe(10);
+    expect(body.remaining).toBe(2);
+    expect(clientFactory.getGetCalls()).toHaveLength(10);
   });
 
   // ── Skips conversations that already have summaries ───────────────

@@ -73,6 +73,8 @@ interface FirefliesSyncResult {
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
 const SYNC_DELAY_MS = 800;
+const DEFAULT_BACKFILL_SUMMARY_LIMIT = 10;
+const MAX_BACKFILL_SUMMARY_LIMIT = 25;
 const FIREFLIES_JOB_PREFIX = resolveAppPath("sync/fireflies/jobs");
 
 type FirefliesSyncJobStatus =
@@ -141,6 +143,12 @@ function cloneFirefliesJob(job: FirefliesSyncJob): FirefliesSyncJob {
 
 function isActiveJob(job: FirefliesSyncJob | null): job is FirefliesSyncJob {
   return job?.status === "queued" || job?.status === "listing" || job?.status === "syncing";
+}
+
+function boundedNumber(value: unknown, fallback: number, max: number): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return Math.min(Math.floor(parsed), max);
 }
 
 function createQueuedJob(ownerAddress: string, mode: "incremental" | "full"): FirefliesSyncJob {
@@ -1000,17 +1008,25 @@ export function createSyncRouter(config: SyncRoutesConfig) {
         `SELECT id, source_id FROM conversation WHERE source = 'fireflies' AND summary IS NULL`,
       );
 
-      const rows: Array<{ id: string; source_id: string }> = [];
+      const allRows: Array<{ id: string; source_id: string }> = [];
       if (missingResult.ok && missingResult.data.rows) {
         for (const row of missingResult.data.rows) {
           const id = Array.isArray(row) ? row[0] : (row as any).id;
           const sourceId = Array.isArray(row) ? row[1] : (row as any).source_id;
-          if (id && sourceId) rows.push({ id: String(id), source_id: String(sourceId) });
+          if (id && sourceId) allRows.push({ id: String(id), source_id: String(sourceId) });
         }
       }
 
-      if (rows.length === 0) {
-        res.json({ updated: 0, still_missing: 0 });
+      const limit = boundedNumber(
+        req.body?.limit ?? req.query.limit,
+        DEFAULT_BACKFILL_SUMMARY_LIMIT,
+        MAX_BACKFILL_SUMMARY_LIMIT,
+      );
+      const rows = allRows.slice(0, limit);
+      const remaining = Math.max(0, allRows.length - rows.length);
+
+      if (allRows.length === 0) {
+        res.json({ updated: 0, still_missing: 0, remaining: 0, checked: 0 });
         return;
       }
 
@@ -1063,7 +1079,7 @@ export function createSyncRouter(config: SyncRoutesConfig) {
         }
       }
 
-      res.json({ updated, still_missing: stillMissing });
+      res.json({ updated, still_missing: stillMissing, remaining, checked: rows.length });
     } catch (err) {
       console.error("[backfill] summary backfill failed:", err);
       const message = err instanceof Error ? err.message : String(err);

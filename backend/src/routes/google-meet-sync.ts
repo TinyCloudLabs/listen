@@ -189,8 +189,9 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
     // SSE headers
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
+      "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
     });
     res.flushHeaders();
 
@@ -199,9 +200,29 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
       aborted = true;
     });
 
+    const sendComment = (comment: string) => {
+      if (aborted) return;
+      try {
+        res.write(`: ${comment}\n\n`);
+      } catch {
+        aborted = true;
+      }
+    };
+
     const sendEvent = (type: string, data: unknown) => {
       if (aborted) return;
-      res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+      try {
+        res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+      } catch {
+        aborted = true;
+      }
+    };
+
+    sendComment("open");
+    const keepAlive = setInterval(() => sendComment("keep-alive"), 10_000);
+    const closeStream = () => {
+      clearInterval(keepAlive);
+      if (!aborted && !res.writableEnded) res.end();
     };
 
     try {
@@ -210,7 +231,7 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
       if (!tokens) {
         console.log("[google-meet-sync] no tokens found at", GOOGLE_TOKENS_PATH);
         sendEvent("error", { message: "No Google tokens configured. Connect your account first." });
-        res.end();
+        closeStream();
         return;
       }
       console.log("[google-meet-sync] tokens loaded, has refresh_token:", !!tokens.refresh_token);
@@ -223,7 +244,7 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
 
       // 2. List conferences
       if (aborted) {
-        res.end();
+        closeStream();
         return;
       }
       const conferences = await client.listConferenceRecords();
@@ -303,7 +324,7 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
       }
     }
 
-    res.end();
+    closeStream();
   });
 
   // ── DELETE /conversations — purge all google-meet data ────────────

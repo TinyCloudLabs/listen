@@ -416,6 +416,9 @@ describe("Google Meet Sync Routes — GET /api/sync/google-meet/stream", () => {
     const res = await fetch(`http://localhost:${port}/api/sync/google-meet/stream`);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("text/event-stream");
+    expect(res.headers.get("cache-control")).toBe("no-cache, no-transform");
+    expect(res.headers.get("x-accel-buffering")).toBe("no");
+    expect(await res.text()).toContain(": open");
   });
 
   it("syncs conferences and sends progress + complete events", async () => {
