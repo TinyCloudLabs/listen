@@ -1313,7 +1313,7 @@ export const SyncControl: FC<SyncControlProps> = ({
             ((progress.skippedExisting ?? 0) > 0 || (progress.skippedNoTranscript ?? 0) > 0) && (
               <p style={s.currentTitle}>
                 {progress.skippedExisting ?? 0} already in library ·{" "}
-                {progress.skippedNoTranscript ?? 0} without transcripts
+                {progress.skippedNoTranscript ?? 0} transcript unavailable
               </p>
             )}
           {(syncSource === "fireflies" ||
@@ -1347,7 +1347,7 @@ export const SyncControl: FC<SyncControlProps> = ({
             {(result.skippedNoTranscript ?? 0) > 0 && (
               <div style={s.resultStat}>
                 <span style={s.resultNum}>{result.skippedNoTranscript}</span>
-                <span style={s.resultLabel}>no transcript</span>
+                <span style={s.resultLabel}>unavailable</span>
               </div>
             )}
             {result.repaired > 0 && (

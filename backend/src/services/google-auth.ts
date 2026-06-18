@@ -1,6 +1,10 @@
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
-const SCOPE = "https://www.googleapis.com/auth/meetings.space.readonly";
+const GOOGLE_SCOPES = [
+  "https://www.googleapis.com/auth/meetings.space.readonly",
+  "https://www.googleapis.com/auth/drive.meet.readonly",
+];
+const SCOPE = GOOGLE_SCOPES.join(" ");
 
 // ── Types ────────────────────────────────────────────────────────────
 
