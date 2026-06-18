@@ -136,6 +136,14 @@ vi.mock("@listen/client", () => {
     resolveManifestPermissionPath: vi
       .fn()
       .mockReturnValue("com.test.listen/conversations/conversation"),
+    isListenDebugEnabled: vi.fn(() => false),
+    installListenDebugFetchLogger: vi.fn(),
+    listenDebugFetch: vi.fn((input: RequestInfo | URL, init?: RequestInit) => fetch(input, init)),
+    listenDebugLog: vi.fn(),
+    startListenDebugStep: vi.fn(() => ({
+      complete: vi.fn(),
+      fail: vi.fn(),
+    })),
     SessionStore: MockSessionStore,
   };
 });

@@ -1,5 +1,6 @@
 import type { ApiError } from "@listen/core";
 import type { SessionStore } from "./tokens.js";
+import { listenDebugFetch } from "./debug.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -35,14 +36,19 @@ export function createApiClient(backendUrl: string, config: ApiClientConfig): Ap
       throw new Error("Session expired. Please sign in again.");
     }
 
-    const res = await fetch(`${backendUrl}${path}`, {
-      ...init,
-      headers: {
-        ...init.headers,
-        Authorization: `Bearer ${token}`,
-        "X-Requested-With": "Listen",
+    const method = init.method ?? "GET";
+    const res = await listenDebugFetch(
+      `${backendUrl}${path}`,
+      {
+        ...init,
+        headers: {
+          ...init.headers,
+          Authorization: `Bearer ${token}`,
+          "X-Requested-With": "Listen",
+        },
       },
-    });
+      { client: "api", method, path },
+    );
 
     // On 401, clear session — no auto-refresh with SIWE
     if (res.status === 401) {

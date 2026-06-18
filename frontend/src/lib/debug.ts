@@ -1,12 +1,19 @@
+import {
+  installListenDebugFetchLogger,
+  isListenDebugEnabled,
+  listenDebugFetch,
+  listenDebugLog,
+  startListenDebugStep,
+  type DebugDetails,
+  type DebugStep,
+} from "@listen/client";
+
 const DEBUG_STORAGE_KEY = "listen:debug";
 
-type DebugDetails = Record<string, unknown>;
 type ListenDebugToggle = (enabled?: boolean) => boolean;
 
-export interface DebugStep {
-  complete(details?: DebugDetails): void;
-  fail(error: unknown, details?: DebugDetails): void;
-}
+export type { DebugDetails, DebugStep };
+export const debugFetch = listenDebugFetch;
 
 function canUseStorage(): boolean {
   try {
@@ -17,8 +24,7 @@ function canUseStorage(): boolean {
 }
 
 export function isDebugEnabled(): boolean {
-  if (!canUseStorage()) return false;
-  return window.localStorage.getItem(DEBUG_STORAGE_KEY) === "true";
+  return isListenDebugEnabled();
 }
 
 function setDebugEnabled(enabled: boolean): boolean {
@@ -28,55 +34,15 @@ function setDebugEnabled(enabled: boolean): boolean {
   return enabled;
 }
 
-function timestamp(): string {
-  return new Date().toISOString();
-}
-
-function elapsedMs(startedAtMs: number): number {
-  const now = typeof performance !== "undefined" ? performance.now() : Date.now();
-  return Math.round(now - startedAtMs);
-}
-
-function errorDetails(error: unknown): DebugDetails {
-  if (error instanceof Error) {
-    return { error: error.message, errorName: error.name };
-  }
-  return { error: String(error) };
-}
-
 export function debugLog(step: string, event: string, details: DebugDetails = {}): void {
-  if (!isDebugEnabled()) return;
-  console.debug(`[listen] ${step} ${event}`, {
-    at: timestamp(),
-    ...details,
-  });
+  listenDebugLog(step, event, details);
 }
 
 export function startDebugStep(step: string, details: DebugDetails = {}): DebugStep {
-  const startedAt = timestamp();
-  const startedAtMs = typeof performance !== "undefined" ? performance.now() : Date.now();
-  debugLog(step, "started", { startedAt, ...details });
-
-  return {
-    complete(doneDetails: DebugDetails = {}) {
-      debugLog(step, "completed", {
-        startedAt,
-        completedAt: timestamp(),
-        elapsedMs: elapsedMs(startedAtMs),
-        ...doneDetails,
-      });
-    },
-    fail(error: unknown, failDetails: DebugDetails = {}) {
-      debugLog(step, "failed", {
-        startedAt,
-        failedAt: timestamp(),
-        elapsedMs: elapsedMs(startedAtMs),
-        ...errorDetails(error),
-        ...failDetails,
-      });
-    },
-  };
+  return startListenDebugStep(step, details);
 }
+
+installListenDebugFetchLogger();
 
 if (typeof window !== "undefined") {
   const target = window as unknown as Window & { debug?: ListenDebugToggle };

@@ -2,6 +2,7 @@ import { useState, type FC } from "react";
 import { createManifestDelegation } from "@listen/client";
 import type { ServerInfo } from "@listen/core";
 import type { ComposedManifestRequest, TinyCloudWeb } from "@tinycloud/web-sdk";
+import { debugFetch } from "../lib/debug";
 
 interface ConnectAgentButtonProps {
   tcw: TinyCloudWeb;
@@ -65,11 +66,15 @@ export const ConnectAgentButton: FC<ConnectAgentButtonProps> = ({
     }
 
     try {
-      const res = await fetch(`${agentEndpoint}/delegation`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serialized }),
-      });
+      const res = await debugFetch(
+        `${agentEndpoint}/delegation`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ serialized }),
+        },
+        { client: "agent", method: "POST", path: "/delegation" },
+      );
       if (!res.ok) throw new Error(`Endpoint returned ${res.status}`);
       setStatus({ kind: "connected" });
     } catch {

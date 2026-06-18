@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, type FC } from "react";
 import type { ApiClient } from "@listen/client";
-import { debugLog, startDebugStep } from "../lib/debug";
+import { debugFetch, debugLog, startDebugStep } from "../lib/debug";
 
 const LAST_SYNC_KEY = "lastSyncTimestamp";
 
@@ -424,10 +424,18 @@ export const SyncControl: FC<SyncControlProps> = ({
           source === "google-meet"
             ? `${backendUrl}/api/sync/google-meet/stream`
             : `${backendUrl}/api/sync/granola/stream?mode=${mode}`;
-        const response = await fetch(url, {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: controller.signal,
-        });
+        const response = await debugFetch(
+          url,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: controller.signal,
+          },
+          {
+            client: "sync-stream",
+            method: "GET",
+            source,
+          },
+        );
 
         if (!response.ok || !response.body) {
           throw new Error(`Stream failed: ${response.status} ${response.statusText}`);

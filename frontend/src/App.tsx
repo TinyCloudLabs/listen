@@ -31,7 +31,7 @@ import { AppShell, type ShellRoute, type ShellSourceConfig } from "./components/
 import { MobileExperience } from "./components/mobile";
 import { useIsMobile } from "./hooks/useIsMobile";
 import { APP_MANIFEST } from "./lib/appManifest";
-import { debugLog, startDebugStep } from "./lib/debug";
+import { debugFetch, debugLog, startDebugStep } from "./lib/debug";
 import { createTinyCloudConversationApi } from "./lib/tinycloudConversations";
 
 // ── Environment ─────────────────────────────────────────────────────
@@ -77,7 +77,11 @@ function isChatEnabled(): boolean {
 async function fetchAgentInfo(endpoint: string): Promise<ServerInfo | null> {
   const step = startDebugStep("bootstrap.agent-info", { endpoint });
   try {
-    const res = await fetch(`${endpoint}/info`);
+    const res = await debugFetch(`${endpoint}/info`, undefined, {
+      client: "bootstrap",
+      method: "GET",
+      path: "/info",
+    });
     if (!res.ok) {
       step.complete({ ok: false, status: res.status });
       return null;
@@ -94,7 +98,11 @@ async function fetchAgentInfo(endpoint: string): Promise<ServerInfo | null> {
 async function fetchBackendInfo(): Promise<ServerInfo | null> {
   const step = startDebugStep("bootstrap.backend-info", { endpoint: BACKEND_URL });
   try {
-    const res = await fetch(`${BACKEND_URL}/api/server-info`);
+    const res = await debugFetch(`${BACKEND_URL}/api/server-info`, undefined, {
+      client: "bootstrap",
+      method: "GET",
+      path: "/api/server-info",
+    });
     if (!res.ok) {
       step.complete({ ok: false, status: res.status });
       return null;
