@@ -3,6 +3,7 @@ import type { ApiClient } from "@listen/client";
 import { debugFetch, debugLog, startDebugStep } from "../lib/debug";
 
 const LAST_SYNC_KEY = "lastSyncTimestamp";
+const FIREFLIES_JOB_NOT_FOUND_RETRY_LIMIT = 8;
 
 interface SyncResult {
   synced: number;
@@ -133,6 +134,14 @@ function isActiveFirefliesJob(job: FirefliesSyncJob): boolean {
   return job.status === "queued" || job.status === "listing" || job.status === "syncing";
 }
 
+function isFirefliesJobNotFoundError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    err.message.includes("API error (404)") &&
+    err.message.includes("Sync job not found")
+  );
+}
+
 function progressFromFirefliesJob(job: FirefliesSyncJob): SyncProgress {
   if (job.status === "syncing") {
     return {
@@ -259,6 +268,7 @@ export const SyncControl: FC<SyncControlProps> = ({
       debugLog("sync.fireflies.poll-loop", "started", { jobId, intervalMs: 1500 });
       clearFirefliesPoll();
       let inFlight = false;
+      let notFoundAttempts = 0;
 
       const refresh = async () => {
         if (inFlight) return;
@@ -270,6 +280,7 @@ export const SyncControl: FC<SyncControlProps> = ({
             step.complete({ validJob: false });
             return;
           }
+          notFoundAttempts = 0;
           applyFirefliesJob(job);
           if (!isActiveFirefliesJob(job)) {
             clearFirefliesPoll();
@@ -286,6 +297,23 @@ export const SyncControl: FC<SyncControlProps> = ({
             total: job.total ?? null,
           });
         } catch (err) {
+          if (
+            isFirefliesJobNotFoundError(err) &&
+            notFoundAttempts < FIREFLIES_JOB_NOT_FOUND_RETRY_LIMIT
+          ) {
+            notFoundAttempts += 1;
+            step.fail(err, {
+              retrying: true,
+              notFoundAttempts,
+              retryLimit: FIREFLIES_JOB_NOT_FOUND_RETRY_LIMIT,
+            });
+            debugLog("sync.fireflies.poll", "retrying-not-found", {
+              jobId,
+              notFoundAttempts,
+              retryLimit: FIREFLIES_JOB_NOT_FOUND_RETRY_LIMIT,
+            });
+            return;
+          }
           step.fail(err);
           clearFirefliesPoll();
           debugLog("sync.fireflies.poll-loop", "stopped", { jobId, reason: "poll-error" });

@@ -14,12 +14,26 @@ import type {
 function createMockKV() {
   const data = new Map<string, string>();
   let failPut: string | null = null;
+  let failGet: string | null = null;
+  const hiddenKeys = new Set<string>();
   return {
     _data: data,
     _failNextPut(message = "write denied") {
       failPut = message;
     },
+    _failNextGet(message = "read denied") {
+      failGet = message;
+    },
+    _hideKey(key: string) {
+      hiddenKeys.add(key);
+    },
     get: async (key: string) => {
+      if (failGet) {
+        const message = failGet;
+        failGet = null;
+        return { ok: false, error: { code: "KV_READ_FAILED", message } };
+      }
+      if (hiddenKeys.has(key)) return { ok: true, data: { data: null } };
       const val = data.get(key);
       if (val === undefined) return { ok: true, data: { data: null } };
       return { ok: true, data: { data: val } };
@@ -1010,6 +1024,42 @@ describe("Sync Routes — Fireflies background jobs", () => {
     expect(body.message).toContain("Failed to write Fireflies sync job state");
     expect(body.message).toContain("backend job KV denied");
     expect(body.id).toBeUndefined();
+  });
+
+  it("serves an accepted Fireflies job from memory when KV read visibility lags", async () => {
+    mockKV._data.set(KV_KEY, "test-api-key");
+    clientFactory.setListResult([createMockFullTranscript({ id: "ff-1", title: "Meeting 1" })]);
+    clientFactory.setGetResult(
+      "ff-1",
+      createMockFullTranscript({ id: "ff-1", title: "Meeting 1" }),
+    );
+    clientFactory.setGetDelayMs(100);
+    mockSQL._setDedupRows([]);
+
+    const startedRes = await fetch(`http://localhost:${port}/api/sync/fireflies/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "incremental" }),
+    });
+    const started = await startedRes.json();
+    backendKV._hideKey(`xyz.tinycloud.listen/sync/fireflies/jobs/0xtest/${started.id}`);
+
+    const pollRes = await fetch(`http://localhost:${port}/api/sync/fireflies/jobs/${started.id}`);
+    const polled = await pollRes.json();
+
+    expect(pollRes.status).toBe(200);
+    expect(polled).toMatchObject({ id: started.id, source: "fireflies" });
+  });
+
+  it("returns a read diagnostic instead of sync_job_not_found when backend KV read fails", async () => {
+    backendKV._failNextGet("backend job KV read denied");
+
+    const res = await fetch(`http://localhost:${port}/api/sync/fireflies/jobs/missing-job`);
+    const body = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(body.error).toBe("sync_job_read_failed");
+    expect(body.message).toContain("backend job KV read denied");
   });
 
   it("returns the active Fireflies job instead of starting duplicate work", async () => {

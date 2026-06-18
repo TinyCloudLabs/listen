@@ -242,6 +242,53 @@ describe("SyncControl", () => {
     });
   });
 
+  it("retries a transient Fireflies job 404 after starting a background job", async () => {
+    let jobPolls = 0;
+    const getMock = vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/config/webhook-status") {
+        return Promise.resolve({ configured: false, pendingCount: 0, webhookUrl: "" });
+      }
+      if (url === "/api/sync/fireflies/jobs/current") {
+        return Promise.resolve(null);
+      }
+      if (url === "/api/sync/fireflies/jobs/job-1") {
+        jobPolls++;
+        if (jobPolls === 1) {
+          return Promise.reject(new Error("API error (404): Sync job not found."));
+        }
+        return Promise.resolve(
+          firefliesJob({ status: "completed", synced: 2, total: 2, current: 2 }),
+        );
+      }
+      return Promise.resolve(null);
+    });
+    const postMock = vi.fn().mockResolvedValue(firefliesJob({ status: "listing" }));
+    api = mockApi({ get: getMock, post: postMock });
+
+    render(
+      <SyncControl
+        api={api}
+        backendUrl="http://localhost:3001"
+        getAccessToken={getAccessToken}
+        onSyncComplete={onSyncComplete}
+        hasFireflies={true}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /sync fireflies/i }));
+
+    await waitFor(() => {
+      expect(postMock).toHaveBeenCalledWith("/api/sync/fireflies/jobs", { mode: "incremental" });
+    });
+    await waitFor(
+      () => {
+        expect(jobPolls).toBeGreaterThanOrEqual(2);
+      },
+      { timeout: 3_000 },
+    );
+    expect(onSyncComplete).toHaveBeenCalledTimes(1);
+  });
+
   it("resumes polling an active Fireflies job on mount", async () => {
     const getMock = vi.fn().mockImplementation((url: string) => {
       if (url === "/api/config/webhook-status") {
