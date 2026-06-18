@@ -116,6 +116,8 @@ interface GoogleMeetWebhookStatus {
   failedCount: number;
 }
 
+type SyncSource = "fireflies" | "granola" | "google-meet";
+
 interface SyncControlProps {
   api: ApiClient;
   backendUrl: string;
@@ -312,9 +314,7 @@ export const SyncControl: FC<SyncControlProps> = ({
   const hasGM = hasGoogleMeetProp === true;
 
   const [syncing, setSyncing] = useState(false);
-  const [syncSource, setSyncSource] = useState<"fireflies" | "granola" | "google-meet" | null>(
-    null,
-  );
+  const [syncSource, setSyncSource] = useState<SyncSource | null>(null);
   const [progress, setProgress] = useState<SyncProgress | null>(null);
   const [result, setResult] = useState<SyncResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -333,6 +333,28 @@ export const SyncControl: FC<SyncControlProps> = ({
   const completedFirefliesJobsRef = useRef<Set<string>>(new Set());
   const completedGranolaJobsRef = useRef<Set<string>>(new Set());
   const completedGoogleMeetJobsRef = useRef<Set<string>>(new Set());
+
+  const activeSourceAfter = useCallback((completedSource?: SyncSource): SyncSource | null => {
+    if (completedSource !== "fireflies" && activeFirefliesJobRef.current) return "fireflies";
+    if (completedSource !== "granola" && activeGranolaJobRef.current) return "granola";
+    if (completedSource !== "google-meet" && activeGoogleMeetJobRef.current) return "google-meet";
+    return null;
+  }, []);
+
+  const finishJobView = useCallback(
+    (source: SyncSource) => {
+      const nextSource = activeSourceAfter(source);
+      if (nextSource) {
+        setSyncing(true);
+        setSyncSource(nextSource);
+        return;
+      }
+      setSyncing(false);
+      setSyncSource(null);
+      setProgress(null);
+    },
+    [activeSourceAfter],
+  );
 
   const clearFirefliesPoll = useCallback(() => {
     if (firefliesPollRef.current != null) {
@@ -380,9 +402,7 @@ export const SyncControl: FC<SyncControlProps> = ({
       if (activeFirefliesJobRef.current === job.id) {
         activeFirefliesJobRef.current = null;
       }
-      setSyncing(false);
-      setSyncSource(null);
-      setProgress(null);
+      finishJobView("fireflies");
 
       if (job.status === "completed") {
         setResult({
@@ -412,7 +432,7 @@ export const SyncControl: FC<SyncControlProps> = ({
         setError(job.message ?? "Fireflies sync failed.");
       }
     },
-    [onSyncComplete],
+    [finishJobView, onSyncComplete],
   );
 
   const applyGranolaJob = useCallback(
@@ -440,9 +460,7 @@ export const SyncControl: FC<SyncControlProps> = ({
       if (activeGranolaJobRef.current === job.id) {
         activeGranolaJobRef.current = null;
       }
-      setSyncing(false);
-      setSyncSource(null);
-      setProgress(null);
+      finishJobView("granola");
 
       if (job.status === "completed") {
         setResult({
@@ -472,7 +490,7 @@ export const SyncControl: FC<SyncControlProps> = ({
         setError(job.message ?? "Granola sync failed.");
       }
     },
-    [onSyncComplete],
+    [finishJobView, onSyncComplete],
   );
 
   const applyGoogleMeetJob = useCallback(
@@ -502,9 +520,7 @@ export const SyncControl: FC<SyncControlProps> = ({
       if (activeGoogleMeetJobRef.current === job.id) {
         activeGoogleMeetJobRef.current = null;
       }
-      setSyncing(false);
-      setSyncSource(null);
-      setProgress(null);
+      finishJobView("google-meet");
 
       if (job.status === "completed") {
         setResult({
@@ -538,7 +554,7 @@ export const SyncControl: FC<SyncControlProps> = ({
         setError(job.message ?? "Google Meet sync failed.");
       }
     },
-    [onSyncComplete],
+    [finishJobView, onSyncComplete],
   );
 
   const pollFirefliesJob = useCallback(
@@ -1084,6 +1100,90 @@ export const SyncControl: FC<SyncControlProps> = ({
 
   const handleGranolaSync = useCallback(() => startGranolaJob("incremental"), [startGranolaJob]);
 
+  const handleSyncAll = useCallback(async () => {
+    const sources: SyncSource[] = [
+      ...(hasFireflies ? (["fireflies"] as const) : []),
+      ...(hasGranola ? (["granola"] as const) : []),
+      ...(hasGM ? (["google-meet"] as const) : []),
+    ];
+    if (sources.length === 0) return;
+
+    const step = startDebugStep("sync.all.start-jobs", { sources });
+    setSyncing(true);
+    setSyncSource(null);
+    setResult(null);
+    setError(null);
+    setProgress({ phase: "queued" });
+
+    const starts = await Promise.allSettled(
+      sources.map(async (source) => {
+        if (source === "fireflies") {
+          const job = await api.post<FirefliesSyncJob>("/api/sync/fireflies/jobs", {
+            mode: "incremental",
+          });
+          if (!isFirefliesJob(job)) throw new Error("Fireflies sync did not return a job.");
+          applyFirefliesJob(job);
+          if (isActiveFirefliesJob(job)) pollFirefliesJob(job.id);
+          return { source, jobId: job.id, status: job.status };
+        }
+
+        if (source === "granola") {
+          const job = await api.post<GranolaSyncJob>("/api/sync/granola/jobs", {
+            mode: "incremental",
+          });
+          if (!isGranolaJob(job)) throw new Error("Granola sync did not return a job.");
+          applyGranolaJob(job);
+          if (isActiveGranolaJob(job)) pollGranolaJob(job.id);
+          return { source, jobId: job.id, status: job.status };
+        }
+
+        const job = await api.post<GoogleMeetSyncJob>("/api/sync/google-meet/jobs", {
+          mode: "incremental",
+        });
+        if (!isGoogleMeetJob(job)) throw new Error("Google Meet sync did not return a job.");
+        applyGoogleMeetJob(job);
+        if (isActiveGoogleMeetJob(job)) pollGoogleMeetJob(job.id);
+        return { source, jobId: job.id, status: job.status };
+      }),
+    );
+
+    const started = starts.flatMap((result) =>
+      result.status === "fulfilled" ? [result.value] : [],
+    );
+    const failed = starts.flatMap((result, index) => {
+      if (result.status === "fulfilled") return [];
+      const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
+      return [`${sources[index]}: ${reason}`];
+    });
+
+    if (started.length === 0) {
+      const message = failed.join("\n") || "No sync jobs started.";
+      step.fail(new Error(message), { failed });
+      setError(message);
+      setProgress(null);
+      setSyncing(false);
+      setSyncSource(null);
+      return;
+    }
+
+    if (failed.length > 0) {
+      setError(`Some sync jobs did not start: ${failed.join("; ")}`);
+    }
+
+    step.complete({ started, failed });
+  }, [
+    api,
+    applyFirefliesJob,
+    applyGoogleMeetJob,
+    applyGranolaJob,
+    hasFireflies,
+    hasGM,
+    hasGranola,
+    pollFirefliesJob,
+    pollGoogleMeetJob,
+    pollGranolaJob,
+  ]);
+
   const handleClearAndResync = useCallback(async () => {
     setSyncing(true);
     setResult(null);
@@ -1104,57 +1204,66 @@ export const SyncControl: FC<SyncControlProps> = ({
   }, [api, startFirefliesJob]);
 
   const handleCancel = useCallback(() => {
+    const cancelRequests: Promise<unknown>[] = [];
     const firefliesJobId = activeFirefliesJobRef.current;
-    if (syncSource === "fireflies" && firefliesJobId) {
+    if (firefliesJobId) {
       const step = startDebugStep("sync.fireflies.cancel", { jobId: firefliesJobId });
-      api
-        .post<FirefliesSyncJob>(`/api/sync/fireflies/jobs/${firefliesJobId}/cancel`)
-        .then((job) => {
-          if (isFirefliesJob(job)) applyFirefliesJob(job);
-          step.complete({ status: isFirefliesJob(job) ? job.status : "invalid-job" });
-        })
-        .catch((err) => {
-          step.fail(err);
-          setError(err instanceof Error ? err.message : String(err));
-        });
-      return;
+      cancelRequests.push(
+        api
+          .post<FirefliesSyncJob>(`/api/sync/fireflies/jobs/${firefliesJobId}/cancel`)
+          .then((job) => {
+            if (isFirefliesJob(job)) applyFirefliesJob(job);
+            step.complete({ status: isFirefliesJob(job) ? job.status : "invalid-job" });
+          })
+          .catch((err) => {
+            step.fail(err);
+            setError(err instanceof Error ? err.message : String(err));
+          }),
+      );
     }
 
     const granolaJobId = activeGranolaJobRef.current;
-    if (syncSource === "granola" && granolaJobId) {
+    if (granolaJobId) {
       const step = startDebugStep("sync.granola.cancel", { jobId: granolaJobId });
-      api
-        .post<GranolaSyncJob>(`/api/sync/granola/jobs/${granolaJobId}/cancel`)
-        .then((job) => {
-          if (isGranolaJob(job)) applyGranolaJob(job);
-          step.complete({ status: isGranolaJob(job) ? job.status : "invalid-job" });
-        })
-        .catch((err) => {
-          step.fail(err);
-          setError(err instanceof Error ? err.message : String(err));
-        });
-      return;
+      cancelRequests.push(
+        api
+          .post<GranolaSyncJob>(`/api/sync/granola/jobs/${granolaJobId}/cancel`)
+          .then((job) => {
+            if (isGranolaJob(job)) applyGranolaJob(job);
+            step.complete({ status: isGranolaJob(job) ? job.status : "invalid-job" });
+          })
+          .catch((err) => {
+            step.fail(err);
+            setError(err instanceof Error ? err.message : String(err));
+          }),
+      );
     }
 
     const googleMeetJobId = activeGoogleMeetJobRef.current;
-    if (syncSource === "google-meet" && googleMeetJobId) {
+    if (googleMeetJobId) {
       const step = startDebugStep("sync.google-meet.cancel", { jobId: googleMeetJobId });
-      api
-        .post<GoogleMeetSyncJob>(`/api/sync/google-meet/jobs/${googleMeetJobId}/cancel`)
-        .then((job) => {
-          if (isGoogleMeetJob(job)) applyGoogleMeetJob(job);
-          step.complete({ status: isGoogleMeetJob(job) ? job.status : "invalid-job" });
-        })
-        .catch((err) => {
-          step.fail(err);
-          setError(err instanceof Error ? err.message : String(err));
-        });
+      cancelRequests.push(
+        api
+          .post<GoogleMeetSyncJob>(`/api/sync/google-meet/jobs/${googleMeetJobId}/cancel`)
+          .then((job) => {
+            if (isGoogleMeetJob(job)) applyGoogleMeetJob(job);
+            step.complete({ status: isGoogleMeetJob(job) ? job.status : "invalid-job" });
+          })
+          .catch((err) => {
+            step.fail(err);
+            setError(err instanceof Error ? err.message : String(err));
+          }),
+      );
+    }
+
+    if (cancelRequests.length > 0) {
+      void Promise.allSettled(cancelRequests);
       return;
     }
 
     debugLog("sync.stream.cancel", "abort");
     abortRef.current?.abort();
-  }, [api, applyFirefliesJob, applyGranolaJob, applyGoogleMeetJob, syncSource]);
+  }, [api, applyFirefliesJob, applyGranolaJob, applyGoogleMeetJob]);
 
   const pct =
     progress?.phase === "syncing" && progress.total
@@ -1202,6 +1311,11 @@ export const SyncControl: FC<SyncControlProps> = ({
         <div style={s.buttonGroup}>
           {!syncing ? (
             <>
+              {(hasFireflies || hasGranola || hasGM) && (
+                <button style={s.btnPrimary} onClick={handleSyncAll}>
+                  Sync all
+                </button>
+              )}
               {hasFireflies && (
                 <button style={s.btnPrimary} onClick={handleFirefliesSync}>
                   Sync Fireflies
