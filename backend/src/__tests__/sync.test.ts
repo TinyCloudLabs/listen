@@ -13,14 +13,23 @@ import type {
 
 function createMockKV() {
   const data = new Map<string, string>();
+  let failPut: string | null = null;
   return {
     _data: data,
+    _failNextPut(message = "write denied") {
+      failPut = message;
+    },
     get: async (key: string) => {
       const val = data.get(key);
       if (val === undefined) return { ok: true, data: { data: null } };
       return { ok: true, data: { data: val } };
     },
     put: async (key: string, value: string) => {
+      if (failPut) {
+        const message = failPut;
+        failPut = null;
+        return { ok: false, error: { code: "KV_WRITE_FAILED", message } };
+      }
       data.set(key, value);
       return { ok: true };
     },
@@ -983,6 +992,24 @@ describe("Sync Routes — Fireflies background jobs", () => {
 
     const current = await fetch(`http://localhost:${port}/api/sync/fireflies/jobs/current`);
     expect(await current.json()).toMatchObject({ id: started.id, status: "completed" });
+  });
+
+  it("does not return a Fireflies job id when backend job persistence fails", async () => {
+    mockKV._data.set(KV_KEY, "test-api-key");
+    backendKV._failNextPut("backend job KV denied");
+
+    const res = await fetch(`http://localhost:${port}/api/sync/fireflies/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "incremental" }),
+    });
+
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toBe("sync_job_failed");
+    expect(body.message).toContain("Failed to write Fireflies sync job state");
+    expect(body.message).toContain("backend job KV denied");
+    expect(body.id).toBeUndefined();
   });
 
   it("returns the active Fireflies job instead of starting duplicate work", async () => {

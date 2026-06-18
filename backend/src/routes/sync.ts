@@ -28,8 +28,18 @@ interface SyncRoutesConfig {
 }
 
 interface BackendKV {
-  get(key: string): Promise<{ ok: boolean; data: { data: string | null } }>;
-  put(key: string, value: string): Promise<{ ok: boolean }>;
+  get(key: string): Promise<{
+    ok: boolean;
+    data?: { data: string | null };
+    error?: { code?: string; message?: string };
+  }>;
+  put(
+    key: string,
+    value: string,
+  ): Promise<{
+    ok: boolean;
+    error?: { code?: string; message?: string };
+  }>;
 }
 
 interface ExistingFirefliesConversation {
@@ -140,7 +150,7 @@ function createQueuedJob(ownerAddress: string, mode: "incremental" | "full"): Fi
 
 async function readJob(backendKV: BackendKV, ownerAddress: string, jobId: string) {
   const result = await backendKV.get(jobRecordKey(ownerAddress, jobId));
-  if (!result.ok || !result.data.data) return null;
+  if (!result.ok || !result.data?.data) return null;
 
   try {
     const parsed = JSON.parse(result.data.data) as FirefliesSyncJob;
@@ -152,13 +162,23 @@ async function readJob(backendKV: BackendKV, ownerAddress: string, jobId: string
 
 async function readCurrentJob(backendKV: BackendKV, ownerAddress: string) {
   const current = await backendKV.get(currentJobKey(ownerAddress));
-  const jobId = current.ok && current.data.data ? current.data.data : null;
+  const jobId = current.ok && current.data?.data ? current.data.data : null;
   return jobId ? readJob(backendKV, ownerAddress, jobId) : null;
 }
 
 async function writeJob(backendKV: BackendKV, job: FirefliesSyncJob): Promise<void> {
-  await backendKV.put(jobRecordKey(job.ownerAddress, job.id), JSON.stringify(job));
-  await backendKV.put(currentJobKey(job.ownerAddress), job.id);
+  const recordKey = jobRecordKey(job.ownerAddress, job.id);
+  const currentKey = currentJobKey(job.ownerAddress);
+  await writeBackendKv(backendKV, recordKey, JSON.stringify(job));
+  await writeBackendKv(backendKV, currentKey, job.id);
+}
+
+async function writeBackendKv(backendKV: BackendKV, key: string, value: string): Promise<void> {
+  const result = await backendKV.put(key, value);
+  if (result.ok) return;
+
+  const message = result.error?.message ?? result.error?.code ?? "backend KV write failed";
+  throw new Error(`Failed to write Fireflies sync job state (${key}): ${message}`);
 }
 
 function rowValue(row: unknown, columns: unknown[] | undefined, name: string, index: number) {
