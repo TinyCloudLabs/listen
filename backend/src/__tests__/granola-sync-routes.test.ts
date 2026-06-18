@@ -83,6 +83,7 @@ function createMockClientFactory() {
   let notes: GranolaNoteSummary[] = [];
   const fullNotes = new Map<string, GranolaNote>();
   let lastApiKey: string | null = null;
+  let getNoteDelayMs = 0;
 
   return {
     setNotes(next: GranolaNote[]) {
@@ -96,14 +97,25 @@ function createMockClientFactory() {
       fullNotes.clear();
       for (const note of next) fullNotes.set(note.id, note);
     },
+    setGetNoteDelay(ms: number) {
+      getNoteDelayMs = ms;
+    },
     getLastApiKey() {
       return lastApiKey;
     },
     factory(apiKey: string) {
       lastApiKey = apiKey;
       return {
-        listAllNotes: async () => ({ notes, pageCount: 1, earlyExit: false }),
+        listAllNotes: async (options?: {
+          onProgress?: (info: { page: number; totalSoFar: number }) => void;
+        }) => {
+          options?.onProgress?.({ page: 1, totalSoFar: notes.length });
+          return { notes, pageCount: 1, earlyExit: false };
+        },
         getNote: async (id: string) => {
+          if (getNoteDelayMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, getNoteDelayMs));
+          }
           const note = fullNotes.get(id);
           if (!note) throw new Error(`missing note ${id}`);
           return note;
@@ -148,6 +160,7 @@ function createApp(
     createGranolaSyncRouter({
       authMiddleware: mockAuthMiddleware,
       delegationMiddleware: mockDelegationMiddleware,
+      backendKV: mockKV,
       createClient: clientFactory.factory,
     }),
   );
@@ -179,6 +192,17 @@ function parseSSEText(text: string): Array<{ type: string; data: any }> {
     if (data) events.push({ type, data: JSON.parse(data) });
   }
   return events;
+}
+
+async function waitForGranolaJob(baseUrl: string, jobId: string, predicate: (job: any) => boolean) {
+  for (let i = 0; i < 50; i++) {
+    const res = await fetch(`${baseUrl}/api/sync/granola/jobs/${jobId}`);
+    expect(res.status).toBe(200);
+    const job = await res.json();
+    if (predicate(job)) return job;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for Granola sync job");
 }
 
 describe("Granola sync routes", () => {
@@ -237,5 +261,67 @@ describe("Granola sync routes", () => {
       speaker_name: "Speaker A",
       text: "Hello from Granola",
     });
+  });
+
+  it("returns the active job instead of starting a duplicate", async () => {
+    mockKV._data.set(KV_KEY, "granola-api-key");
+    mockSQL._setDedupRows([]);
+    clientFactory.setNotes([
+      createMockNote({ id: "note-1", title: "First note" }),
+      createMockNote({ id: "note-2", title: "Second note" }),
+    ]);
+    clientFactory.setGetNoteDelay(50);
+
+    const first = await fetch(`http://localhost:${port}/api/sync/granola/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "incremental" }),
+    });
+    const firstJob = await first.json();
+
+    const second = await fetch(`http://localhost:${port}/api/sync/granola/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "incremental" }),
+    });
+    const secondJob = await second.json();
+
+    expect(first.status).toBe(202);
+    expect(second.status).toBe(202);
+    expect(secondJob.id).toBe(firstJob.id);
+
+    const current = await fetch(`http://localhost:${port}/api/sync/granola/jobs/current`);
+    const currentJob = await current.json();
+    expect(currentJob.id).toBe(firstJob.id);
+  });
+
+  it("tracks Granola job progress through completion", async () => {
+    mockKV._data.set(KV_KEY, "granola-api-key");
+    mockSQL._setDedupRows([{ source_id: "note-existing" }]);
+    clientFactory.setNotes([
+      createMockNote({ id: "note-existing", title: "Existing note" }),
+      createMockNote({ id: "note-new", title: "New note" }),
+    ]);
+
+    const start = await fetch(`http://localhost:${port}/api/sync/granola/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "incremental" }),
+    });
+    expect(start.status).toBe(202);
+    const started = await start.json();
+
+    const completed = await waitForGranolaJob(
+      `http://localhost:${port}`,
+      started.id,
+      (job) => job.status === "completed",
+    );
+
+    expect(completed.totalListed).toBe(2);
+    expect(completed.total).toBe(1);
+    expect(completed.current).toBe(1);
+    expect(completed.synced).toBe(1);
+    expect(completed.skipped).toBe(1);
+    expect(completed.failed).toBe(0);
   });
 });

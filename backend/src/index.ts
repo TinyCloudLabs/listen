@@ -385,6 +385,7 @@ async function main() {
     createGranolaSyncRouter({
       authMiddleware,
       delegationMiddleware,
+      backendKV,
     }),
   );
 
@@ -394,6 +395,7 @@ async function main() {
     createGoogleMeetSyncRouter({
       authMiddleware,
       delegationMiddleware,
+      backendKV,
     }),
   );
 

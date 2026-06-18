@@ -9,6 +9,7 @@ import { conversationSql } from "../schema.js";
 export interface SyncSingleResult {
   status: "created" | "skipped" | "error";
   conferenceRecordName: string;
+  reason?: "already_exists" | "no_transcript";
   conversationId?: string;
   title?: string;
   startedAt?: string;
@@ -37,7 +38,7 @@ export async function syncSingleConference(
       for (const row of dedupResult.data.rows) {
         const val = Array.isArray(row) ? row[0] : (row as any).source_id;
         if (String(val) === conferenceRecordName) {
-          return { status: "skipped", conferenceRecordName };
+          return { status: "skipped", conferenceRecordName, reason: "already_exists" };
         }
       }
     }
@@ -47,7 +48,7 @@ export async function syncSingleConference(
 
     // 3. Skip if no transcript entries
     if (fullConference.entries.length === 0) {
-      return { status: "skipped", conferenceRecordName };
+      return { status: "skipped", conferenceRecordName, reason: "no_transcript" };
     }
 
     // 4. Normalize
