@@ -15,6 +15,7 @@ interface SyncResult {
 
 interface SyncProgress {
   phase: "queued" | "listing" | "syncing";
+  batch?: number;
   totalListed?: number;
   current?: number;
   total?: number;
@@ -37,6 +38,7 @@ interface FirefliesSyncJob {
   status: FirefliesSyncJobStatus;
   mode: "incremental" | "full";
   message?: string;
+  batch?: number;
   totalListed?: number;
   current?: number;
   total?: number;
@@ -157,6 +159,7 @@ function progressFromFirefliesJob(job: FirefliesSyncJob): SyncProgress {
   if (job.status === "listing") {
     return {
       phase: "listing",
+      batch: job.batch,
       totalListed: job.totalListed,
     };
   }
@@ -498,10 +501,12 @@ export const SyncControl: FC<SyncControlProps> = ({
                   setProgress((prev) => ({
                     ...prev,
                     phase: "listing",
+                    batch: data.batch,
                     totalListed: data.totalListed,
                   }));
                   debugLog(`sync.${source}.stream`, "progress", {
                     phase: data.phase,
+                    batch: data.batch,
                     totalListed: data.totalListed,
                   });
                 } else {
@@ -704,10 +709,17 @@ export const SyncControl: FC<SyncControlProps> = ({
               "Waiting to start\u2026"
             ) : progress.totalListed != null ? (
               <>
-                <span style={s.statNum}>{progress.totalListed}</span> transcripts found
+                {progress.batch != null && (
+                  <>
+                    <span style={s.statLabel}>Batch </span>
+                    <span style={s.statNum}>{progress.batch}</span>
+                    <span style={s.statDividerInline}>/</span>
+                  </>
+                )}
+                <span style={s.statNum}>{progress.totalListed}</span> checked so far
               </>
             ) : (
-              "Fetching transcript list\u2026"
+              "Checking transcript history\u2026"
             )}
           </p>
           {syncSource === "fireflies" && (
@@ -1046,6 +1058,10 @@ const s: Record<string, React.CSSProperties> = {
     width: 1,
     height: 16,
     background: "var(--lst-rule-soft)",
+  },
+  statDividerInline: {
+    color: "var(--lst-ink-35)",
+    margin: "0 8px",
   },
   currentTitle: {
     fontFamily: FONT,

@@ -357,6 +357,75 @@ describe("ConversationDetail", () => {
     expect(screen.getByText(/no transcript available/i)).toBeInTheDocument();
   });
 
+  it("shows Fireflies recovery when the transcript blob is missing", async () => {
+    const missingTranscript = {
+      ...DETAIL_RESPONSE,
+      transcript: null,
+      transcript_status: {
+        available: false,
+        missing: true,
+        repairable: true,
+        reason: "missing_kv_blob",
+      },
+    };
+    api = mockApi({ get: vi.fn().mockResolvedValue(missingTranscript) });
+
+    render(<ConversationDetail api={api} conversationId="01ABC" onBack={onBack} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
+    });
+    expect(screen.getByText(/transcript content is missing/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /recover from fireflies/i })).toBeInTheDocument();
+  });
+
+  it("recovers a missing Fireflies transcript and updates the transcript pane", async () => {
+    const missingTranscript = {
+      ...DETAIL_RESPONSE,
+      transcript: null,
+      transcript_status: {
+        available: false,
+        missing: true,
+        repairable: true,
+        reason: "missing_kv_blob",
+      },
+    };
+    const postMock = vi.fn().mockResolvedValue({
+      transcript: [
+        {
+          index: 0,
+          speaker_id: "1",
+          speaker_name: "Alice",
+          text: "Recovered transcript content.",
+          raw_text: "Recovered transcript content.",
+          start_time: 0,
+          end_time: 5,
+          ai_filters: {},
+        },
+      ],
+      transcript_status: {
+        available: true,
+        missing: false,
+        repairable: true,
+      },
+    });
+    api = mockApi({
+      get: vi.fn().mockResolvedValue(missingTranscript),
+      post: postMock,
+    });
+
+    render(<ConversationDetail api={api} conversationId="01ABC" onBack={onBack} />);
+
+    const recover = await screen.findByRole("button", { name: /recover from fireflies/i });
+    fireEvent.click(recover);
+
+    await waitFor(() => {
+      expect(postMock).toHaveBeenCalledWith("/api/conversations/01ABC/transcript/repair");
+      expect(screen.getByText("Recovered transcript content.")).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/transcript content is missing/i)).not.toBeInTheDocument();
+  });
+
   it("shows error state on fetch failure", async () => {
     api = mockApi({
       get: vi.fn().mockRejectedValue(new Error("Network error")),

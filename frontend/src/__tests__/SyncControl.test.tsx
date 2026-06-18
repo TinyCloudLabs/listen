@@ -242,6 +242,43 @@ describe("SyncControl", () => {
     });
   });
 
+  it("shows Fireflies listing progress while transcripts are being checked", async () => {
+    const listingJob = firefliesJob({ status: "listing", batch: 2, totalListed: 37 });
+    const getMock = vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/config/webhook-status") {
+        return Promise.resolve({ configured: false, pendingCount: 0, webhookUrl: "" });
+      }
+      if (url === "/api/sync/fireflies/jobs/current") {
+        return Promise.resolve(null);
+      }
+      if (url === "/api/sync/fireflies/jobs/job-1") {
+        return Promise.resolve(listingJob);
+      }
+      return Promise.resolve(null);
+    });
+    const postMock = vi.fn().mockResolvedValue(listingJob);
+    api = mockApi({ get: getMock, post: postMock });
+
+    render(
+      <SyncControl
+        api={api}
+        backendUrl="http://localhost:3001"
+        getAccessToken={getAccessToken}
+        onSyncComplete={onSyncComplete}
+        hasFireflies={true}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /sync fireflies/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/checked so far/i)).toBeInTheDocument();
+    });
+    expect(screen.getByText("37")).toBeInTheDocument();
+    expect(screen.getByText(/Batch/i)).toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
+  });
+
   it("retries a transient Fireflies job 404 after starting a background job", async () => {
     let jobPolls = 0;
     const getMock = vi.fn().mockImplementation((url: string) => {
