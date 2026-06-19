@@ -48,6 +48,8 @@ interface ConversationDetailProps {
   api: ApiClient;
   conversationId: string;
   onBack: () => void;
+  backLabel?: string;
+  onShare?: (id: string) => void;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -205,6 +207,8 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
   api,
   conversationId,
   onBack,
+  backLabel = "Inbox",
+  onShare,
 }) => {
   const [data, setData] = useState<DetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -329,7 +333,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
       {/* Top action bar */}
       <div style={s.actionBar}>
         <button style={s.backLink} onClick={onBack} type="button" aria-label="Back to inbox">
-          <span style={s.chevL}>‹</span> Inbox
+          <span style={s.chevL}>‹</span> {backLabel}
         </button>
         <span style={s.breadDot}>/</span>
         <span style={s.breadMeta}>
@@ -353,6 +357,11 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
         <button style={s.actionBtn} type="button" onClick={exportConversation}>
           Export
         </button>
+        {onShare && (
+          <button style={s.actionBtn} type="button" onClick={() => onShare(conversation.id)}>
+            Share
+          </button>
+        )}
       </div>
 
       {/* Title block */}
