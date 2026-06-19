@@ -21,8 +21,8 @@ Edit `.env`:
 ```bash
 BACKEND_PRIVATE_KEY=0x...
 VITE_OPENKEY_HOST=https://openkey.so
-VITE_BACKEND_URL=https://api.listen.localhost
-FRONTEND_URL=https://listen.localhost
+VITE_BACKEND_URL=https://api.listen.localhost:1355
+FRONTEND_URL=https://listen.localhost:1355
 PORT=3001
 ```
 
@@ -32,7 +32,7 @@ Run the app:
 bun run dev
 ```
 
-The default dev stack uses Portless. The frontend runs at `https://listen.localhost` and the backend runs at `https://api.listen.localhost`.
+The default dev stack uses Portless. The frontend runs at `https://listen.localhost:1355` and the backend runs at `https://api.listen.localhost:1355`.
 
 For raw localhost ports:
 

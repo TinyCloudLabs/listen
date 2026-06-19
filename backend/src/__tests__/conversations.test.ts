@@ -304,10 +304,19 @@ describe("Conversations Routes — GET /api/conversations", () => {
 
     await fetch(`http://localhost:${port}/api/conversations`);
 
-    // First SQL calls should be CREATE TABLE statements (via execute)
+    // ensureSchema now applies SQL migrations before route queries.
     const firstCall = mockSQL._calls[0];
-    expect(firstCall.sql.trim().startsWith("CREATE")).toBe(true);
     expect(firstCall.method).toBe("execute");
+    expect(firstCall.sql).toContain("CREATE TABLE IF NOT EXISTS conversation");
+
+    const columnCheckIndex = mockSQL._calls.findIndex((call) =>
+      call.sql.includes("SELECT transcript_json, transcript_text FROM conversation"),
+    );
+    const listQueryIndex = mockSQL._calls.findIndex(
+      (call) => call.sql.includes("participant_count") && call.sql.includes("ORDER BY"),
+    );
+    expect(columnCheckIndex).toBeGreaterThan(-1);
+    expect(listQueryIndex).toBeGreaterThan(columnCheckIndex);
   });
 });
 
@@ -382,12 +391,8 @@ describe("Conversations Routes — GET /api/conversations/:id", () => {
     expect(body.transcript[0].language).toBe("en");
   });
 
-  it("prefers SQL transcript rows over the KV fallback", async () => {
+  it("uses SQL transcript rows when the KV transcript blob is unavailable", async () => {
     mockKV = createMockKV();
-    mockKV._data.set(
-      "xyz.tinycloud.listen/transcript/conv-1",
-      JSON.stringify([{ speakerName: "KV", text: "Old transcript" }]),
-    );
 
     mockSQL = createMockSQL({
       detailRow: {
@@ -401,6 +406,7 @@ describe("Conversations Routes — GET /api/conversations/:id", () => {
         duration_secs: null,
         summary: null,
         metadata: "{}",
+        transcript_json_length: 58,
         transcript_json: JSON.stringify([{ speakerName: "SQL", text: "Current transcript" }]),
         transcript_text: "SQL: Current transcript",
         created_at: "2026-03-20T12:00:00Z",

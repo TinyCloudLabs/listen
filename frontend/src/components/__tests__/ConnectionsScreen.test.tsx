@@ -57,6 +57,40 @@ describe("ConnectionsScreen", () => {
     ).toBeInTheDocument();
   });
 
+  it("opens the Soundcore credential flow directly from the available source", () => {
+    const onAddSource = vi.fn();
+    const onConnectSoundcore = vi.fn();
+    renderConnections({ onAddSource, onConnectSoundcore });
+
+    expect(
+      screen.getByText(/add x-auth-token, uid, and openudid from the soundcore web session/i),
+    ).toBeInTheDocument();
+    const connectButton = screen.getByRole("button", { name: /add credentials/i });
+
+    fireEvent.click(connectButton);
+
+    expect(onConnectSoundcore).toHaveBeenCalledTimes(1);
+    expect(onAddSource).not.toHaveBeenCalled();
+  });
+
+  it("shows saved Soundcore credentials as finish setup instead of add credentials", async () => {
+    const onFinishSoundcoreAccess = vi.fn().mockResolvedValue(undefined);
+    renderConnections({
+      hasSoundcoreCredentials: true,
+      hasSoundcoreBackendAccess: false,
+      onFinishSoundcoreAccess,
+    });
+
+    expect(screen.getByText("Soundcore")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /add credentials/i })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /finish setup/i }));
+
+    await waitFor(() => {
+      expect(onFinishSoundcoreAccess).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("shows the local importer skill prompt from the available section", () => {
     renderConnections();
 

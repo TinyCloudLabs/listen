@@ -14,11 +14,17 @@ type SetupStep =
   | "fireflies-webhook"
   | "granola-key"
   | "granola-test"
+  | "soundcore-key"
+  | "soundcore-test"
   | "google-connect"
   | "google-success";
 
 const FIREFLIES_SECRET_NAME = "FIREFLIES_API_KEY";
 const GRANOLA_SECRET_NAME = "GRANOLA_API_KEY";
+const SOUNDCORE_SESSION_SECRET_NAME = "SOUNDCORE_SESSION";
+const SOUNDCORE_AUTH_TOKEN_SECRET_NAME = "SOUNDCORE_AUTH_TOKEN";
+const SOUNDCORE_UID_SECRET_NAME = "SOUNDCORE_UID";
+const SOUNDCORE_OPENUDID_SECRET_NAME = "SOUNDCORE_OPENUDID";
 const TRANSCRIPTION_SECRET_NAMES = {
   assemblyai: "ASSEMBLYAI_API_KEY",
   deepgram: "DEEPGRAM_API_KEY",
@@ -30,6 +36,11 @@ const TRANSCRIPTION_PROVIDER_LABELS: Record<TranscriptionProvider, string> = {
 };
 const TINYCLOUD_SECRETS_URL = "https://secrets.tinycloud.xyz";
 const VERIFY_RETRY_DELAYS_MS = [250, 750, 1500];
+const SOUNDCORE_ENV_KEYS = [
+  SOUNDCORE_AUTH_TOKEN_SECRET_NAME,
+  SOUNDCORE_UID_SECRET_NAME,
+  SOUNDCORE_OPENUDID_SECRET_NAME,
+] as const;
 
 interface SourcesSetupProps {
   api: ApiClient;
@@ -37,21 +48,26 @@ interface SourcesSetupProps {
   mode?: SetupMode;
   hasFirefliesKey?: boolean | null;
   hasGranolaKey?: boolean | null;
+  hasSoundcoreKey?: boolean | null;
   hasAssemblyAIKey?: boolean | null;
   hasDeepgramKey?: boolean | null;
   hasBackendDelegation?: boolean | null;
   hasFirefliesBackendAccess?: boolean | null;
   hasGranolaBackendAccess?: boolean | null;
+  hasSoundcoreBackendAccess?: boolean | null;
   hasAssemblyAIBackendAccess?: boolean | null;
   hasDeepgramBackendAccess?: boolean | null;
   hasGoogleMeet?: boolean | null;
-  initialStep?: Extract<SetupStep, "cards" | "transcript-import">;
+  initialStep?: Extract<SetupStep, "cards" | "transcript-import" | "soundcore-key">;
   onEnsureBackendAccess: () => Promise<void>;
   onEnsureFirefliesBackendAccess: () => Promise<void>;
   onEnsureGranolaBackendAccess: () => Promise<void>;
+  onEnsureSoundcoreBackendAccess?: () => Promise<void>;
   onEnsureSecretBackendAccess?: (secretName: string) => Promise<void>;
+  onSoundcoreCredentialsSaved?: () => void;
   onFirefliesComplete: () => void;
   onGranolaComplete: () => void;
+  onSoundcoreComplete?: () => void;
   onTranscriptionProviderComplete?: (provider: TranscriptionProvider) => void;
   onTranscriptImportComplete?: (conversationId: string) => void;
   onGoogleMeetComplete?: () => void;
@@ -74,6 +90,35 @@ interface TranscribeResponse extends ImportTranscriptResponse {
   provider: TranscriptionProvider;
 }
 
+function parseEnvValue(value: string): string {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function parseSoundcoreEnvBlock(
+  block: string,
+): Partial<Record<(typeof SOUNDCORE_ENV_KEYS)[number], string>> {
+  const values: Partial<Record<(typeof SOUNDCORE_ENV_KEYS)[number], string>> = {};
+  for (const rawLine of block.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const equalsIndex = line.indexOf("=");
+    if (equalsIndex === -1) continue;
+    const key = line.slice(0, equalsIndex).trim();
+    const value = parseEnvValue(line.slice(equalsIndex + 1));
+    if ((SOUNDCORE_ENV_KEYS as readonly string[]).includes(key)) {
+      values[key as (typeof SOUNDCORE_ENV_KEYS)[number]] = value;
+    }
+  }
+  return values;
+}
+
 function toDatetimeLocal(date: Date): string {
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
   return local.toISOString().slice(0, 16);
@@ -85,11 +130,13 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   mode = "onboarding",
   hasFirefliesKey = null,
   hasGranolaKey = null,
+  hasSoundcoreKey = null,
   hasAssemblyAIKey = null,
   hasDeepgramKey = null,
   hasBackendDelegation = null,
   hasFirefliesBackendAccess = null,
   hasGranolaBackendAccess = null,
+  hasSoundcoreBackendAccess = null,
   hasAssemblyAIBackendAccess = null,
   hasDeepgramBackendAccess = null,
   hasGoogleMeet = null,
@@ -97,9 +144,12 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   onEnsureBackendAccess,
   onEnsureFirefliesBackendAccess,
   onEnsureGranolaBackendAccess,
+  onEnsureSoundcoreBackendAccess,
   onEnsureSecretBackendAccess,
+  onSoundcoreCredentialsSaved,
   onFirefliesComplete,
   onGranolaComplete,
+  onSoundcoreComplete,
   onTranscriptionProviderComplete,
   onTranscriptImportComplete,
   onGoogleMeetComplete,
@@ -110,6 +160,14 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   const [step, setStep] = useState<SetupStep>(initialStep);
   const [apiKey, setApiKey] = useState("");
   const [granolaApiKey, setGranolaApiKey] = useState("");
+  const [soundcoreAuthToken, setSoundcoreAuthToken] = useState("");
+  const [soundcoreUid, setSoundcoreUid] = useState("");
+  const [soundcoreOpenudid, setSoundcoreOpenudid] = useState("");
+  const [soundcoreEnvBlock, setSoundcoreEnvBlock] = useState("");
+  const [soundcoreCredentialsSaved, setSoundcoreCredentialsSaved] = useState(false);
+  const [soundcoreAccessVerified, setSoundcoreAccessVerified] = useState(false);
+  const [soundcoreSyncing, setSoundcoreSyncing] = useState(false);
+  const [soundcoreSyncMessage, setSoundcoreSyncMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [testError, setTestError] = useState<string | null>(null);
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
@@ -150,6 +208,14 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
     hasGranolaKey === true && hasBackendDelegation === true && hasGranolaBackendAccess === true;
   const granolaNeedsAccess =
     hasGranolaKey === true && (hasBackendDelegation !== true || hasGranolaBackendAccess !== true);
+  const soundcoreConnected =
+    (hasSoundcoreKey === true &&
+      hasBackendDelegation === true &&
+      hasSoundcoreBackendAccess === true) ||
+    soundcoreAccessVerified;
+  const soundcoreNeedsAccess =
+    hasSoundcoreKey === true &&
+    (hasBackendDelegation !== true || hasSoundcoreBackendAccess !== true);
   const transcriptionKeyStatus: Record<TranscriptionProvider, boolean | null> = {
     assemblyai: hasAssemblyAIKey,
     deepgram: hasDeepgramKey,
@@ -170,6 +236,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   const connectedCount = [
     firefliesConnected,
     granolaConnected,
+    soundcoreConnected,
     assemblyAIReady,
     deepgramReady,
     hasGoogleMeet === true,
@@ -268,6 +335,77 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
       setStep("granola-test");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const saveSoundcoreCredentials = async () => {
+    setSaving(true);
+    setTestError(null);
+    try {
+      const putResult = await tcw.secrets.put(
+        SOUNDCORE_SESSION_SECRET_NAME,
+        JSON.stringify({
+          authToken: soundcoreAuthToken.trim(),
+          uid: soundcoreUid.trim(),
+          openudid: soundcoreOpenudid.trim(),
+        }),
+      );
+      if (!putResult.ok) throw new Error(putResult.error.message);
+
+      setSoundcoreCredentialsSaved(true);
+      setSoundcoreAccessVerified(false);
+      onSoundcoreCredentialsSaved?.();
+      setStep("soundcore-test");
+    } catch (err) {
+      setTestError(err instanceof Error ? err.message : String(err));
+      setStep("soundcore-test");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const applySoundcoreEnvBlock = () => {
+    const parsed = parseSoundcoreEnvBlock(soundcoreEnvBlock);
+    if (parsed.SOUNDCORE_AUTH_TOKEN) setSoundcoreAuthToken(parsed.SOUNDCORE_AUTH_TOKEN);
+    if (parsed.SOUNDCORE_UID) setSoundcoreUid(parsed.SOUNDCORE_UID);
+    if (parsed.SOUNDCORE_OPENUDID) setSoundcoreOpenudid(parsed.SOUNDCORE_OPENUDID);
+  };
+
+  const finishSoundcoreAccess = async () => {
+    setSaving(true);
+    setTestError(null);
+    try {
+      await (onEnsureSoundcoreBackendAccess ?? onEnsureBackendAccess)();
+      await verifySoundcoreStatus(api);
+      setSoundcoreCredentialsSaved(true);
+      setSoundcoreAccessVerified(true);
+      setStep("soundcore-test");
+    } catch (err) {
+      setTestError(err instanceof Error ? err.message : String(err));
+      setStep("soundcore-test");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const syncSoundcoreNow = async () => {
+    setSoundcoreSyncing(true);
+    setTestError(null);
+    setSoundcoreSyncMessage(null);
+    try {
+      const result = await api.post<{
+        synced: number;
+        skipped: number;
+        skippedNoTranscript: number;
+        failed: number;
+      }>("/api/sync/soundcore", {});
+      setSoundcoreSyncMessage(
+        `Synced ${result.synced} note${result.synced === 1 ? "" : "s"} (${result.skipped} already in Listen, ${result.skippedNoTranscript} without transcripts).`,
+      );
+    } catch (err) {
+      setTestError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSoundcoreSyncing(false);
     }
   };
 
@@ -894,6 +1032,158 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
       );
     }
 
+    if (step === "soundcore-key") {
+      const ready =
+        soundcoreAuthToken.trim() !== "" &&
+        soundcoreUid.trim() !== "" &&
+        soundcoreOpenudid.trim() !== "";
+
+      return (
+        <div style={s.detailPanel}>
+          <span style={s.fieldLabel}>Soundcore web session</span>
+          <p style={s.detailText}>
+            Soundcore does not issue a normal API key. This advanced connector uses your signed-in
+            ai.soundcore.com web session headers and stores them in TinyCloud Secrets.
+          </p>
+          <ol style={s.helperList}>
+            <li>Open ai.soundcore.com in a browser and sign in.</li>
+            <li>Open DevTools, then Network, and refresh or open a voice note.</li>
+            <li>Choose a request to anka-api-us.soundcore.com.</li>
+            <li>Copy request headers X-Auth-Token, Uid, and Openudid below.</li>
+          </ol>
+          <label style={s.inputLabel} htmlFor="soundcore-env-block">
+            Paste Soundcore values
+          </label>
+          <textarea
+            id="soundcore-env-block"
+            placeholder="SOUNDCORE_AUTH_TOKEN=...\nSOUNDCORE_UID=...\nSOUNDCORE_OPENUDID=..."
+            value={soundcoreEnvBlock}
+            onChange={(event) => setSoundcoreEnvBlock(event.target.value)}
+            style={{ ...s.textarea, minHeight: 86 }}
+          />
+          <div style={s.btnRow}>
+            <button type="button" style={s.btnGhost} onClick={applySoundcoreEnvBlock}>
+              Fill fields from pasted block
+            </button>
+          </div>
+          <label style={s.inputLabel} htmlFor="soundcore-auth-token">
+            X-Auth-Token
+          </label>
+          <input
+            id="soundcore-auth-token"
+            type="password"
+            placeholder="X-Auth-Token"
+            value={soundcoreAuthToken}
+            onChange={(event) => setSoundcoreAuthToken(event.target.value)}
+            style={s.input}
+          />
+          <label style={s.inputLabel} htmlFor="soundcore-uid">
+            Uid
+          </label>
+          <input
+            id="soundcore-uid"
+            type="text"
+            placeholder="Uid"
+            value={soundcoreUid}
+            onChange={(event) => setSoundcoreUid(event.target.value)}
+            style={s.input}
+          />
+          <label style={s.inputLabel} htmlFor="soundcore-openudid">
+            Openudid
+          </label>
+          <input
+            id="soundcore-openudid"
+            type="text"
+            placeholder="Openudid"
+            value={soundcoreOpenudid}
+            onChange={(event) => setSoundcoreOpenudid(event.target.value)}
+            style={s.input}
+          />
+          <div style={s.btnRow}>
+            <button style={s.btnGhost} onClick={() => setStep("cards")}>
+              Back
+            </button>
+            <button
+              style={{
+                ...s.btnPrimary,
+                ...(!ready || saving ? s.btnDisabled : {}),
+              }}
+              disabled={!ready || saving}
+              onClick={saveSoundcoreCredentials}
+            >
+              {saving ? "Saving..." : "Save credentials"}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    if (step === "soundcore-test") {
+      return (
+        <div style={s.detailPanel}>
+          {testError ? (
+            <>
+              <div style={s.errorCard}>{testError}</div>
+              <div style={s.btnRow}>
+                <button style={s.btnGhost} onClick={() => setStep("soundcore-key")}>
+                  Edit credentials
+                </button>
+                <button style={s.btnPrimary} onClick={finishSoundcoreAccess} disabled={saving}>
+                  {saving ? "Connecting..." : "Try access again"}
+                </button>
+              </div>
+            </>
+          ) : soundcoreCredentialsSaved && !soundcoreConnected ? (
+            <>
+              <div style={s.successCard}>
+                <span style={s.checkmark}>✓</span>
+                <div>
+                  <p style={s.successTitle}>Soundcore credentials saved</p>
+                  <p style={s.successSub}>
+                    Finish setup to let the Listen backend read them and sync voice notes.
+                  </p>
+                </div>
+              </div>
+              <div style={s.btnRow}>
+                <button style={s.btnGhost} onClick={() => setStep("soundcore-key")}>
+                  Edit credentials
+                </button>
+                <button style={s.btnPrimary} onClick={finishSoundcoreAccess} disabled={saving}>
+                  {saving ? "Connecting..." : "Finish setup"}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={s.successCard}>
+                <span style={s.checkmark}>✓</span>
+                <div>
+                  <p style={s.successTitle}>Soundcore connected</p>
+                  <p style={s.successSub}>Voice note transcripts can sync into Listen.</p>
+                </div>
+              </div>
+              <div style={s.btnRow}>
+                <button
+                  style={{
+                    ...s.btnGhost,
+                    ...(soundcoreSyncing ? s.btnDisabled : {}),
+                  }}
+                  disabled={soundcoreSyncing}
+                  onClick={syncSoundcoreNow}
+                >
+                  {soundcoreSyncing ? "Syncing..." : "Sync Soundcore now"}
+                </button>
+                <button style={s.btnPrimary} onClick={onSoundcoreComplete ?? onGranolaComplete}>
+                  Continue to inbox
+                </button>
+              </div>
+              {soundcoreSyncMessage && <div style={s.successCard}>{soundcoreSyncMessage}</div>}
+            </>
+          )}
+        </div>
+      );
+    }
+
     if (step === "google-connect" || step === "google-success") {
       return (
         <div style={s.detailPanel}>
@@ -980,138 +1270,174 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
           </span>
         </div>
 
-        <div style={s.sourceList}>
-          <SourceCard
-            title="Transcript import"
-            meta="file - paste"
-            description="Paste text or upload .txt, .md, .srt, or .vtt."
-            detail="manual import"
-            actionLabel="Import ->"
-            onAction={() => setStep("transcript-import")}
-          />
+        {step === "cards" ? (
+          <div style={s.sourceList}>
+            <SourceCard
+              title="Transcript import"
+              meta="file - paste"
+              description="Paste text or upload .txt, .md, .srt, or .vtt."
+              detail="manual import"
+              actionLabel="Import ->"
+              onAction={() => setStep("transcript-import")}
+            />
 
-          <SourceCard
-            title="Transcription"
-            meta="audio - video"
-            description="Upload media using a connected transcription provider."
-            detail="provider transcription"
-            actionLabel="Upload ->"
-            onAction={() => setStep("transcription-upload")}
-          />
+            <SourceCard
+              title="Transcription"
+              meta="audio - video"
+              description="Upload media using a connected transcription provider."
+              detail="provider transcription"
+              actionLabel="Upload ->"
+              onAction={() => setStep("transcription-upload")}
+            />
 
-          <TranscriptionProviderCard
-            provider="assemblyai"
-            connected={transcriptionProviderReady("assemblyai")}
-            needsAccess={transcriptionProviderNeedsAccess("assemblyai")}
-            saving={saving}
-            onConnect={() => {
-              setTranscriptionProvider("assemblyai");
-              setTranscriptionKey("");
-              setTranscriptionError(null);
-              setStep("transcription-key");
-            }}
-            onFinishSetup={() => void finishTranscriptionProviderAccess("assemblyai")}
-          />
+            <TranscriptionProviderCard
+              provider="assemblyai"
+              connected={transcriptionProviderReady("assemblyai")}
+              needsAccess={transcriptionProviderNeedsAccess("assemblyai")}
+              saving={saving}
+              onConnect={() => {
+                setTranscriptionProvider("assemblyai");
+                setTranscriptionKey("");
+                setTranscriptionError(null);
+                setStep("transcription-key");
+              }}
+              onFinishSetup={() => void finishTranscriptionProviderAccess("assemblyai")}
+            />
 
-          <TranscriptionProviderCard
-            provider="deepgram"
-            connected={transcriptionProviderReady("deepgram")}
-            needsAccess={transcriptionProviderNeedsAccess("deepgram")}
-            saving={saving}
-            onConnect={() => {
-              setTranscriptionProvider("deepgram");
-              setTranscriptionKey("");
-              setTranscriptionError(null);
-              setStep("transcription-key");
-            }}
-            onFinishSetup={() => void finishTranscriptionProviderAccess("deepgram")}
-          />
+            <TranscriptionProviderCard
+              provider="deepgram"
+              connected={transcriptionProviderReady("deepgram")}
+              needsAccess={transcriptionProviderNeedsAccess("deepgram")}
+              saving={saving}
+              onConnect={() => {
+                setTranscriptionProvider("deepgram");
+                setTranscriptionKey("");
+                setTranscriptionError(null);
+                setStep("transcription-key");
+              }}
+              onFinishSetup={() => void finishTranscriptionProviderAccess("deepgram")}
+            />
 
-          <SourceCard
-            title="Fireflies"
-            meta="meeting bot - webhook"
-            description={
-              firefliesNeedsAccess
-                ? "API key saved. Backend access is still needed."
-                : "Pull from your Fireflies workspace."
-            }
-            detail="workspace oauth"
-            connected={firefliesConnected}
-            actionLabel={
-              firefliesConnected
-                ? "Connected"
-                : firefliesNeedsAccess
-                  ? "Finish setup ->"
-                  : "Connect ->"
-            }
-            disabled={saving || firefliesConnected}
-            onAction={() => {
-              if (firefliesConnected) return;
-              if (firefliesNeedsAccess) {
-                void finishFirefliesAccess();
-                return;
+            <SourceCard
+              title="Fireflies"
+              meta="meeting bot - webhook"
+              description={
+                firefliesNeedsAccess
+                  ? "API key saved. Backend access is still needed."
+                  : "Pull from your Fireflies workspace."
               }
-              setStep("fireflies-key");
-            }}
-          />
-
-          <SourceCard
-            title="Granola"
-            meta="notes api"
-            description={
-              granolaNeedsAccess
-                ? "API key saved. Backend access is still needed."
-                : "Pull summaries and transcripts from Granola."
-            }
-            detail="api key"
-            connected={granolaConnected}
-            actionLabel={
-              granolaConnected ? "Connected" : granolaNeedsAccess ? "Finish setup ->" : "Connect ->"
-            }
-            disabled={saving || granolaConnected}
-            onAction={() => {
-              if (granolaConnected) return;
-              if (granolaNeedsAccess) {
-                void finishGranolaAccess();
-                return;
+              detail="workspace oauth"
+              connected={firefliesConnected}
+              actionLabel={
+                firefliesConnected
+                  ? "Connected"
+                  : firefliesNeedsAccess
+                    ? "Finish setup ->"
+                    : "Connect ->"
               }
-              setStep("granola-key");
-            }}
-          />
+              disabled={saving || firefliesConnected}
+              onAction={() => {
+                if (firefliesConnected) return;
+                if (firefliesNeedsAccess) {
+                  void finishFirefliesAccess();
+                  return;
+                }
+                setStep("fireflies-key");
+              }}
+            />
 
-          <SourceCard
-            title="Google Meet"
-            meta="caption sync"
-            description={
-              googleMeetAvailable
-                ? hasBackendDelegation === true
-                  ? "Pulls captions and recordings from Google."
-                  : "Backend access will be delegated before OAuth."
-                : "Google Meet is not configured on this Listen server."
-            }
-            detail={googleMeetAvailable ? "google oauth" : "unavailable"}
-            connected={hasGoogleMeet === true}
-            actionLabel={
-              hasGoogleMeet === true
-                ? "Connected"
-                : googleMeetAvailable
-                  ? "Connect ->"
-                  : "Unavailable"
-            }
-            disabled={hasGoogleMeet === true || !googleMeetAvailable}
-            onAction={() => {
-              if (!googleMeetAvailable) return;
-              setStep("google-connect");
-            }}
-          />
-        </div>
+            <SourceCard
+              title="Granola"
+              meta="notes api"
+              description={
+                granolaNeedsAccess
+                  ? "API key saved. Backend access is still needed."
+                  : "Pull summaries and transcripts from Granola."
+              }
+              detail="api key"
+              connected={granolaConnected}
+              actionLabel={
+                granolaConnected
+                  ? "Connected"
+                  : granolaNeedsAccess
+                    ? "Finish setup ->"
+                    : "Connect ->"
+              }
+              disabled={saving || granolaConnected}
+              onAction={() => {
+                if (granolaConnected) return;
+                if (granolaNeedsAccess) {
+                  void finishGranolaAccess();
+                  return;
+                }
+                setStep("granola-key");
+              }}
+            />
 
-        {detail}
+            <SourceCard
+              title="Soundcore"
+              meta="advanced web session"
+              description={
+                soundcoreNeedsAccess
+                  ? "Credentials saved. Backend access is still needed."
+                  : "Pull voice note transcripts using captured Soundcore web headers."
+              }
+              detail="not an official API key"
+              connected={soundcoreConnected}
+              actionLabel={
+                soundcoreConnected
+                  ? "Connected"
+                  : soundcoreNeedsAccess
+                    ? "Finish setup ->"
+                    : "Connect ->"
+              }
+              disabled={saving || soundcoreConnected}
+              onAction={() => {
+                if (soundcoreConnected) return;
+                if (soundcoreNeedsAccess) {
+                  void finishSoundcoreAccess();
+                  return;
+                }
+                setStep("soundcore-key");
+              }}
+            />
+
+            <SourceCard
+              title="Google Meet"
+              meta="caption sync"
+              description={
+                googleMeetAvailable
+                  ? hasBackendDelegation === true
+                    ? "Pulls captions and recordings from Google."
+                    : "Backend access will be delegated before OAuth."
+                  : "Google Meet is not configured on this Listen server."
+              }
+              detail={googleMeetAvailable ? "google oauth" : "unavailable"}
+              connected={hasGoogleMeet === true}
+              actionLabel={
+                hasGoogleMeet === true
+                  ? "Connected"
+                  : googleMeetAvailable
+                    ? "Connect ->"
+                    : "Unavailable"
+              }
+              disabled={hasGoogleMeet === true || !googleMeetAvailable}
+              onAction={() => {
+                if (!googleMeetAvailable) return;
+                setStep("google-connect");
+              }}
+            />
+          </div>
+        ) : (
+          detail
+        )}
 
         <div style={s.actionsFooter}>
-          <button style={s.btnGhost} onClick={() => setStep("cards")}>
-            Back
-          </button>
+          {step !== "cards" && (
+            <button style={s.btnGhost} onClick={() => setStep("cards")}>
+              Back to sources
+            </button>
+          )}
           <span style={s.footerRule} />
           <button
             style={{
@@ -1148,8 +1474,19 @@ function SourceCard({
   actionLabel: string;
   onAction?: () => void;
 }) {
+  const cardStyle = {
+    ...s.sourceCard,
+    ...(!disabled ? s.sourceCardClickable : {}),
+    ...(disabled && !connected ? s.sourceCardDisabled : {}),
+  };
+
   return (
-    <div style={s.sourceCard}>
+    <div
+      style={cardStyle}
+      onClick={() => {
+        if (!disabled) onAction?.();
+      }}
+    >
       <span style={connected ? s.sourceRadioConnected : s.sourceRadio} />
       <div style={s.sourceBody}>
         <div style={s.sourceTitleRow}>
@@ -1159,7 +1496,14 @@ function SourceCard({
         <p style={s.sourceDesc}>{description}</p>
         <span style={s.sourceDetail}>{detail}</span>
       </div>
-      <button style={connected ? s.btnConnected : s.btnCard} disabled={disabled} onClick={onAction}>
+      <button
+        style={connected ? s.btnConnected : s.btnCard}
+        disabled={disabled}
+        onClick={(event) => {
+          event.stopPropagation();
+          onAction?.();
+        }}
+      >
         {actionLabel}
       </button>
     </div>
@@ -1237,12 +1581,31 @@ async function verifyGranolaStatus(api: ApiClient): Promise<void> {
   throw lastError;
 }
 
+async function verifySoundcoreStatus(api: ApiClient): Promise<void> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= VERIFY_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      await api.get<{ connected: boolean }>("/api/soundcore/status");
+      return;
+    } catch (err) {
+      lastError = err;
+      if (!isMissingSecretError(err) || attempt === VERIFY_RETRY_DELAYS_MS.length) break;
+      await delay(VERIFY_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+
+  throw lastError;
+}
+
 function isMissingSecretError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const message = err.message.toLowerCase();
   return (
     message.includes("no fireflies api key configured") ||
     message.includes("no granola api key configured") ||
+    message.includes("no soundcore credentials configured") ||
+    message.includes("missing soundcore secret") ||
     message.includes("grant_not_found") ||
     message.includes("key_not_found") ||
     message.includes("storage_error")
@@ -1381,6 +1744,12 @@ const s: Record<string, React.CSSProperties> = {
     background: "transparent",
     padding: "12px 14px",
   },
+  sourceCardClickable: {
+    cursor: "pointer",
+  },
+  sourceCardDisabled: {
+    opacity: 0.6,
+  },
   sourceRadio: {
     width: 19,
     height: 19,
@@ -1445,12 +1814,27 @@ const s: Record<string, React.CSSProperties> = {
     color: "var(--lst-ink-70)",
     margin: 0,
   },
+  helperList: {
+    margin: "0 0 2px 18px",
+    padding: 0,
+    color: "var(--lst-ink-70)",
+    fontSize: 12,
+    lineHeight: 1.55,
+  },
   fieldLabel: {
     fontFamily: MONO,
     fontSize: 10,
     color: "var(--lst-ink-55)",
     letterSpacing: "0.06em",
     textTransform: "lowercase" as const,
+  },
+  inputLabel: {
+    fontFamily: MONO,
+    fontSize: 10,
+    color: "var(--lst-ink-70)",
+    letterSpacing: "0.06em",
+    textTransform: "none" as const,
+    marginTop: 2,
   },
   input: {
     fontFamily: FONT,

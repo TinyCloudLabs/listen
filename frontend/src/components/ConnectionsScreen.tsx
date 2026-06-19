@@ -6,21 +6,26 @@ interface ConnectionsScreenProps {
   api: ApiClient;
   hasFireflies: boolean;
   hasGranola?: boolean;
+  hasSoundcore?: boolean;
+  hasSoundcoreCredentials?: boolean;
   hasGoogleMeet: boolean;
   hasFirefliesBackendAccess: boolean;
   hasGranolaBackendAccess?: boolean;
+  hasSoundcoreBackendAccess?: boolean;
   hasAssemblyAIKey?: boolean | null;
   hasAssemblyAIBackendAccess?: boolean | null;
   hasDeepgramKey?: boolean | null;
   hasDeepgramBackendAccess?: boolean | null;
   googleMeetAvailable: boolean;
   onAddSource: () => void;
+  onConnectSoundcore?: () => void;
+  onFinishSoundcoreAccess?: () => Promise<void>;
   onAddTranscript?: () => void;
   onFinishTranscriptionProviderAccess?: (provider: "assemblyai" | "deepgram") => Promise<void>;
   onRefresh: () => void;
 }
 
-type SourceId = "fireflies" | "granola" | "google-meet" | "assemblyai" | "deepgram";
+type SourceId = "fireflies" | "granola" | "soundcore" | "google-meet" | "assemblyai" | "deepgram";
 
 const LOCAL_IMPORTER_INSTRUCTIONS_URL = "https://listen.xyz/importer";
 const LOCAL_IMPORTER_REFERENCE_URL = "https://github.com/TinyCloudLabs/listen-importer";
@@ -50,15 +55,20 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
   api,
   hasFireflies,
   hasGranola = false,
+  hasSoundcore = false,
+  hasSoundcoreCredentials,
   hasGoogleMeet,
   hasFirefliesBackendAccess,
   hasGranolaBackendAccess = false,
+  hasSoundcoreBackendAccess = false,
   hasAssemblyAIKey = null,
   hasAssemblyAIBackendAccess = null,
   hasDeepgramKey = null,
   hasDeepgramBackendAccess = null,
   googleMeetAvailable,
   onAddSource,
+  onConnectSoundcore,
+  onFinishSoundcoreAccess,
   onAddTranscript,
   onFinishTranscriptionProviderAccess,
   onRefresh,
@@ -95,6 +105,18 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
       ready: hasGranola && hasGranolaBackendAccess,
       available: true,
       description: "Syncs Granola notes, transcripts, and summaries into Listen.",
+      syncable: true,
+    },
+    {
+      id: "soundcore",
+      name: "Soundcore",
+      connected: hasSoundcoreCredentials ?? hasSoundcore,
+      ready: (hasSoundcoreCredentials ?? hasSoundcore) && hasSoundcoreBackendAccess,
+      available: true,
+      description:
+        "Add X-Auth-Token, Uid, and Openudid from the Soundcore web session to sync voice note transcripts.",
+      syncable: true,
+      finishSetup: onFinishSoundcoreAccess,
     },
     {
       id: "google-meet",
@@ -134,7 +156,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
   const connected = sources.filter((source) => source.connected);
   const available = sources.filter((source) => !source.connected);
   const syncableConnected = connected.filter((source) => source.ready && source.syncable);
-  const availableCount = available.length + 2;
+  const availableCount = available.length;
 
   const copyLocalImporterCommand = async () => {
     await navigator.clipboard?.writeText(LOCAL_IMPORTER_AGENT_PROMPT);
@@ -149,6 +171,10 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
     try {
       if (source === "fireflies") {
         await api.post("/api/sync/fireflies/jobs", { mode: "incremental" });
+      } else if (source === "granola") {
+        await api.post("/api/sync/granola/jobs", { mode: "incremental" });
+      } else if (source === "soundcore") {
+        await api.post("/api/sync/soundcore", {});
       } else if (source === "google-meet") {
         await api.post("/api/sync/google-meet");
       }
@@ -174,6 +200,10 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
         if (source.ready && source.syncable) {
           if (source.id === "fireflies") {
             await api.post("/api/sync/fireflies/jobs", { mode: "incremental" });
+          } else if (source.id === "granola") {
+            await api.post("/api/sync/granola/jobs", { mode: "incremental" });
+          } else if (source.id === "soundcore") {
+            await api.post("/api/sync/soundcore", {});
           } else if (source.id === "google-meet") {
             await api.post("/api/sync/google-meet");
           }
@@ -304,6 +334,42 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
         )}
 
         <div style={{ ...s.sectionLabelRow, marginTop: 28 }}>
+          <span style={s.sectionLabel}>· available connections · {availableCount}</span>
+          <span style={s.sectionRule} />
+        </div>
+
+        {available.length === 0 ? (
+          <div style={s.empty}>All provider sources are connected.</div>
+        ) : (
+          available.map((source) => (
+            <div key={source.id} style={availableCardStyle}>
+              <span style={s.markIdle} />
+              <div>
+                <div style={s.sourceName}>{source.name}</div>
+                <p style={s.availableDesc}>{source.description}</p>
+              </div>
+              <button
+                type="button"
+                style={{
+                  ...s.btnGhostSm,
+                  ...(!source.available ? s.btnDisabled : {}),
+                }}
+                onClick={
+                  source.id === "soundcore" ? (onConnectSoundcore ?? onAddSource) : onAddSource
+                }
+                disabled={!source.available}
+              >
+                {source.available
+                  ? source.id === "soundcore"
+                    ? "Add credentials"
+                    : "Connect"
+                  : "Unavailable"}
+              </button>
+            </div>
+          ))
+        )}
+
+        <div style={{ ...s.sectionLabelRow, marginTop: 28 }}>
           <span style={s.sectionLabel}>· maintenance</span>
           <span style={s.sectionRule} />
         </div>
@@ -328,7 +394,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
         </div>
 
         <div style={{ ...s.sectionLabelRow, marginTop: 28 }}>
-          <span style={s.sectionLabel}>· available · {availableCount}</span>
+          <span style={s.sectionLabel}>· import options · 2</span>
           <span style={s.sectionRule} />
         </div>
 
@@ -424,31 +490,6 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
               </div>
             </div>
           </div>
-        )}
-
-        {available.length === 0 ? (
-          <div style={s.empty}>All provider sources are connected.</div>
-        ) : (
-          available.map((source) => (
-            <div key={source.id} style={availableCardStyle}>
-              <span style={s.markIdle} />
-              <div>
-                <div style={s.sourceName}>{source.name}</div>
-                <p style={s.availableDesc}>{source.description}</p>
-              </div>
-              <button
-                type="button"
-                style={{
-                  ...s.btnGhostSm,
-                  ...(!source.available ? s.btnDisabled : {}),
-                }}
-                onClick={onAddSource}
-                disabled={!source.available}
-              >
-                {source.available ? "Connect" : "Unavailable"}
-              </button>
-            </div>
-          ))
         )}
       </div>
     </section>

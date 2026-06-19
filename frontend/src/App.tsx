@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import type { ComposedManifestRequest, TinyCloudWeb } from "@tinycloud/web-sdk";
-import type { ServerInfo, WorkspaceStateResponse } from "@listen/core";
+import type { ServerInfo, ServerInfoPermission, WorkspaceStateResponse } from "@listen/core";
 import {
   connectWallet,
   requestNonce,
@@ -9,12 +9,14 @@ import {
   restoreTinyCloudWeb,
   createApiClient,
   createManifestDelegation,
+  createPermissionDelegation,
   sendDelegation,
   revokeDelegation,
   SessionStore,
   loadPersistedSession,
   clearPersistedSession,
   composeManifestWithDelegatees,
+  resolveManifestPermissions,
   type ApiClient,
 } from "@listen/client";
 
@@ -54,12 +56,24 @@ const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const HAS_FRONTEND_GOOGLE_CLIENT_ID = Boolean(GOOGLE_CLIENT_ID);
 const ENABLE_AGENT = import.meta.env.VITE_ENABLE_AGENT === "true";
 const ENABLE_TINYCLOUD_HOOKS = import.meta.env.VITE_ENABLE_TINYCLOUD_HOOKS === "true";
+const CLIENT_CAPABILITY_VERSION = "soundcore-secrets-v2";
+const CLIENT_CAPABILITY_VERSION_KEY = "listen:capability-version";
 const CONVERSATION_HOOK_PATH_PREFIX = "conversations/conversation";
 const FIREFLIES_SECRET_NAME = "FIREFLIES_API_KEY";
 const GRANOLA_SECRET_NAME = "GRANOLA_API_KEY";
+const SOUNDCORE_SESSION_SECRET_NAME = "SOUNDCORE_SESSION";
+const SOUNDCORE_AUTH_TOKEN_SECRET_NAME = "SOUNDCORE_AUTH_TOKEN";
+const SOUNDCORE_UID_SECRET_NAME = "SOUNDCORE_UID";
+const SOUNDCORE_OPENUDID_SECRET_NAME = "SOUNDCORE_OPENUDID";
+const SOUNDCORE_SECRET_NAMES = [
+  SOUNDCORE_AUTH_TOKEN_SECRET_NAME,
+  SOUNDCORE_UID_SECRET_NAME,
+  SOUNDCORE_OPENUDID_SECRET_NAME,
+] as const;
+const SOUNDCORE_DELEGATED_SECRET_NAMES = [SOUNDCORE_SESSION_SECRET_NAME] as const;
 const ASSEMBLYAI_SECRET_NAME = "ASSEMBLYAI_API_KEY";
 const DEEPGRAM_SECRET_NAME = "DEEPGRAM_API_KEY";
-type ProviderSecretSource = "fireflies" | "granola" | "assemblyai" | "deepgram";
+type ProviderSecretSource = "fireflies" | "granola" | "soundcore" | "assemblyai" | "deepgram";
 type TranscriptionProvider = "assemblyai" | "deepgram";
 type TranscriptionProviderStatus = Record<TranscriptionProvider, boolean | null>;
 
@@ -75,8 +89,34 @@ interface AppBootstrapContext {
   conversationEventPathPrefix: string | null;
 }
 
+function ensureClientCapabilityVersion(): void {
+  if (typeof window === "undefined") return;
+
+  try {
+    if (window.localStorage.getItem(CLIENT_CAPABILITY_VERSION_KEY) === CLIENT_CAPABILITY_VERSION) {
+      return;
+    }
+
+    for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
+      const key = window.localStorage.key(index);
+      if (key?.startsWith("tinycloud:session:") || key === "listen:session") {
+        window.localStorage.removeItem(key);
+      }
+    }
+    window.localStorage.setItem(CLIENT_CAPABILITY_VERSION_KEY, CLIENT_CAPABILITY_VERSION);
+  } catch {
+    // Storage can be unavailable in private browsing or tests.
+  }
+}
+
+ensureClientCapabilityVersion();
+
 function ownerDidFromAddress(address: string, chainId = 1): string {
   return `did:pkh:eip155:${chainId}:${address}`;
+}
+
+function defaultEncryptionNetworkId(ownerDid: string): string {
+  return `urn:tinycloud:encryption:${ownerDid}:default`;
 }
 
 function isChatEnabled(): boolean {
@@ -222,10 +262,12 @@ function applyWorkspaceReadiness(
     setHasBackendDelegation,
     setHasFirefliesBackendAccess,
     setHasGranolaBackendAccess,
+    setHasSoundcoreBackendAccess,
     setHasTranscriptionBackendAccess,
     setHasGoogleMeet,
     setHasKey,
     setHasGranolaKey,
+    setHasSoundcoreKey,
     setHasTranscriptionKeys,
     setHasExistingConversations,
   }: {
@@ -233,11 +275,13 @@ function applyWorkspaceReadiness(
     setHasBackendDelegation: (value: boolean) => void;
     setHasFirefliesBackendAccess: (value: boolean | null) => void;
     setHasGranolaBackendAccess: (value: boolean | null) => void;
+    setHasSoundcoreBackendAccess: (value: boolean | null) => void;
     setHasTranscriptionBackendAccess: (value: TranscriptionProviderStatus) => void;
     setHasGoogleMeet: (value: boolean | null) => void;
     setHasKey: (value: boolean) => void;
     setHasGranolaKey: (value: boolean) => void;
-    setHasTranscriptionKeys: (value: TranscriptionProviderStatus) => void;
+    setHasSoundcoreKey: (value: SetStateAction<boolean | null>) => void;
+    setHasTranscriptionKeys: (value: SetStateAction<TranscriptionProviderStatus>) => void;
     setHasExistingConversations: (value: boolean) => void;
   },
 ): void {
@@ -251,6 +295,12 @@ function applyWorkspaceReadiness(
   setHasGranolaBackendAccess(
     workspaceBackendStatus(backendSecretReadable.granola.readable, delegationActive),
   );
+  const soundcoreBackendReadable =
+    backendSecretReadable.soundcoreSession.readable === true ||
+    (backendSecretReadable.soundcoreAuthToken.readable === true &&
+      backendSecretReadable.soundcoreUid.readable === true &&
+      backendSecretReadable.soundcoreOpenudid.readable === true);
+  setHasSoundcoreBackendAccess(workspaceBackendStatus(soundcoreBackendReadable, delegationActive));
   setHasTranscriptionBackendAccess({
     assemblyai: workspaceBackendStatus(backendSecretReadable.assemblyai.readable, delegationActive),
     deepgram: workspaceBackendStatus(backendSecretReadable.deepgram.readable, delegationActive),
@@ -260,10 +310,29 @@ function applyWorkspaceReadiness(
   if (!hasTinyCloud) {
     setHasKey(backendSecretReadable.fireflies.readable === true);
     setHasGranolaKey(backendSecretReadable.granola.readable === true);
+    setHasSoundcoreKey(soundcoreBackendReadable === true);
     setHasTranscriptionKeys({
       assemblyai: backendSecretReadable.assemblyai.readable === true,
       deepgram: backendSecretReadable.deepgram.readable === true,
     });
+  }
+  if (backendSecretReadable.fireflies.readable === true) {
+    setHasKey(true);
+  }
+  if (backendSecretReadable.granola.readable === true) {
+    setHasGranolaKey(true);
+  }
+  if (soundcoreBackendReadable) {
+    setHasSoundcoreKey(true);
+  }
+  if (
+    backendSecretReadable.assemblyai.readable === true ||
+    backendSecretReadable.deepgram.readable === true
+  ) {
+    setHasTranscriptionKeys((previous) => ({
+      assemblyai: backendSecretReadable.assemblyai.readable === true || previous.assemblyai,
+      deepgram: backendSecretReadable.deepgram.readable === true || previous.deepgram,
+    }));
   }
 
   if (state.conversations.hasAny !== null) {
@@ -664,33 +733,6 @@ function LandingPage({
   );
 }
 
-async function checkSecretExists(
-  tcw: TinyCloudWeb,
-  secretName: string,
-  label: string,
-): Promise<boolean> {
-  const step = startDebugStep("secret.direct-exists", { label, secretName });
-  try {
-    const result = await tcw.secrets.get(secretName);
-    if (result.ok) {
-      const exists = Boolean(result.data);
-      step.complete({ exists });
-      return exists;
-    }
-
-    const code = result.error?.code?.toLowerCase();
-    if (code === "key_not_found" || code === "not_found") {
-      step.complete({ exists: false, code });
-      return false;
-    }
-
-    throw new Error(result.error?.message ?? `Failed to check ${label} API key`);
-  } catch (err) {
-    step.fail(err);
-    throw err;
-  }
-}
-
 async function checkSecretExistsFromBackend(
   api: ApiClient,
   source: ProviderSecretSource,
@@ -713,10 +755,43 @@ function providerForTranscriptionSecret(secretName: string): TranscriptionProvid
   return null;
 }
 
+function backendSecretReadPermissions(secretNames: readonly string[]): ServerInfoPermission[] {
+  return secretNames.map((secretName) => ({
+    service: "tinycloud.kv",
+    space: "secrets",
+    path: `vault/secrets/${secretName}`,
+    actions: ["get"],
+    skipPrefix: true,
+    description: `Read the encrypted ${secretName} payload for backend workflows.`,
+  }));
+}
+
+function backendSecretDecryptPermissions(ownerDid?: string | null): ServerInfoPermission[] {
+  if (!ownerDid) return [];
+
+  return [
+    {
+      service: "tinycloud.encryption",
+      space: "encryption",
+      path: defaultEncryptionNetworkId(ownerDid),
+      actions: ["decrypt"],
+      skipPrefix: true,
+      description: "Decrypt Listen secrets through the user's default encryption network.",
+    },
+  ];
+}
+
+function sourceSecretNames(source: "fireflies" | "granola" | "soundcore"): readonly string[] {
+  if (source === "fireflies") return [FIREFLIES_SECRET_NAME];
+  if (source === "granola") return [GRANOLA_SECRET_NAME];
+  return SOUNDCORE_DELEGATED_SECRET_NAMES;
+}
+
 type WorkspaceStatusMode =
   | "checking"
   | "fireflies-access"
   | "granola-access"
+  | "soundcore-access"
   | "wallet"
   | "backend-offline";
 
@@ -753,6 +828,13 @@ function WorkspaceStatusPanel({
       action: "Finish access",
       items: ["backend delegation", "secrets access", "existing transcripts"],
     },
+    "soundcore-access": {
+      eyebrow: "soundcore",
+      title: "Finish Soundcore access.",
+      copy: "The Soundcore credentials are stored in TinyCloud Secrets. Delegate access to the Listen backend so sync can run.",
+      action: "Finish access",
+      items: ["backend delegation", "secrets access", "existing transcripts"],
+    },
     wallet: {
       eyebrow: "sources",
       title: "Reconnect wallet to connect sources.",
@@ -764,7 +846,7 @@ function WorkspaceStatusPanel({
       eyebrow: "backend offline",
       title: "Backend offline.",
       copy: "TinyCloud conversations remain available directly from your space. Sync, source setup, Google Meet, and backend imports are unavailable until the Listen backend is reachable.",
-      action: null,
+      action: "Reconnect backend",
       items: ["TinyCloud direct reads", "sync unavailable", "source setup unavailable"],
     },
   }[mode];
@@ -817,17 +899,20 @@ export function App() {
   const [address, setAddress] = useState<string | null>(null);
   const [did, setDid] = useState<string | null>(null);
   const [tcw, setTcw] = useState<TinyCloudWeb | null>(null);
+  const [hasWalletSigner, setHasWalletSigner] = useState(false);
   const [api, setApi] = useState<ApiClient | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [hasKey, setHasKey] = useState<boolean | null>(null);
   const [hasGranolaKey, setHasGranolaKey] = useState<boolean | null>(null);
+  const [hasSoundcoreKey, setHasSoundcoreKey] = useState<boolean | null>(false);
   const [hasTranscriptionKeys, setHasTranscriptionKeys] = useState<TranscriptionProviderStatus>(
     EMPTY_TRANSCRIPTION_STATUS,
   );
   const [hasBackendDelegation, setHasBackendDelegation] = useState<boolean | null>(null);
   const [hasFirefliesBackendAccess, setHasFirefliesBackendAccess] = useState<boolean | null>(null);
   const [hasGranolaBackendAccess, setHasGranolaBackendAccess] = useState<boolean | null>(null);
+  const [hasSoundcoreBackendAccess, setHasSoundcoreBackendAccess] = useState<boolean | null>(null);
   const [hasTranscriptionBackendAccess, setHasTranscriptionBackendAccess] =
     useState<TranscriptionProviderStatus>(EMPTY_TRANSCRIPTION_STATUS);
   const [hasGoogleMeet, setHasGoogleMeet] = useState<boolean | null>(null);
@@ -835,9 +920,9 @@ export function App() {
   const [workspaceActionLoading, setWorkspaceActionLoading] = useState(false);
   const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null);
   const [activePage, setActivePage] = useState<ShellRoute>("inbox");
-  const [sourcesInitialStep, setSourcesInitialStep] = useState<"cards" | "transcript-import">(
-    "cards",
-  );
+  const [sourcesInitialStep, setSourcesInitialStep] = useState<
+    "cards" | "transcript-import" | "soundcore-key"
+  >("cards");
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [shareConversationId, setShareConversationId] = useState<string | null>(null);
@@ -888,6 +973,7 @@ export function App() {
     setAddress(addr);
     setDid(tcwInstance.did ?? null);
     setTcw(tcwInstance);
+    setHasWalletSigner(true);
     setApi(null);
     setAgentInfo(null);
     setBackendDid(null);
@@ -896,9 +982,14 @@ export function App() {
     setLiveWritePathPrefix(localConversationEventPathPrefix());
     setLiveWriteHost(tcwInstance.hosts[0] ?? null);
     setLiveWriteSpaceId(tcwInstance.spaceId ?? null);
+    setHasKey(false);
+    setHasGranolaKey(false);
+    setHasSoundcoreKey(false);
+    setHasTranscriptionKeys({ assemblyai: false, deepgram: false });
     setHasBackendDelegation(false);
     setHasFirefliesBackendAccess(null);
     setHasGranolaBackendAccess(null);
+    setHasSoundcoreBackendAccess(null);
     setHasTranscriptionBackendAccess(EMPTY_TRANSCRIPTION_STATUS);
     setHasGoogleMeet(null);
     setWorkspaceActionError(null);
@@ -975,6 +1066,7 @@ export function App() {
       setAddress(addr);
       setDid(restoredTinyCloud?.tcw.did ?? persistedSession?.did ?? null);
       setTcw(restoredTinyCloud?.tcw ?? null);
+      setHasWalletSigner(false);
       setApi(apiClient);
       setAgentInfo(agent);
       setBackendDid(info.did);
@@ -1023,13 +1115,65 @@ export function App() {
     }
   }, [backendDid, capabilityRequest, tcw]);
 
+  const renewBackendDelegationWithSecrets = useCallback(
+    async (secretNames: readonly string[]) => {
+      const step = startDebugStep("delegation.renew-with-secrets", {
+        hasTinyCloud: Boolean(tcw),
+        hasBackendDid: Boolean(backendDid),
+        hasCapabilityRequest: Boolean(capabilityRequest),
+        secretCount: secretNames.length,
+      });
+      if (!tcw || !backendDid || !capabilityRequest) {
+        step.complete({ ok: false, reason: "missing-context" });
+        throw new Error("Reconnect your wallet to finish source setup.");
+      }
+
+      const token = sessionStoreRef.current.getToken();
+      if (!token) {
+        step.complete({ ok: false, reason: "missing-token" });
+        throw new Error("Session expired. Sign in again to finish source setup.");
+      }
+
+      const target = capabilityRequest.delegationTargets.find((entry) => entry.did === backendDid);
+      if (!target) {
+        step.complete({ ok: false, reason: "missing-target" });
+        throw new Error(`No manifest delegation target found for DID ${backendDid}`);
+      }
+
+      try {
+        const secretPermissions = resolveManifestPermissions(APP_MANIFEST, [
+          ...backendSecretReadPermissions(secretNames),
+          ...backendSecretDecryptPermissions(tcw.did ?? did),
+        ]);
+        const { serialized } = await createPermissionDelegation(tcw, backendDid, [
+          ...target.permissions,
+          ...secretPermissions,
+        ]);
+        await sendDelegation(BACKEND_URL, serialized, token);
+        setHasBackendDelegation(true);
+        step.complete({ ok: true, backendDid, secretCount: secretNames.length });
+      } catch (err) {
+        step.fail(err);
+        throw err;
+      }
+    },
+    [backendDid, capabilityRequest, did, tcw],
+  );
+
   useEffect(() => {
     if (!api) {
       setHasBackendDelegation(tcw ? false : null);
       setHasFirefliesBackendAccess(null);
       setHasGranolaBackendAccess(null);
+      setHasSoundcoreBackendAccess(null);
       setHasTranscriptionBackendAccess(EMPTY_TRANSCRIPTION_STATUS);
       setHasGoogleMeet(null);
+      if (tcw) {
+        setHasKey(false);
+        setHasGranolaKey(false);
+        setHasSoundcoreKey(false);
+        setHasTranscriptionKeys({ assemblyai: false, deepgram: false });
+      }
       return;
     }
 
@@ -1042,10 +1186,12 @@ export function App() {
           setHasBackendDelegation,
           setHasFirefliesBackendAccess,
           setHasGranolaBackendAccess,
+          setHasSoundcoreBackendAccess,
           setHasTranscriptionBackendAccess,
           setHasGoogleMeet,
           setHasKey,
           setHasGranolaKey,
+          setHasSoundcoreKey,
           setHasTranscriptionKeys,
           setHasExistingConversations,
         });
@@ -1054,6 +1200,7 @@ export function App() {
           expiresAt: cached.expiresAt,
           firefliesReadable: cached.backendReadableSecrets.fireflies.readable,
           granolaReadable: cached.backendReadableSecrets.granola.readable,
+          soundcoreSessionReadable: cached.backendReadableSecrets.soundcoreSession.readable,
           googleMeetConnected: cached.googleMeet.connected,
         });
         return;
@@ -1064,6 +1211,7 @@ export function App() {
     setHasBackendDelegation(null);
     setHasFirefliesBackendAccess(null);
     setHasGranolaBackendAccess(null);
+    setHasSoundcoreBackendAccess(null);
     setHasTranscriptionBackendAccess(EMPTY_TRANSCRIPTION_STATUS);
     setHasGoogleMeet(null);
 
@@ -1082,10 +1230,12 @@ export function App() {
           setHasBackendDelegation,
           setHasFirefliesBackendAccess,
           setHasGranolaBackendAccess,
+          setHasSoundcoreBackendAccess,
           setHasTranscriptionBackendAccess,
           setHasGoogleMeet,
           setHasKey,
           setHasGranolaKey,
+          setHasSoundcoreKey,
           setHasTranscriptionKeys,
           setHasExistingConversations,
         });
@@ -1106,6 +1256,10 @@ export function App() {
           delegationStatus: state.delegation.status,
           firefliesReadable: state.backendReadableSecrets.fireflies.readable,
           granolaReadable: state.backendReadableSecrets.granola.readable,
+          soundcoreSessionReadable: state.backendReadableSecrets.soundcoreSession.readable,
+          soundcoreAuthTokenReadable: state.backendReadableSecrets.soundcoreAuthToken.readable,
+          soundcoreUidReadable: state.backendReadableSecrets.soundcoreUid.readable,
+          soundcoreOpenudidReadable: state.backendReadableSecrets.soundcoreOpenudid.readable,
           assemblyaiReadable: state.backendReadableSecrets.assemblyai.readable,
           deepgramReadable: state.backendReadableSecrets.deepgram.readable,
           googleMeetConnected: state.googleMeet.connected,
@@ -1121,11 +1275,13 @@ export function App() {
         setHasBackendDelegation(false);
         setHasFirefliesBackendAccess(null);
         setHasGranolaBackendAccess(null);
+        setHasSoundcoreBackendAccess(null);
         setHasTranscriptionBackendAccess(EMPTY_TRANSCRIPTION_STATUS);
         setHasGoogleMeet(false);
         if (!tcw) {
           setHasKey(false);
           setHasGranolaKey(false);
+          setHasSoundcoreKey(false);
           setHasTranscriptionKeys({ assemblyai: false, deepgram: false });
           setHasExistingConversations(false);
         }
@@ -1135,69 +1291,6 @@ export function App() {
       cancelled = true;
     };
   }, [address, api, backendDid, refreshKey, tcw]);
-
-  useEffect(() => {
-    if (!tcw) return;
-
-    let cancelled = false;
-    setHasKey(null);
-    checkSecretExists(tcw, FIREFLIES_SECRET_NAME, "Fireflies")
-      .then((exists) => {
-        if (!cancelled) setHasKey(exists);
-      })
-      .catch(() => {
-        if (!cancelled) setHasKey(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [tcw]);
-
-  useEffect(() => {
-    if (!tcw) return;
-
-    let cancelled = false;
-    setHasGranolaKey(null);
-    checkSecretExists(tcw, GRANOLA_SECRET_NAME, "Granola")
-      .then((exists) => {
-        if (!cancelled) setHasGranolaKey(exists);
-      })
-      .catch(() => {
-        if (!cancelled) setHasGranolaKey(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [tcw]);
-
-  useEffect(() => {
-    if (!tcw) return;
-
-    let cancelled = false;
-    const providers = [
-      ["assemblyai", ASSEMBLYAI_SECRET_NAME],
-      ["deepgram", DEEPGRAM_SECRET_NAME],
-    ] as const;
-
-    setHasTranscriptionKeys(EMPTY_TRANSCRIPTION_STATUS);
-    for (const [provider, secretName] of providers) {
-      checkSecretExists(tcw, secretName, provider)
-        .then((exists) => {
-          if (!cancelled) {
-            setHasTranscriptionKeys((state) => ({ ...state, [provider]: exists }));
-          }
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setHasTranscriptionKeys((state) => ({ ...state, [provider]: false }));
-          }
-        });
-    }
-
-    return () => {
-      cancelled = true;
-    };
-  }, [tcw]);
 
   useEffect(() => {
     if (!conversationApi || (!tcw && hasBackendDelegation !== true)) {
@@ -1311,7 +1404,14 @@ export function App() {
         clearPersistedSession(addr);
         const network = await web3Provider.getNetwork?.().catch(() => null);
         const ownerDid = ownerDidFromAddress(addr, network?.chainId ?? 1);
-        const bootstrap = await loadAppBootstrapContext(ownerDid).catch(() => null);
+        const bootstrap = await loadAppBootstrapContext(ownerDid).catch((err) => {
+          if (options?.forceWallet) {
+            throw new Error(
+              `Backend bootstrap failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+          return null;
+        });
         if (!bootstrap) {
           await signInDirectTinyCloud(addr, web3Provider);
           step.complete({ mode: "direct-tinycloud", reason: "bootstrap-unavailable" });
@@ -1319,13 +1419,25 @@ export function App() {
         }
 
         if (!bootstrap.info) {
+          if (options?.forceWallet) {
+            throw new Error(
+              "Backend is reachable, but /api/server-info did not return backend info.",
+            );
+          }
           await signInDirectTinyCloud(addr, web3Provider);
           step.complete({ mode: "direct-tinycloud", reason: "backend-info-unavailable" });
           return;
         }
 
         debugLog("auth.sign-in", "nonce-request-started", { backendUrl: BACKEND_URL });
-        const nonce = await requestNonce(BACKEND_URL, addr).catch(() => null);
+        const nonce = await requestNonce(BACKEND_URL, addr).catch((err) => {
+          if (options?.forceWallet) {
+            throw new Error(
+              `Backend nonce request failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+          return null;
+        });
         if (!nonce) {
           await signInDirectTinyCloud(addr, web3Provider);
           step.complete({ mode: "direct-tinycloud", reason: "nonce-unavailable" });
@@ -1347,7 +1459,14 @@ export function App() {
         });
         debugLog("auth.sign-in", "backend-session-verify-started");
         const verified = await verifySession(BACKEND_URL, session.siwe, session.signature).catch(
-          () => null,
+          (err) => {
+            if (options?.forceWallet) {
+              throw new Error(
+                `Backend SIWE verification failed: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+            return null;
+          },
         );
         if (!verified) {
           try {
@@ -1368,6 +1487,7 @@ export function App() {
         setAddress(addr);
         setDid(tcwInstance.did ?? null);
         setTcw(tcwInstance);
+        setHasWalletSigner(true);
         setApi(apiClient);
         setAgentInfo(agent);
         setBackendDid(info.did);
@@ -1403,6 +1523,7 @@ export function App() {
     setAddress(null);
     setDid(null);
     setTcw(null);
+    setHasWalletSigner(false);
     setApi(null);
     setAgentInfo(null);
     setBackendDid(null);
@@ -1414,10 +1535,12 @@ export function App() {
     setAuthError(null);
     setHasKey(null);
     setHasGranolaKey(null);
+    setHasSoundcoreKey(null);
     setHasTranscriptionKeys(EMPTY_TRANSCRIPTION_STATUS);
     setHasBackendDelegation(null);
     setHasFirefliesBackendAccess(null);
     setHasGranolaBackendAccess(null);
+    setHasSoundcoreBackendAccess(null);
     setHasTranscriptionBackendAccess(EMPTY_TRANSCRIPTION_STATUS);
     setHasGoogleMeet(null);
     setHasExistingConversations(null);
@@ -1431,29 +1554,61 @@ export function App() {
     await renewBackendDelegation();
   }, [renewBackendDelegation]);
 
+  const backendDelegationSecretNames = useCallback(
+    (requestedSecretNames: readonly string[] = []) => {
+      const names = new Set<string>(requestedSecretNames);
+      if (hasKey === true) names.add(FIREFLIES_SECRET_NAME);
+      if (hasGranolaKey === true) names.add(GRANOLA_SECRET_NAME);
+      if (hasSoundcoreKey === true) {
+        for (const name of SOUNDCORE_DELEGATED_SECRET_NAMES) names.add(name);
+      }
+      if (hasTranscriptionKeys.assemblyai === true) names.add(ASSEMBLYAI_SECRET_NAME);
+      if (hasTranscriptionKeys.deepgram === true) names.add(DEEPGRAM_SECRET_NAME);
+      return [...names];
+    },
+    [hasGranolaKey, hasKey, hasSoundcoreKey, hasTranscriptionKeys],
+  );
+
   const ensureSourceBackendAccess = useCallback(
-    async (source: "fireflies" | "granola") => {
+    async (source: "fireflies" | "granola" | "soundcore") => {
       if (!tcw || !backendDid || !api) {
         throw new Error(`Reconnect your wallet to finish ${source} setup.`);
       }
 
       if (source === "fireflies") setHasFirefliesBackendAccess(null);
-      else setHasGranolaBackendAccess(null);
-      await ensureBackendAccess();
+      else if (source === "granola") setHasGranolaBackendAccess(null);
+      else setHasSoundcoreBackendAccess(null);
+      await renewBackendDelegationWithSecrets(
+        backendDelegationSecretNames(sourceSecretNames(source)),
+      );
 
       const backendCanRead = await checkSecretExistsFromBackend(api, source);
       if (!backendCanRead) {
         if (source === "fireflies") setHasFirefliesBackendAccess(false);
-        else setHasGranolaBackendAccess(false);
-        const secretName = source === "fireflies" ? FIREFLIES_SECRET_NAME : GRANOLA_SECRET_NAME;
+        else if (source === "granola") setHasGranolaBackendAccess(false);
+        else setHasSoundcoreBackendAccess(false);
+        const secretName =
+          source === "fireflies"
+            ? FIREFLIES_SECRET_NAME
+            : source === "granola"
+              ? GRANOLA_SECRET_NAME
+              : "Soundcore credentials";
         throw new Error(`Backend still cannot read ${secretName}. Re-save the key or try again.`);
       }
 
       setHasBackendDelegation(true);
-      if (source === "fireflies") setHasFirefliesBackendAccess(true);
-      else setHasGranolaBackendAccess(true);
+      if (source === "fireflies") {
+        setHasKey(true);
+        setHasFirefliesBackendAccess(true);
+      } else if (source === "granola") {
+        setHasGranolaKey(true);
+        setHasGranolaBackendAccess(true);
+      } else {
+        setHasSoundcoreKey(true);
+        setHasSoundcoreBackendAccess(true);
+      }
     },
-    [api, backendDid, ensureBackendAccess, tcw],
+    [api, backendDelegationSecretNames, backendDid, renewBackendDelegationWithSecrets, tcw],
   );
 
   const ensureFirefliesBackendAccess = useCallback(
@@ -1463,6 +1618,11 @@ export function App() {
 
   const ensureGranolaBackendAccess = useCallback(
     () => ensureSourceBackendAccess("granola"),
+    [ensureSourceBackendAccess],
+  );
+
+  const ensureSoundcoreBackendAccess = useCallback(
+    () => ensureSourceBackendAccess("soundcore"),
     [ensureSourceBackendAccess],
   );
 
@@ -1480,7 +1640,7 @@ export function App() {
         }));
       }
 
-      await ensureBackendAccess();
+      await renewBackendDelegationWithSecrets(backendDelegationSecretNames([secretName]));
 
       if (transcriptionProvider && api) {
         const backendCanRead = await checkSecretExistsFromBackend(api, transcriptionProvider);
@@ -1500,15 +1660,16 @@ export function App() {
 
       setHasBackendDelegation(true);
     },
-    [api, backendDid, ensureBackendAccess, tcw],
+    [api, backendDelegationSecretNames, backendDid, renewBackendDelegationWithSecrets, tcw],
   );
 
-  const autoAccessRenewalKeyRef = useRef<string | null>(null);
+  const handleFinishMissingSourceAccess = useCallback(async () => {
+    if (!api) {
+      setWorkspaceActionError("Backend is offline. Try again when the backend is reachable.");
+      return;
+    }
 
-  useEffect(() => {
-    if (!api || !tcw || !backendDid) return;
-
-    const sources: Array<"fireflies" | "granola"> = [];
+    const sources: Array<"fireflies" | "granola" | "soundcore"> = [];
     if (
       hasKey === true &&
       (hasBackendDelegation === false || hasFirefliesBackendAccess === false)
@@ -1521,70 +1682,69 @@ export function App() {
     ) {
       sources.push("granola");
     }
+    if (
+      hasSoundcoreKey === true &&
+      (hasBackendDelegation === false || hasSoundcoreBackendAccess === false)
+    ) {
+      sources.push("soundcore");
+    }
 
     if (sources.length === 0) return;
 
-    const renewalKey = [
-      address,
-      sources.join(","),
-      hasBackendDelegation,
-      hasFirefliesBackendAccess,
-      hasGranolaBackendAccess,
-    ].join("|");
-    if (autoAccessRenewalKeyRef.current === renewalKey) return;
-    autoAccessRenewalKeyRef.current = renewalKey;
-
-    let cancelled = false;
-    setWorkspaceActionLoading(true);
-    setWorkspaceActionError(null);
-
-    (async () => {
-      try {
-        if (sources.includes("fireflies")) {
-          await ensureFirefliesBackendAccess();
-        }
-        if (sources.includes("granola")) {
-          await ensureGranolaBackendAccess();
-        }
-        if (!cancelled) setRefreshKey((k) => k + 1);
-      } catch (err) {
-        if (!cancelled) setWorkspaceActionError(err instanceof Error ? err.message : String(err));
-      } finally {
-        if (!cancelled) setWorkspaceActionLoading(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    address,
-    api,
-    backendDid,
-    ensureFirefliesBackendAccess,
-    ensureGranolaBackendAccess,
-    hasBackendDelegation,
-    hasFirefliesBackendAccess,
-    hasGranolaBackendAccess,
-    hasGranolaKey,
-    hasKey,
-    tcw,
-  ]);
-
-  const handleFinishFirefliesAccess = useCallback(async () => {
     setWorkspaceActionLoading(true);
     setWorkspaceActionError(null);
     try {
-      await ensureFirefliesBackendAccess();
+      for (const source of sources) {
+        if (source === "fireflies") setHasFirefliesBackendAccess(null);
+        else if (source === "granola") setHasGranolaBackendAccess(null);
+        else setHasSoundcoreBackendAccess(null);
+      }
+
+      await renewBackendDelegationWithSecrets(
+        backendDelegationSecretNames(sources.flatMap((source) => sourceSecretNames(source))),
+      );
+
+      const failed: string[] = [];
+      for (const source of sources) {
+        const backendCanRead = await checkSecretExistsFromBackend(api, source);
+        if (source === "fireflies") {
+          if (backendCanRead) setHasKey(true);
+          setHasFirefliesBackendAccess(backendCanRead);
+        } else if (source === "granola") {
+          if (backendCanRead) setHasGranolaKey(true);
+          setHasGranolaBackendAccess(backendCanRead);
+        } else {
+          if (backendCanRead) setHasSoundcoreKey(true);
+          setHasSoundcoreBackendAccess(backendCanRead);
+        }
+        if (!backendCanRead) failed.push(source === "soundcore" ? "Soundcore" : source);
+      }
+
+      if (failed.length > 0) {
+        throw new Error(
+          `Backend still cannot read ${failed.join(", ")} credentials. Re-save the key and try again.`,
+        );
+      }
+
       setHasBackendDelegation(true);
-      setHasFirefliesBackendAccess(true);
       setRefreshKey((k) => k + 1);
     } catch (err) {
       setWorkspaceActionError(err instanceof Error ? err.message : String(err));
     } finally {
       setWorkspaceActionLoading(false);
     }
-  }, [ensureFirefliesBackendAccess]);
+  }, [
+    api,
+    backendDelegationSecretNames,
+    hasBackendDelegation,
+    hasFirefliesBackendAccess,
+    hasGranolaBackendAccess,
+    hasGranolaKey,
+    hasKey,
+    hasSoundcoreBackendAccess,
+    hasSoundcoreKey,
+    renewBackendDelegationWithSecrets,
+  ]);
 
   // ── Render ────────────────────────────────────────────────────────
 
@@ -1594,6 +1754,8 @@ export function App() {
     hasKey === true && hasBackendDelegation === true && hasFirefliesBackendAccess === true;
   const granolaConnected =
     hasGranolaKey === true && hasBackendDelegation === true && hasGranolaBackendAccess === true;
+  const soundcoreConnected =
+    hasSoundcoreKey === true && hasBackendDelegation === true && hasSoundcoreBackendAccess === true;
   const assemblyAIConnected =
     hasTranscriptionKeys.assemblyai === true &&
     hasBackendDelegation === true &&
@@ -1605,6 +1767,7 @@ export function App() {
   const connectedSourceCount = [
     firefliesConnected,
     granolaConnected,
+    soundcoreConnected,
     assemblyAIConnected,
     deepgramConnected,
     hasGoogleMeet === true,
@@ -1616,6 +1779,7 @@ export function App() {
   const backendStatusReady = backendUnavailable || hasBackendDelegation !== null;
   const firefliesKeyReady = hasKey !== null;
   const granolaKeyReady = hasGranolaKey !== null;
+  const soundcoreKeyReady = hasSoundcoreKey !== null;
   const transcriptionKeysReady = Object.values(hasTranscriptionKeys).every(
     (value) => value !== null,
   );
@@ -1624,6 +1788,10 @@ export function App() {
   const granolaBackendAccessReady =
     hasGranolaKey === true && hasBackendDelegation === true
       ? hasGranolaBackendAccess !== null
+      : true;
+  const soundcoreBackendAccessReady =
+    hasSoundcoreKey === true && hasBackendDelegation === true
+      ? hasSoundcoreBackendAccess !== null
       : true;
   const transcriptionBackendAccessReady = (["assemblyai", "deepgram"] as const).every((provider) =>
     hasTranscriptionKeys[provider] === true && hasBackendDelegation === true
@@ -1635,6 +1803,7 @@ export function App() {
       ? hasGoogleMeet !== null &&
         firefliesBackendAccessReady &&
         granolaBackendAccessReady &&
+        soundcoreBackendAccessReady &&
         transcriptionBackendAccessReady
       : true;
   const conversationChecksReady =
@@ -1646,9 +1815,10 @@ export function App() {
       (backendStatusReady &&
         firefliesKeyReady &&
         granolaKeyReady &&
+        soundcoreKeyReady &&
         transcriptionKeysReady &&
         backendBackedChecksReady));
-  const setupAvailable = tcw !== null && backendDid !== null && api !== null;
+  const setupAvailable = tcw !== null && hasWalletSigner && backendDid !== null && api !== null;
   const needsFirefliesAccess =
     !backendUnavailable &&
     workspaceChecksReady &&
@@ -1659,6 +1829,11 @@ export function App() {
     workspaceChecksReady &&
     hasGranolaKey === true &&
     (hasBackendDelegation === false || hasGranolaBackendAccess === false);
+  const needsSoundcoreAccess =
+    !backendUnavailable &&
+    workspaceChecksReady &&
+    hasSoundcoreKey === true &&
+    (hasBackendDelegation === false || hasSoundcoreBackendAccess === false);
   const showSharedPage = activePage === "shared";
   const showWorkspaceLoading = isSignedIn && !showSharedPage && !workspaceChecksReady;
   const showOnboarding =
@@ -1668,6 +1843,7 @@ export function App() {
     !hasUsableInbox &&
     !needsFirefliesAccess &&
     !needsGranolaAccess &&
+    !needsSoundcoreAccess &&
     setupAvailable;
   const showWalletSetupState =
     isSignedIn &&
@@ -1782,6 +1958,12 @@ export function App() {
       status: granolaConnected ? "connected" : undefined,
     },
     {
+      key: "soundcore",
+      name: "Soundcore",
+      count: null,
+      status: soundcoreConnected ? "connected" : undefined,
+    },
+    {
       key: "gmeet",
       name: "Google Meet",
       count: null,
@@ -1804,7 +1986,9 @@ export function App() {
     setActivePage("inbox");
   };
 
-  const openSourcesSetup = (initialStep: "cards" | "transcript-import" = "cards") => {
+  const openSourcesSetup = (
+    initialStep: "cards" | "transcript-import" | "soundcore-key" = "cards",
+  ) => {
     setSourcesInitialStep(initialStep);
     setSelectedConversationId(null);
     setActivePage("sources");
@@ -1852,6 +2036,11 @@ export function App() {
         (hasBackendDelegation === false || hasGranolaBackendAccess === false) && (
           <span style={s.badge}>Granola key saved</span>
         )}
+      {soundcoreConnected && <span style={s.badge}>Soundcore</span>}
+      {hasSoundcoreKey === true &&
+        (hasBackendDelegation === false || hasSoundcoreBackendAccess === false) && (
+          <span style={s.badge}>Soundcore credentials saved</span>
+        )}
       {assemblyAIConnected && <span style={s.badge}>AssemblyAI</span>}
       {hasTranscriptionKeys.assemblyai === true &&
         (hasBackendDelegation === false || hasTranscriptionBackendAccess.assemblyai === false) && (
@@ -1889,7 +2078,7 @@ export function App() {
           refreshLabel="Refresh conversations"
         />
       )}
-      {(hasKey || hasGranolaKey || hasGoogleMeet) && (
+      {(hasKey || hasGranolaKey || hasSoundcoreKey || hasGoogleMeet) && (
         <div style={s.userMenuSourceSection}>
           <span style={s.userMenuLabel}>Sources</span>
           {hasKey && tcw && (
@@ -1915,6 +2104,22 @@ export function App() {
               Disconnect Granola
             </button>
           )}
+          {hasSoundcoreKey && tcw && (
+            <button
+              type="button"
+              style={s.userMenuAction}
+              onClick={async () => {
+                for (const secretName of SOUNDCORE_DELEGATED_SECRET_NAMES) {
+                  const result = await tcw.secrets.delete(secretName);
+                  if (!result.ok) throw new Error(result.error.message);
+                }
+                setHasSoundcoreKey(false);
+                setHasSoundcoreBackendAccess(null);
+              }}
+            >
+              Disconnect Soundcore
+            </button>
+          )}
           {hasGoogleMeet && (
             <button
               type="button"
@@ -1936,6 +2141,7 @@ export function App() {
     (!showWorkspaceLoading || showOptimisticInbox) &&
     !needsFirefliesAccess &&
     !needsGranolaAccess &&
+    !needsSoundcoreAccess &&
     !showOnboarding &&
     !showWalletSetupState &&
     !showSourcesSetup &&
@@ -1950,9 +2156,11 @@ export function App() {
         refreshKey={refreshKey}
         hasFireflies={firefliesConnected}
         hasGranola={granolaConnected}
+        hasSoundcore={soundcoreConnected}
         hasGoogleMeet={hasGoogleMeet === true}
         hasFirefliesBackendAccess={hasFirefliesBackendAccess === true}
         hasGranolaBackendAccess={hasGranolaBackendAccess === true}
+        hasSoundcoreBackendAccess={hasSoundcoreBackendAccess === true}
         hasAssemblyAIKey={hasTranscriptionKeys.assemblyai}
         hasAssemblyAIBackendAccess={hasTranscriptionBackendAccess.assemblyai}
         hasDeepgramKey={hasTranscriptionKeys.deepgram}
@@ -1981,14 +2189,21 @@ export function App() {
     >
       {showWorkspaceLoading && !showOptimisticInbox && <WorkspaceStatusPanel mode="checking" />}
 
-      {showBackendOfflineState && <WorkspaceStatusPanel mode="backend-offline" />}
+      {showBackendOfflineState && (
+        <WorkspaceStatusPanel
+          mode="backend-offline"
+          loading={authLoading}
+          error={authError}
+          onAction={() => void handleSignIn({ forceWallet: true })}
+        />
+      )}
 
       {needsFirefliesAccess && (
         <WorkspaceStatusPanel
           mode="fireflies-access"
           loading={workspaceActionLoading}
           error={workspaceActionError}
-          onAction={handleFinishFirefliesAccess}
+          onAction={handleFinishMissingSourceAccess}
         />
       )}
 
@@ -1997,20 +2212,16 @@ export function App() {
           mode="granola-access"
           loading={workspaceActionLoading}
           error={workspaceActionError}
-          onAction={async () => {
-            setWorkspaceActionLoading(true);
-            setWorkspaceActionError(null);
-            try {
-              await ensureGranolaBackendAccess();
-              setHasBackendDelegation(true);
-              setHasGranolaBackendAccess(true);
-              setRefreshKey((k) => k + 1);
-            } catch (err) {
-              setWorkspaceActionError(err instanceof Error ? err.message : String(err));
-            } finally {
-              setWorkspaceActionLoading(false);
-            }
-          }}
+          onAction={handleFinishMissingSourceAccess}
+        />
+      )}
+
+      {needsSoundcoreAccess && (
+        <WorkspaceStatusPanel
+          mode="soundcore-access"
+          loading={workspaceActionLoading}
+          error={workspaceActionError}
+          onAction={handleFinishMissingSourceAccess}
         />
       )}
 
@@ -2030,11 +2241,13 @@ export function App() {
           mode="onboarding"
           hasFirefliesKey={hasKey}
           hasGranolaKey={hasGranolaKey}
+          hasSoundcoreKey={hasSoundcoreKey}
           hasAssemblyAIKey={hasTranscriptionKeys.assemblyai}
           hasDeepgramKey={hasTranscriptionKeys.deepgram}
           hasBackendDelegation={hasBackendDelegation}
           hasFirefliesBackendAccess={hasFirefliesBackendAccess}
           hasGranolaBackendAccess={hasGranolaBackendAccess}
+          hasSoundcoreBackendAccess={hasSoundcoreBackendAccess}
           hasAssemblyAIBackendAccess={hasTranscriptionBackendAccess.assemblyai}
           hasDeepgramBackendAccess={hasTranscriptionBackendAccess.deepgram}
           hasGoogleMeet={hasGoogleMeet}
@@ -2042,7 +2255,12 @@ export function App() {
           onEnsureBackendAccess={ensureBackendAccess}
           onEnsureFirefliesBackendAccess={ensureFirefliesBackendAccess}
           onEnsureGranolaBackendAccess={ensureGranolaBackendAccess}
+          onEnsureSoundcoreBackendAccess={ensureSoundcoreBackendAccess}
           onEnsureSecretBackendAccess={ensureSecretBackendAccess}
+          onSoundcoreCredentialsSaved={() => {
+            setHasSoundcoreKey(true);
+            setHasSoundcoreBackendAccess(false);
+          }}
           onFirefliesComplete={() => {
             setHasKey(true);
             setHasBackendDelegation(true);
@@ -2054,6 +2272,13 @@ export function App() {
             setHasGranolaKey(true);
             setHasBackendDelegation(true);
             setHasGranolaBackendAccess(true);
+            setRefreshKey((k) => k + 1);
+            setActivePage("inbox");
+          }}
+          onSoundcoreComplete={() => {
+            setHasSoundcoreKey(true);
+            setHasBackendDelegation(true);
+            setHasSoundcoreBackendAccess(true);
             setRefreshKey((k) => k + 1);
             setActivePage("inbox");
           }}
@@ -2083,11 +2308,13 @@ export function App() {
           mode="sources"
           hasFirefliesKey={hasKey}
           hasGranolaKey={hasGranolaKey}
+          hasSoundcoreKey={hasSoundcoreKey}
           hasAssemblyAIKey={hasTranscriptionKeys.assemblyai}
           hasDeepgramKey={hasTranscriptionKeys.deepgram}
           hasBackendDelegation={hasBackendDelegation}
           hasFirefliesBackendAccess={hasFirefliesBackendAccess}
           hasGranolaBackendAccess={hasGranolaBackendAccess}
+          hasSoundcoreBackendAccess={hasSoundcoreBackendAccess}
           hasAssemblyAIBackendAccess={hasTranscriptionBackendAccess.assemblyai}
           hasDeepgramBackendAccess={hasTranscriptionBackendAccess.deepgram}
           hasGoogleMeet={hasGoogleMeet}
@@ -2095,7 +2322,12 @@ export function App() {
           onEnsureBackendAccess={ensureBackendAccess}
           onEnsureFirefliesBackendAccess={ensureFirefliesBackendAccess}
           onEnsureGranolaBackendAccess={ensureGranolaBackendAccess}
+          onEnsureSoundcoreBackendAccess={ensureSoundcoreBackendAccess}
           onEnsureSecretBackendAccess={ensureSecretBackendAccess}
+          onSoundcoreCredentialsSaved={() => {
+            setHasSoundcoreKey(true);
+            setHasSoundcoreBackendAccess(false);
+          }}
           onFirefliesComplete={() => {
             setHasKey(true);
             setHasBackendDelegation(true);
@@ -2107,6 +2339,13 @@ export function App() {
             setHasGranolaKey(true);
             setHasBackendDelegation(true);
             setHasGranolaBackendAccess(true);
+            setRefreshKey((k) => k + 1);
+            setActivePage("inbox");
+          }}
+          onSoundcoreComplete={() => {
+            setHasSoundcoreKey(true);
+            setHasBackendDelegation(true);
+            setHasSoundcoreBackendAccess(true);
             setRefreshKey((k) => k + 1);
             setActivePage("inbox");
           }}
@@ -2185,9 +2424,20 @@ export function App() {
           {backendUnavailable && (
             <div style={s.pendingBanner}>
               <span>
-                Backend offline. Sync and source setup are unavailable; inbox reads directly from
-                TinyCloud.
+                {authError
+                  ? `Backend reconnect failed: ${authError}`
+                  : "Backend offline. Sync and source setup are unavailable; inbox reads directly from TinyCloud."}
               </span>
+              <button
+                type="button"
+                style={
+                  authLoading ? { ...s.statusButton, ...s.statusButtonDisabled } : s.statusButton
+                }
+                disabled={authLoading}
+                onClick={() => void handleSignIn({ forceWallet: true })}
+              >
+                {authLoading ? "Connecting..." : "Reconnect backend"}
+              </button>
             </div>
           )}
           {api && hasUsableInbox && (
@@ -2198,6 +2448,7 @@ export function App() {
               onSyncComplete={() => setRefreshKey((k) => k + 1)}
               hasFireflies={firefliesConnected}
               hasGranola={granolaConnected}
+              hasSoundcore={soundcoreConnected}
               hasGoogleMeet={hasGoogleMeet === true}
             />
           )}
@@ -2241,15 +2492,22 @@ export function App() {
           api={api}
           hasFireflies={firefliesConnected}
           hasGranola={granolaConnected}
+          hasSoundcore={soundcoreConnected}
+          hasSoundcoreCredentials={hasSoundcoreKey === true}
           hasGoogleMeet={hasGoogleMeet === true}
           hasFirefliesBackendAccess={hasFirefliesBackendAccess === true}
           hasGranolaBackendAccess={hasGranolaBackendAccess === true}
+          hasSoundcoreBackendAccess={hasSoundcoreBackendAccess === true}
           hasAssemblyAIKey={hasTranscriptionKeys.assemblyai}
           hasAssemblyAIBackendAccess={hasTranscriptionBackendAccess.assemblyai}
           hasDeepgramKey={hasTranscriptionKeys.deepgram}
           hasDeepgramBackendAccess={hasTranscriptionBackendAccess.deepgram}
           googleMeetAvailable={googleMeetAvailable}
           onAddSource={() => openSourcesSetup()}
+          onConnectSoundcore={() => openSourcesSetup("soundcore-key")}
+          onFinishSoundcoreAccess={async () => {
+            await handleFinishMissingSourceAccess();
+          }}
           onAddTranscript={() => openSourcesSetup("transcript-import")}
           onFinishTranscriptionProviderAccess={(provider) =>
             ensureSecretBackendAccess(

@@ -61,6 +61,7 @@ function srcLabel(s: string): string {
   if (s === "recorder") return "RECORDER";
   if (s === "voice_memos") return "VOICE MEMOS";
   if (s === "voxterm") return "VOXTERM";
+  if (s === "soundcore_sync") return "SOUNDCORE";
   return s.toUpperCase();
 }
 
