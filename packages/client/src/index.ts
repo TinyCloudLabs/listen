@@ -21,6 +21,35 @@ export {
 } from "./manifest.js";
 
 export {
+  LISTEN_CONTENT_SPACE,
+  LISTEN_CONVERSATIONS_SQL_PATH,
+  LISTEN_RESOURCE_PREFIX,
+  LISTEN_TRANSCRIPT_CONVERSATION_COLUMNS,
+  LISTEN_TRANSCRIPT_PARTICIPANT_COLUMNS,
+  LISTEN_TRANSCRIPT_RESOURCE_TYPE,
+  LISTEN_TRANSCRIPT_SQL_STATEMENT_TEMPLATES,
+  LISTEN_TRANSCRIPT_STATEMENT_NAMES,
+  createListenTranscriptResourceBinding,
+  listenTranscriptResourceId,
+  listenTranscriptSqlInvokeRequests,
+  reconstructListenTranscriptLandingPage,
+  type ListenTranscriptConversation,
+  type ListenTranscriptLandingPage,
+  type ListenTranscriptParticipant,
+  type ListenTranscriptResourceBinding,
+  type ListenTranscriptSentence,
+  type ListenTranscriptSqlCapability,
+  type ListenTranscriptSqlInvokeRequest,
+  type ListenTranscriptSqlResultMap,
+  type ListenTranscriptSqlStatement,
+  type ListenTranscriptSqlStatementTemplate,
+  type ListenTranscriptStatementName,
+  type SqlConstrainedStatementCaveat,
+  type SqlFixedParam,
+  type SqlRowSet,
+} from "./transcript-binding.js";
+
+export {
   loadPersistedSession,
   clearPersistedSession,
   type PersistedTinyCloudSession,
