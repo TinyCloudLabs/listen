@@ -2,7 +2,7 @@ import type { TinyCloudWeb } from "@tinycloud/web-sdk";
 import type { ApiClient } from "@listen/client";
 import { normalizeAppRelativeKvKey, resolveAppKvPath, resolveAppSqlPath } from "./appManifest";
 
-const DATABASE_NAME = resolveAppSqlPath("conversations");
+export const DATABASE_NAME = resolveAppSqlPath("conversations");
 const DEFAULT_LIMIT = 20;
 const DEFAULT_OFFSET = 0;
 const BASE64_AUDIO_STORAGE_ENCODING = "base64-string-kv";
@@ -17,16 +17,16 @@ export interface NormalizedTranscriptSentence {
   language: string | null;
 }
 
-interface TinyCloudSql {
+export interface TinyCloudSql {
   query(sql: string, params?: unknown[]): Promise<unknown>;
 }
 
-interface TinyCloudKv {
+export interface TinyCloudKv {
   get(key: string): Promise<unknown>;
   createSignedReadUrl?: (key: string) => Promise<unknown>;
 }
 
-interface TinyCloudConversationAccess {
+export interface TinyCloudConversationAccess {
   sql: TinyCloudSql;
   kv: TinyCloudKv;
 }
@@ -47,7 +47,7 @@ interface ConversationsResponse {
   source_counts: SourceCount[];
 }
 
-interface DetailResponse {
+export interface DetailResponse {
   conversation: Record<string, unknown>;
   participants: Record<string, unknown>[];
   transcript: unknown;
@@ -451,6 +451,13 @@ async function getConversationDetail(
   const transcript = transcriptRaw == null ? null : normalizeTranscript(transcriptRaw);
 
   return { conversation, participants, transcript };
+}
+
+export async function getConversationDetailFromAccess(
+  access: TinyCloudConversationAccess,
+  id: string,
+): Promise<DetailResponse> {
+  return getConversationDetail(access, { id });
 }
 
 async function getFromTinyCloud(tcw: TinyCloudWeb | null, path: string): Promise<unknown> {

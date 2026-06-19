@@ -3,7 +3,7 @@ import { ThemeToggle } from "./ThemeToggle";
 
 // ── Types ───────────────────────────────────────────────────────────
 
-export type ShellRoute = "inbox" | "chat" | "connections" | "sources";
+export type ShellRoute = "inbox" | "shared" | "chat" | "connections" | "sources";
 
 export type ShellSourceKey = "fireflies" | "granola" | "gmeet";
 
@@ -124,6 +124,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { key: "inbox", label: "Inbox", icon: "inbox" },
+  { key: "shared", label: "Shared", icon: "folder" },
   { key: "chat", label: "Chat", icon: "sparkle" },
 ];
 

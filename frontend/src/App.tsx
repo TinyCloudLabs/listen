@@ -27,12 +27,15 @@ import { ChatScreen } from "./components/ChatScreen";
 import { ConnectionsScreen } from "./components/ConnectionsScreen";
 import { LiveWriteEvents } from "./components/LiveWriteEvents";
 import { ConnectAgentButton } from "./components/ConnectAgentButton";
+import { ConversationShareDialog } from "./components/ConversationShareDialog";
+import { SharedWithMe } from "./components/SharedWithMe";
 import { AppShell, type ShellRoute, type ShellSourceConfig } from "./components/AppShell";
 import { MobileExperience } from "./components/mobile";
 import { useIsMobile } from "./hooks/useIsMobile";
 import { APP_MANIFEST } from "./lib/appManifest";
 import { debugFetch, debugLog, startDebugStep } from "./lib/debug";
 import { createTinyCloudConversationApi } from "./lib/tinycloudConversations";
+import { readShareTokenFromLocation } from "./lib/listenShareLinks";
 
 // ── Environment ─────────────────────────────────────────────────────
 
@@ -728,6 +731,7 @@ export function App() {
   );
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
+  const [shareConversationId, setShareConversationId] = useState<string | null>(null);
   const [pendingBanner, setPendingBanner] = useState<string | null>(null);
   const [gmLapsedBanner, setGmLapsedBanner] = useState(false);
   const [liveWritePathPrefix, setLiveWritePathPrefix] = useState<string | null>(null);
@@ -741,10 +745,15 @@ export function App() {
   const sessionStoreRef = useRef(new SessionStore());
   const isMobile = useIsMobile();
   const chatEnabled = isChatEnabled();
+  const initialShareToken = useMemo(() => readShareTokenFromLocation(), []);
   const conversationApi = useMemo(
     () => (api || tcw ? createTinyCloudConversationApi(api, tcw) : null),
     [api, tcw],
   );
+
+  useEffect(() => {
+    if (initialShareToken) setActivePage("shared");
+  }, [initialShareToken]);
 
   const applyDirectTinyCloudSession = useCallback((addr: string, tcwInstance: TinyCloudWeb) => {
     sessionStoreRef.current.clear();
@@ -1498,16 +1507,19 @@ export function App() {
     workspaceChecksReady &&
     hasGranolaKey === true &&
     (hasBackendDelegation === false || hasGranolaBackendAccess === false);
-  const showWorkspaceLoading = isSignedIn && !workspaceChecksReady;
+  const showSharedPage = activePage === "shared";
+  const showWorkspaceLoading = isSignedIn && !showSharedPage && !workspaceChecksReady;
   const showOnboarding =
     isSignedIn &&
     workspaceChecksReady &&
+    !showSharedPage &&
     !hasUsableInbox &&
     !needsFirefliesAccess &&
     !needsGranolaAccess &&
     setupAvailable;
   const showWalletSetupState =
     isSignedIn &&
+    !showSharedPage &&
     !backendUnavailable &&
     workspaceChecksReady &&
     !hasUsableInbox &&
@@ -1515,15 +1527,17 @@ export function App() {
     !needsGranolaAccess &&
     !setupAvailable;
   const showSourcesSetup =
-    isSignedIn && hasUsableInbox && activePage === "sources" && setupAvailable;
+    isSignedIn && hasUsableInbox && !showSharedPage && activePage === "sources" && setupAvailable;
   const showSourcesWalletState =
     isSignedIn &&
+    !showSharedPage &&
     !backendUnavailable &&
     hasUsableInbox &&
     activePage === "sources" &&
     !setupAvailable;
   const showBackendOfflineState =
     backendUnavailable &&
+    !showSharedPage &&
     workspaceChecksReady &&
     (!hasUsableInbox || activePage === "sources" || activePage === "connections");
   const showOptimisticInbox =
@@ -1539,6 +1553,9 @@ export function App() {
     (hasUsableInbox || showOptimisticInbox);
 
   if (!isSignedIn) {
+    if (initialShareToken) {
+      return <SharedWithMe initialShareToken={initialShareToken} standalone />;
+    }
     return <LandingPage loading={authLoading} error={authError} onSignIn={handleSignIn} />;
   }
 
@@ -1562,11 +1579,13 @@ export function App() {
                   ? "sources / manage"
                   : activePage === "connections"
                     ? "settings / sources"
-                    : activePage === "chat"
-                      ? "library / chat"
-                      : hasUsableInbox || showOptimisticInbox
-                        ? `inbox · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`
-                        : "onboarding / sources";
+                    : activePage === "shared"
+                      ? "library / shared"
+                      : activePage === "chat"
+                        ? "library / chat"
+                        : hasUsableInbox || showOptimisticInbox
+                          ? `inbox · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`
+                          : "onboarding / sources";
   const pageTitle = !isSignedIn
     ? "Capture thoughts. Transform them into insights."
     : selectedConversationId
@@ -1585,11 +1604,13 @@ export function App() {
                   ? "Add sources."
                   : activePage === "connections"
                     ? "Connections."
-                    : activePage === "chat"
-                      ? "Ask your transcripts."
-                      : hasUsableInbox || showOptimisticInbox
-                        ? "Everything you've said."
-                        : "Connect what you already have.";
+                    : activePage === "shared"
+                      ? "Shared with me."
+                      : activePage === "chat"
+                        ? "Ask your transcripts."
+                        : hasUsableInbox || showOptimisticInbox
+                          ? "Everything you've said."
+                          : "Connect what you already have.";
 
   // Nav source dots reflect real connection health only. There's no
   // per-source syncing or error flag at this level, so we set "connected"
@@ -1759,6 +1780,7 @@ export function App() {
   if (
     isMobile &&
     (hasUsableInbox || showOptimisticInbox) &&
+    activePage !== "shared" &&
     (!showWorkspaceLoading || showOptimisticInbox) &&
     !needsFirefliesAccess &&
     !needsGranolaAccess &&
@@ -1994,6 +2016,7 @@ export function App() {
           api={activeConversationApi}
           conversationId={selectedConversationId}
           onBack={() => setSelectedConversationId(null)}
+          onShare={setShareConversationId}
         />
       )}
 
@@ -2037,10 +2060,13 @@ export function App() {
           <ConversationList
             api={activeConversationApi}
             onSelectConversation={setSelectedConversationId}
+            onShareConversation={setShareConversationId}
             refreshKey={refreshKey}
           />
         </>
       )}
+
+      {activePage === "shared" && <SharedWithMe initialShareToken={initialShareToken} />}
 
       {hasUsableInbox &&
         activePage === "chat" &&
@@ -2079,6 +2105,15 @@ export function App() {
             )
           }
           onRefresh={() => setRefreshKey((k) => k + 1)}
+        />
+      )}
+
+      {shareConversationId && (
+        <ConversationShareDialog
+          api={activeConversationApi}
+          tcw={tcw}
+          conversationId={shareConversationId}
+          onClose={() => setShareConversationId(null)}
         />
       )}
     </AppShell>
