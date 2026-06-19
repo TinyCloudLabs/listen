@@ -31,6 +31,7 @@ interface SourceCount {
 interface ConversationListProps {
   api: ApiClient;
   onSelectConversation: (id: string) => void;
+  onShareConversation?: (id: string) => void;
   refreshKey?: number;
 }
 
@@ -76,6 +77,7 @@ async function copyText(text: string): Promise<void> {
 export const ConversationList: FC<ConversationListProps> = ({
   api,
   onSelectConversation,
+  onShareConversation,
   refreshKey,
 }) => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -423,6 +425,20 @@ export const ConversationList: FC<ConversationListProps> = ({
                   <span style={{ flex: 1 }}>Copy summary</span>
                   <span style={s.contextShortcut}>⌘⇧C</span>
                 </button>
+                {onShareConversation && (
+                  <button
+                    type="button"
+                    style={s.contextItem}
+                    role="menuitem"
+                    onClick={() => {
+                      setContextMenu(null);
+                      onShareConversation(conversation.id);
+                    }}
+                  >
+                    <span style={{ flex: 1 }}>Share</span>
+                    <span style={s.contextShortcut}>link</span>
+                  </button>
+                )}
               </>
             );
           })()}
