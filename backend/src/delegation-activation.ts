@@ -118,21 +118,25 @@ export async function activatePortableDelegation(
     return activateResourceWithContext(node, only.delegation, only.resource);
   }
 
-  const accessByService = new Map<string, DelegatedAccess>();
   const activated = await Promise.all(
     activatableResources.map(async ({ delegation, resource }) => {
       const service = normalizeResourceService(resource.service);
       const access = await activateResourceWithContext(node, delegation, resource);
-      if (!accessByService.has(service)) {
-        accessByService.set(service, access);
-      }
       return { service, resource, access };
     }),
   );
 
+  const accessByService = new Map<string, ActivatedResource>();
+  for (const entry of activated) {
+    const current = accessByService.get(entry.service);
+    if (!current || shouldPreferActivatedResource(entry, current)) {
+      accessByService.set(entry.service, entry);
+    }
+  }
+
   const combined = activated[0].access as DelegatedAccess & Record<string, unknown>;
 
-  for (const [service, access] of accessByService.entries()) {
+  for (const [service, { access }] of accessByService.entries()) {
     if (service === "kv") {
       Object.defineProperty(combined, "kv", { value: access.kv, configurable: true });
     } else if (service === "sql") {
@@ -147,6 +151,20 @@ export async function activatePortableDelegation(
   attachDelegatedSecrets(node, combined, activated);
 
   return combined;
+}
+
+function shouldPreferActivatedResource(
+  candidate: ActivatedResource,
+  current: ActivatedResource,
+): boolean {
+  if (candidate.service !== "kv") return false;
+
+  const candidateIsSecret = isSecretsSpace(candidate.resource.space);
+  const currentIsSecret = isSecretsSpace(current.resource.space);
+  if (currentIsSecret && !candidateIsSecret) return true;
+  if (candidateIsSecret && !currentIsSecret) return false;
+
+  return current.resource.path !== "/" && candidate.resource.path === "/";
 }
 
 function isDelegationBundle(value: unknown): value is DelegationBundle {

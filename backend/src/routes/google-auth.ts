@@ -198,6 +198,9 @@ export function createGoogleAuthRouter(config: GoogleAuthRoutesConfig) {
       console.log("[google-auth] storing tokens in KV...");
       const putResult = await access.kv.put(GOOGLE_TOKENS_PATH, JSON.stringify(tokenData));
       console.log("[google-auth] KV put result:", JSON.stringify(putResult));
+      if (!putResult?.ok) {
+        throw new Error(putResult?.error?.message ?? "Failed to store Google tokens");
+      }
 
       // Create Workspace Events subscription if webhooks are enabled
       if (

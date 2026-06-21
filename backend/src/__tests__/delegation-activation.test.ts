@@ -22,6 +22,48 @@ function makeDelegation(
 }
 
 describe("delegation activation secrets", () => {
+  it("uses non-secret app KV for general KV operations when secret resources come first", async () => {
+    const secretPut = mock(async () => ({ ok: true }));
+    const appPut = mock(async () => ({ ok: true }));
+    const useDelegation = mock(async (delegation: any) => ({
+      kv: {
+        get: async () => ({ ok: true, data: { data: null } }),
+        put: delegation.path === "/" ? appPut : secretPut,
+        list: async () => ({ ok: true }),
+      },
+      restorable: { delegationCid: delegation.cid },
+      delegation,
+    }));
+
+    const node = { useDelegation } as any;
+
+    const access = await activatePortableDelegation(node, [
+      makeDelegation(
+        {
+          service: "tinycloud.kv",
+          space: "secrets",
+          path: "vault/secrets/DEEPGRAM_API_KEY",
+          actions: ["tinycloud.kv/get"],
+        },
+        "cid-secret",
+      ),
+      makeDelegation(
+        {
+          service: "tinycloud.kv",
+          space: "applications",
+          path: "/",
+          actions: ["tinycloud.kv/get", "tinycloud.kv/put"],
+        },
+        "cid-app-kv",
+      ),
+    ]);
+
+    await access.kv.put("config/google-tokens", "{}");
+
+    expect(appPut).toHaveBeenCalledTimes(1);
+    expect(secretPut).not.toHaveBeenCalled();
+  });
+
   it("decrypts secret payloads through the TinyCloud encryption service", async () => {
     const envelope = {
       v: 1,
