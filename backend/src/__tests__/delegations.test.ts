@@ -59,7 +59,7 @@ function fullPolicyResources(space = "applications") {
     {
       service: "tinycloud.kv",
       space: "secrets",
-      path: "vault/secrets/GOOGLE_MEET_TOKENS",
+      path: "vault/secrets/scoped/listen/GOOGLE_MEET_TOKENS",
       actions: ["tinycloud.kv/get", "tinycloud.kv/put", "tinycloud.kv/del"],
     },
     {
@@ -403,7 +403,7 @@ describe("Delegation Routes", () => {
         "vault/secrets/ASSEMBLYAI_API_KEY",
         "vault/secrets/DEEPGRAM_API_KEY",
         "vault/secrets/GRANOLA_API_KEY",
-        "vault/secrets/GOOGLE_MEET_TOKENS",
+        "vault/secrets/scoped/listen/GOOGLE_MEET_TOKENS",
       ]);
     });
 
@@ -500,7 +500,7 @@ describe("Delegation Routes", () => {
         {
           service: "tinycloud.kv",
           space: "secrets",
-          path: "vault/secrets/GOOGLE_MEET_TOKENS",
+          path: "vault/secrets/scoped/listen/GOOGLE_MEET_TOKENS",
           actions: ["tinycloud.kv/get", "tinycloud.kv/put", "tinycloud.kv/del"],
         },
         {

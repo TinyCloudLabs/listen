@@ -1,4 +1,9 @@
-import { VaultHeaders, deserializeDelegation, type TinyCloudNode } from "@tinycloud/node-sdk";
+import {
+  VaultHeaders,
+  deserializeDelegation,
+  resolveSecretPath,
+  type TinyCloudNode,
+} from "@tinycloud/node-sdk";
 
 type PortableDelegation = Parameters<TinyCloudNode["useDelegation"]>[0];
 export type PortableDelegationSet = PortableDelegation | PortableDelegation[];
@@ -73,6 +78,10 @@ interface EncryptionCapableNode {
       | { ok: false; error: { code: string; message: string } }
     >;
   };
+}
+
+interface SecretScopeOptions {
+  scope?: string;
 }
 
 export function deserializePortableDelegationSet(serialized: string): PortableDelegationSet {
@@ -266,12 +275,10 @@ function attachDelegatedSecrets(
   if (secretResources.length === 0) return;
 
   const secrets = {
-    get: async (name: string) => {
-      if (!/^[A-Z][A-Z0-9_]*$/.test(name)) {
-        return secretError(`Invalid secret name: ${name}`);
-      }
-
-      const secretKey = `vault/secrets/${name}`;
+    get: async (name: string, options?: SecretScopeOptions) => {
+      const pathResult = delegatedSecretPath(name, options);
+      if (!pathResult.ok) return pathResult;
+      const { secretKey } = pathResult.data;
       const match = findSecretResource(secretResources, secretKey, "tinycloud.kv/get");
       if (!match) {
         return secretError(`No delegated secret read permission for ${secretKey}`, "KEY_NOT_FOUND");
@@ -311,13 +318,10 @@ function attachDelegatedSecrets(
 
       return { ok: true, data: valueResult.data };
     },
-    put: async (name: string, value: string) => {
-      if (!/^[A-Z][A-Z0-9_]*$/.test(name)) {
-        return secretError(`Invalid secret name: ${name}`);
-      }
-
-      const vaultKey = `secrets/${name}`;
-      const secretKey = `vault/${vaultKey}`;
+    put: async (name: string, value: string, options?: SecretScopeOptions) => {
+      const pathResult = delegatedSecretPath(name, options);
+      if (!pathResult.ok) return pathResult;
+      const { vaultKey, secretKey } = pathResult.data;
       const match = findSecretResource(secretResources, secretKey, "tinycloud.kv/put");
       if (!match) {
         return secretError(`No delegated secret write permission for ${secretKey}`, "AUTH_DENIED");
@@ -369,12 +373,10 @@ function attachDelegatedSecrets(
 
       return { ok: true, data: undefined };
     },
-    delete: async (name: string) => {
-      if (!/^[A-Z][A-Z0-9_]*$/.test(name)) {
-        return secretError(`Invalid secret name: ${name}`);
-      }
-
-      const secretKey = `vault/secrets/${name}`;
+    delete: async (name: string, options?: SecretScopeOptions) => {
+      const pathResult = delegatedSecretPath(name, options);
+      if (!pathResult.ok) return pathResult;
+      const { secretKey } = pathResult.data;
       const match = findSecretResource(secretResources, secretKey, "tinycloud.kv/del");
       if (!match) {
         return secretError(`No delegated secret delete permission for ${secretKey}`, "AUTH_DENIED");
@@ -394,6 +396,24 @@ function attachDelegatedSecrets(
   };
 
   Object.defineProperty(combined, "secrets", { value: secrets, configurable: true });
+}
+
+function delegatedSecretPath(
+  name: string,
+  options?: SecretScopeOptions,
+): { ok: true; data: { vaultKey: string; secretKey: string } } | ReturnType<typeof secretError> {
+  try {
+    const resolved = resolveSecretPath(name, options);
+    return {
+      ok: true,
+      data: {
+        vaultKey: resolved.vaultKey,
+        secretKey: resolved.permissionPaths.vault,
+      },
+    };
+  } catch (err) {
+    return secretError(err instanceof Error ? err.message : String(err), "INVALID_SECRET_NAME");
+  }
 }
 
 function parseEncryptedEnvelope(

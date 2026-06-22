@@ -6,12 +6,16 @@ import {
   canonicalizeNetworkId,
   isCapabilitySubset,
   resolveManifest,
+  resolveSecretPath,
   validateManifest,
   type Manifest,
   type PermissionEntry,
 } from "@tinycloud/sdk-core";
 import type { ServerInfoPermission } from "@listen/core";
-import { GOOGLE_MEET_TOKENS_SECRET_NAME } from "./services/google-tokens.js";
+import {
+  GOOGLE_MEET_TOKENS_SECRET_NAME,
+  GOOGLE_MEET_TOKENS_SECRET_SCOPE,
+} from "./services/google-tokens.js";
 
 export interface DescribedPermissionEntry extends PermissionEntry {
   description?: string;
@@ -56,6 +60,7 @@ const BACKEND_SECRET_GRANTS = [
   })),
   {
     name: GOOGLE_MEET_TOKENS_SECRET_NAME,
+    scope: GOOGLE_MEET_TOKENS_SECRET_SCOPE,
     actions: ["get", "put", "del"],
     description: "Read, write, and delete encrypted Google Meet OAuth tokens.",
   },
@@ -69,15 +74,15 @@ function defaultEncryptionNetworkId(ownerDid: string): string {
   return `urn:tinycloud:encryption:${ownerDid}:default`;
 }
 
-function secretVaultKey(secretName: string): string {
-  return `secrets/${secretName}`;
+function secretVaultPath(secretName: string, scope?: string): string {
+  return resolveSecretPath(secretName, scope ? { scope } : undefined).permissionPaths.vault;
 }
 
 function backendSecretPermissions(): ServerInfoPermission[] {
   return BACKEND_SECRET_GRANTS.map((grant) => ({
     service: "tinycloud.kv",
     space: "secrets",
-    path: `vault/${secretVaultKey(grant.name)}`,
+    path: secretVaultPath(grant.name, "scope" in grant ? grant.scope : undefined),
     actions: [...grant.actions],
     skipPrefix: true,
     description: grant.description,

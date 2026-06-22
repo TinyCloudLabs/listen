@@ -1,9 +1,27 @@
 import type { DelegatedAccess } from "@listen/server";
 
 interface DelegatedSecrets {
-  get(name: string): Promise<{
+  get(
+    name: string,
+    options?: { scope?: string },
+  ): Promise<{
     ok: boolean;
     data?: string;
+    error?: { code?: string; message?: string };
+  }>;
+  put?(
+    name: string,
+    value: string,
+    options?: { scope?: string },
+  ): Promise<{
+    ok: boolean;
+    error?: { code?: string; message?: string };
+  }>;
+  delete?(
+    name: string,
+    options?: { scope?: string },
+  ): Promise<{
+    ok: boolean;
     error?: { code?: string; message?: string };
   }>;
 }

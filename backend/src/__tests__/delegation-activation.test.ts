@@ -207,13 +207,13 @@ describe("delegation activation secrets", () => {
       metadata: {},
     };
     const kvPut = mock(async (key: string, value: string, options?: { prefix?: string }) => {
-      expect(key).toBe("vault/secrets/GOOGLE_MEET_TOKENS");
+      expect(key).toBe("vault/secrets/scoped/listen/GOOGLE_MEET_TOKENS");
       expect(JSON.parse(value)).toEqual(envelope);
       expect(options).toEqual({ prefix: "" });
       return { ok: true };
     });
     const kvDelete = mock(async (key: string, options?: { prefix?: string }) => {
-      expect(key).toBe("vault/secrets/GOOGLE_MEET_TOKENS");
+      expect(key).toBe("vault/secrets/scoped/listen/GOOGLE_MEET_TOKENS");
       expect(options).toEqual({ prefix: "" });
       return { ok: true };
     });
@@ -224,7 +224,7 @@ describe("delegation activation secrets", () => {
           value: '{"access_token":"ya29.test"}',
         });
         expect(new TextDecoder().decode(options.aad)).toBe(
-          `tinycloud.vault:${TEST_DID}:applications:secrets/GOOGLE_MEET_TOKENS`,
+          `tinycloud.vault:${TEST_DID}:applications:secrets/scoped/listen/GOOGLE_MEET_TOKENS`,
         );
         return { ok: true, data: envelope };
       },
@@ -255,7 +255,7 @@ describe("delegation activation secrets", () => {
         {
           service: "tinycloud.kv",
           space: "secrets",
-          path: "vault/secrets/GOOGLE_MEET_TOKENS",
+          path: "vault/secrets/scoped/listen/GOOGLE_MEET_TOKENS",
           actions: ["tinycloud.kv/get", "tinycloud.kv/put", "tinycloud.kv/del"],
         },
         "cid-secret",
@@ -271,11 +271,15 @@ describe("delegation activation secrets", () => {
       ),
     ]);
 
-    expect(await access.secrets.put("GOOGLE_MEET_TOKENS", '{"access_token":"ya29.test"}')).toEqual({
+    expect(
+      await access.secrets.put("GOOGLE_MEET_TOKENS", '{"access_token":"ya29.test"}', {
+        scope: "listen",
+      }),
+    ).toEqual({
       ok: true,
       data: undefined,
     });
-    expect(await access.secrets.delete("GOOGLE_MEET_TOKENS")).toEqual({
+    expect(await access.secrets.delete("GOOGLE_MEET_TOKENS", { scope: "listen" })).toEqual({
       ok: true,
       data: undefined,
     });

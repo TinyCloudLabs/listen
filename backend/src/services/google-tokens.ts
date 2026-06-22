@@ -2,6 +2,7 @@ import type { DelegatedAccess } from "@listen/server";
 import type { GoogleTokenResponse } from "./google-auth.js";
 
 export const GOOGLE_MEET_TOKENS_SECRET_NAME = "GOOGLE_MEET_TOKENS";
+export const GOOGLE_MEET_TOKENS_SECRET_SCOPE = "listen";
 export const LEGACY_GOOGLE_TOKENS_PATH = "config/google-tokens";
 
 export interface StoredGoogleTokens extends GoogleTokenResponse {
@@ -9,9 +10,9 @@ export interface StoredGoogleTokens extends GoogleTokenResponse {
 }
 
 interface SecretAccess {
-  get(name: string): Promise<any>;
-  put?(name: string, value: string): Promise<any>;
-  delete?(name: string): Promise<any>;
+  get(name: string, options?: { scope?: string }): Promise<any>;
+  put?(name: string, value: string, options?: { scope?: string }): Promise<any>;
+  delete?(name: string, options?: { scope?: string }): Promise<any>;
 }
 
 type GoogleTokenAccess = DelegatedAccess & {
@@ -43,7 +44,9 @@ export async function readGoogleTokens(
   access: GoogleTokenAccess,
 ): Promise<StoredGoogleTokens | null> {
   if (access.secrets?.get) {
-    const result = await access.secrets.get(GOOGLE_MEET_TOKENS_SECRET_NAME);
+    const result = await access.secrets.get(GOOGLE_MEET_TOKENS_SECRET_NAME, {
+      scope: GOOGLE_MEET_TOKENS_SECRET_SCOPE,
+    });
     if (result?.ok) return parseTokens(result.data);
     if (!missingSecret(result)) return null;
   }
@@ -54,7 +57,9 @@ export async function readGoogleTokens(
 
 export async function googleTokensExist(access: GoogleTokenAccess): Promise<boolean | null> {
   if (access.secrets?.get) {
-    const result = await access.secrets.get(GOOGLE_MEET_TOKENS_SECRET_NAME);
+    const result = await access.secrets.get(GOOGLE_MEET_TOKENS_SECRET_NAME, {
+      scope: GOOGLE_MEET_TOKENS_SECRET_SCOPE,
+    });
     if (result?.ok) return Boolean(result.data);
     if (!missingSecret(result)) return null;
   }
@@ -70,7 +75,9 @@ export async function writeGoogleTokens(
 ): Promise<void> {
   const serialized = JSON.stringify(tokens);
   if (access.secrets?.put) {
-    const result = await access.secrets.put(GOOGLE_MEET_TOKENS_SECRET_NAME, serialized);
+    const result = await access.secrets.put(GOOGLE_MEET_TOKENS_SECRET_NAME, serialized, {
+      scope: GOOGLE_MEET_TOKENS_SECRET_SCOPE,
+    });
     if (!result?.ok) {
       throw new Error(
         result?.error?.message ?? "Failed to store Google tokens in TinyCloud Secrets",
@@ -87,7 +94,9 @@ export async function writeGoogleTokens(
 
 export async function deleteGoogleTokens(access: GoogleTokenAccess): Promise<void> {
   if (access.secrets?.delete) {
-    const result = await access.secrets.delete(GOOGLE_MEET_TOKENS_SECRET_NAME);
+    const result = await access.secrets.delete(GOOGLE_MEET_TOKENS_SECRET_NAME, {
+      scope: GOOGLE_MEET_TOKENS_SECRET_SCOPE,
+    });
     if (!result?.ok && !missingSecret(result)) {
       throw new Error(
         result?.error?.message ?? "Failed to delete Google tokens from TinyCloud Secrets",
