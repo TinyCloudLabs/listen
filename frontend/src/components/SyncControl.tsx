@@ -363,17 +363,17 @@ export const SyncControl: FC<SyncControlProps> = ({
     }
   }, []);
 
-  const clearGoogleMeetPoll = useCallback(() => {
-    if (googleMeetPollRef.current != null) {
-      window.clearInterval(googleMeetPollRef.current);
-      googleMeetPollRef.current = null;
-    }
-  }, []);
-
   const clearGranolaPoll = useCallback(() => {
     if (granolaPollRef.current != null) {
       window.clearInterval(granolaPollRef.current);
       granolaPollRef.current = null;
+    }
+  }, []);
+
+  const clearGoogleMeetPoll = useCallback(() => {
+    if (googleMeetPollRef.current != null) {
+      window.clearInterval(googleMeetPollRef.current);
+      googleMeetPollRef.current = null;
     }
   }, []);
 
@@ -1279,11 +1279,9 @@ export const SyncControl: FC<SyncControlProps> = ({
   const queuedLabel =
     syncSource === "google-meet"
       ? "Queued Google Meet sync"
-      : syncSource === "granola"
-        ? "Queued Granola sync"
-        : syncSource === "fireflies"
-          ? "Queued Fireflies sync"
-          : "Queued sync";
+      : syncSource === "fireflies"
+        ? "Queued Fireflies sync"
+        : "Queued sync";
 
   // ── Render ────────────────────────────────────────────────────────
 
@@ -1373,9 +1371,7 @@ export const SyncControl: FC<SyncControlProps> = ({
               "Checking transcript history\u2026"
             )}
           </p>
-          {(syncSource === "fireflies" ||
-            syncSource === "granola" ||
-            syncSource === "google-meet") && (
+          {(syncSource === "fireflies" || syncSource === "google-meet") && (
             <p style={s.phaseSubtle}>The backend will keep syncing if this page reloads.</p>
           )}
         </div>

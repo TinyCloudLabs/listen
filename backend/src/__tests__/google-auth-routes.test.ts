@@ -7,7 +7,7 @@ import type { GoogleTokenResponse } from "../services/google-auth.js";
 
 // ── Mock KV Store ────────────────────────────────────────────────────
 
-function createMockKV() {
+function createMockKV(opts?: { put?: (key: string, value: string) => Promise<unknown> }) {
   const data = new Map<string, string>();
 
   return {
@@ -18,6 +18,7 @@ function createMockKV() {
       return { ok: true, data: { data: val } };
     },
     put: async (key: string, value: string) => {
+      if (opts?.put) return opts.put(key, value);
       data.set(key, value);
       return { ok: true };
     },
@@ -31,11 +32,12 @@ function createMockKV() {
 // ── Test Helpers ─────────────────────────────────────────────────────
 
 const TEST_SUB = "test-user-sub";
+const TEST_ADDRESS = "0xtest-user-address";
 const TOKENS_KV_PATH = "config/google-tokens";
 const TEST_CLIENT_ID = "test-client-id.apps.googleusercontent.com";
 
 function mockAuthMiddleware(req: Request, _res: Response, next: NextFunction) {
-  req.user = { sub: TEST_SUB };
+  req.user = { sub: TEST_SUB, address: TEST_ADDRESS };
   next();
 }
 
@@ -71,6 +73,7 @@ function createApp(
       delegationMiddleware: createMockDelegationMiddleware(mockKV),
       resolveDelegation: async (_sub: string) => ({ kv: mockKV }) as any,
       exchangeCode: opts?.exchangeCode ?? (async () => DEFAULT_TOKEN_RESPONSE),
+      fetchGoogleUserInfo: async () => ({ sub: "google-user-id" }),
     }),
   );
 
@@ -280,6 +283,29 @@ describe("Google Auth Routes", () => {
       expect(res.status).toBe(200); // Still 200, shows error in HTML popup
       const html = await res.text();
       expect(html).toContain("google-auth-error");
+    });
+
+    it("returns error HTML when token storage fails", async () => {
+      await closeServer(server);
+      mockKV = createMockKV({
+        put: async () => ({
+          ok: false,
+          error: { message: "Unauthorized Action" },
+        }),
+      });
+      const app = createApp(mockKV);
+      ({ server, port } = await startServer(app));
+
+      const state = await initiateAuth();
+      const res = await fetch(
+        `http://localhost:${port}/api/auth/google/callback?code=test-code&state=${state}`,
+        { redirect: "manual" },
+      );
+
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).toContain("google-auth-error");
+      expect(html).not.toContain("google-auth-success");
     });
   });
 

@@ -4,7 +4,12 @@ import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
 
 const TEST_ADDRESS = "0xTEST";
 const TEST_DID = "did:pkh:eip155:1:0xTEST";
-const SECRET_NAMES = ["FIREFLIES_API_KEY", "ASSEMBLYAI_API_KEY", "DEEPGRAM_API_KEY"];
+const SECRET_NAMES = [
+  "FIREFLIES_API_KEY",
+  "ASSEMBLYAI_API_KEY",
+  "DEEPGRAM_API_KEY",
+  "GRANOLA_API_KEY",
+];
 const DEFAULT_ENCRYPTION_NETWORK_ID = `urn:tinycloud:encryption:${TEST_DID}:default`;
 
 function fullPolicyResources(space = "applications") {
@@ -54,8 +59,8 @@ function fullPolicyResources(space = "applications") {
     {
       service: "tinycloud.kv",
       space: "secrets",
-      path: "vault/secrets/GRANOLA_API_KEY",
-      actions: ["tinycloud.kv/get"],
+      path: "vault/secrets/scoped/listen/GOOGLE_MEET_TOKENS",
+      actions: ["tinycloud.kv/get", "tinycloud.kv/put", "tinycloud.kv/del"],
     },
     {
       service: "tinycloud.capabilities",
@@ -389,7 +394,7 @@ describe("Delegation Routes", () => {
         body: JSON.stringify({ serialized: "activatable" }),
       });
 
-      expect(mockUseDelegation).toHaveBeenCalledTimes(7);
+      expect(mockUseDelegation).toHaveBeenCalledTimes(8);
       expect(mockUseDelegation.mock.calls.map((call) => call[0].path)).toEqual([
         "xyz.tinycloud.listen/",
         "xyz.tinycloud.listen/conversations",
@@ -398,6 +403,7 @@ describe("Delegation Routes", () => {
         "vault/secrets/ASSEMBLYAI_API_KEY",
         "vault/secrets/DEEPGRAM_API_KEY",
         "vault/secrets/GRANOLA_API_KEY",
+        "vault/secrets/scoped/listen/GOOGLE_MEET_TOKENS",
       ]);
     });
 
@@ -415,7 +421,7 @@ describe("Delegation Routes", () => {
       expect(stored!.actions).toContain("tinycloud.sql/write");
       expect(stored!.path).toContain("tinycloud.sql:xyz.tinycloud.listen/conversations");
       expect(stored!.policyHash).toBeDefined();
-      expect(stored!.resources?.length).toBe(10);
+      expect(stored!.resources?.length).toBe(11);
     });
 
     it("accepts SDK portable resources with short service names and fully qualified spaces", async () => {
@@ -494,8 +500,8 @@ describe("Delegation Routes", () => {
         {
           service: "tinycloud.kv",
           space: "secrets",
-          path: "vault/secrets/GRANOLA_API_KEY",
-          actions: ["tinycloud.kv/get"],
+          path: "vault/secrets/scoped/listen/GOOGLE_MEET_TOKENS",
+          actions: ["tinycloud.kv/get", "tinycloud.kv/put", "tinycloud.kv/del"],
         },
         {
           service: "tinycloud.capabilities",

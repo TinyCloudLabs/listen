@@ -8,7 +8,11 @@
     "FIREFLIES_API_KEY": ["read"],
     "GRANOLA_API_KEY": ["read"],
     "ASSEMBLYAI_API_KEY": ["read"],
-    "DEEPGRAM_API_KEY": ["read"]
+    "DEEPGRAM_API_KEY": ["read"],
+    "GOOGLE_MEET_TOKENS": {
+      "scope": "listen",
+      "actions": ["read", "write", "delete"]
+    }
   },
   "permissions": [
     {

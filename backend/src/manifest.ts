@@ -6,11 +6,16 @@ import {
   canonicalizeNetworkId,
   isCapabilitySubset,
   resolveManifest,
+  resolveSecretPath,
   validateManifest,
   type Manifest,
   type PermissionEntry,
 } from "@tinycloud/sdk-core";
 import type { ServerInfoPermission } from "@listen/core";
+import {
+  GOOGLE_MEET_TOKENS_SECRET_NAME,
+  GOOGLE_MEET_TOKENS_SECRET_SCOPE,
+} from "./services/google-tokens.js";
 
 export interface DescribedPermissionEntry extends PermissionEntry {
   description?: string;
@@ -37,10 +42,28 @@ export const FIREFLIES_SECRET_VAULT_KEY = `secrets/${FIREFLIES_SECRET_NAME}`;
 export const GRANOLA_SECRET_NAME = "GRANOLA_API_KEY";
 export const GRANOLA_SECRET_VAULT_KEY = `secrets/${GRANOLA_SECRET_NAME}`;
 export const TRANSCRIPTION_SECRET_NAMES = ["ASSEMBLYAI_API_KEY", "DEEPGRAM_API_KEY"] as const;
-const BACKEND_SECRET_NAMES = [
-  FIREFLIES_SECRET_NAME,
-  GRANOLA_SECRET_NAME,
-  ...TRANSCRIPTION_SECRET_NAMES,
+const BACKEND_SECRET_GRANTS = [
+  {
+    name: FIREFLIES_SECRET_NAME,
+    actions: ["get"],
+    description: `Read the encrypted ${FIREFLIES_SECRET_NAME} payload for backend workflows.`,
+  },
+  {
+    name: GRANOLA_SECRET_NAME,
+    actions: ["get"],
+    description: `Read the encrypted ${GRANOLA_SECRET_NAME} payload for backend workflows.`,
+  },
+  ...TRANSCRIPTION_SECRET_NAMES.map((name) => ({
+    name,
+    actions: ["get"],
+    description: `Read the encrypted ${name} payload for backend workflows.`,
+  })),
+  {
+    name: GOOGLE_MEET_TOKENS_SECRET_NAME,
+    scope: GOOGLE_MEET_TOKENS_SECRET_SCOPE,
+    actions: ["get", "put", "del"],
+    description: "Read, write, and delete encrypted Google Meet OAuth tokens.",
+  },
 ] as const;
 
 export function ownerDidFromAddress(address: string, chainId = 1): string {
@@ -51,18 +74,18 @@ function defaultEncryptionNetworkId(ownerDid: string): string {
   return `urn:tinycloud:encryption:${ownerDid}:default`;
 }
 
-function secretVaultKey(secretName: string): string {
-  return `secrets/${secretName}`;
+function secretVaultPath(secretName: string, scope?: string): string {
+  return resolveSecretPath(secretName, scope ? { scope } : undefined).permissionPaths.vault;
 }
 
 function backendSecretPermissions(): ServerInfoPermission[] {
-  return BACKEND_SECRET_NAMES.map((secretName) => ({
+  return BACKEND_SECRET_GRANTS.map((grant) => ({
     service: "tinycloud.kv",
     space: "secrets",
-    path: `vault/${secretVaultKey(secretName)}`,
-    actions: ["get"],
+    path: secretVaultPath(grant.name, "scope" in grant ? grant.scope : undefined),
+    actions: [...grant.actions],
     skipPrefix: true,
-    description: `Read the encrypted ${secretName} payload for backend workflows.`,
+    description: grant.description,
   }));
 }
 

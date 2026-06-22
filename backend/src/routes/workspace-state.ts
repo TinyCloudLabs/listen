@@ -10,6 +10,7 @@ import {
 } from "../delegation-activation.js";
 import { withTimeout } from "../middleware/timeout.js";
 import { conversationSql } from "../schema.js";
+import { googleTokensExist } from "../services/google-tokens.js";
 
 interface WorkspaceStateRoutesConfig {
   node: TinyCloudNode;
@@ -20,7 +21,6 @@ interface WorkspaceStateRoutesConfig {
 }
 
 const ACTIVATION_TIMEOUT_MS = 5_000;
-const GOOGLE_TOKENS_PATH = "config/google-tokens";
 const WORKSPACE_SECRET_NAMES: Record<WorkspaceSecretKey, string> = {
   fireflies: "FIREFLIES_API_KEY",
   granola: "GRANOLA_API_KEY",
@@ -216,14 +216,7 @@ async function readGoogleMeetState(
   access: DelegatedAccess,
 ): Promise<Pick<WorkspaceStateResponse["googleMeet"], "connected">> {
   try {
-    const result = await access.kv.get(GOOGLE_TOKENS_PATH);
-    if (!result.ok) {
-      const code = result.error?.code;
-      if (code === "KV_NOT_FOUND") return { connected: false };
-      return { connected: null };
-    }
-
-    return { connected: result.data?.data != null };
+    return { connected: await googleTokensExist(access) };
   } catch {
     return { connected: null };
   }

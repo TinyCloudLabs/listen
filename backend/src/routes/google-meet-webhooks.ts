@@ -13,6 +13,7 @@ import type { SyncSingleResult } from "../services/google-meet-sync.js";
 import { checkAndRenewSubscription as defaultCheckAndRenew } from "../services/pubsub-manager.js";
 import type { SubscriptionMetadata, RenewalResult } from "../services/pubsub-manager.js";
 import { getGoogleMeetWebhooksStatus } from "../services/google-meet-webhooks.js";
+import { readGoogleTokens, writeGoogleTokens } from "../services/google-tokens.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -55,7 +56,6 @@ export interface GoogleMeetPushConfig {
 
 // ── Constants ────────────────────────────────────────────────────────
 
-const GOOGLE_TOKENS_PATH = "config/google-tokens";
 const PENDING_KV_KEY = resolveAppPath("webhooks/pending/google-meet");
 const FAILED_KV_KEY = resolveAppPath("webhooks/failed/google-meet");
 const SUBSCRIPTION_KV_KEY = resolveAppPath("webhooks/config/google-meet-subscription");
@@ -321,22 +321,10 @@ export function createGoogleMeetPushRouter(config: GoogleMeetPushConfig) {
       return;
     }
 
-    // 6. Read Google tokens from user KV
-    const tokensResult = await access.kv.get(GOOGLE_TOKENS_PATH);
-    const tokensRaw = tokensResult.ok && tokensResult.data.data ? tokensResult.data.data : null;
-
-    if (!tokensRaw) {
+    // 6. Read Google tokens from the user's encrypted Listen secret.
+    const tokens = await readGoogleTokens(access);
+    if (!tokens) {
       console.log("[google-meet-webhook] no Google tokens — queuing to pending");
-      await storePending(backendKV, conferenceRecordName);
-      res.json({ status: "pending", reason: "no_google_tokens" });
-      return;
-    }
-
-    let tokens: { access_token: string; refresh_token?: string };
-    try {
-      tokens = JSON.parse(tokensRaw as string);
-    } catch {
-      console.log("[google-meet-webhook] invalid token JSON — queuing to pending");
       await storePending(backendKV, conferenceRecordName);
       res.json({ status: "pending", reason: "no_google_tokens" });
       return;
@@ -364,7 +352,7 @@ export function createGoogleMeetPushRouter(config: GoogleMeetPushConfig) {
     // 8. Create client with token refresh callback
     const onTokenRefresh = async (newToken: string) => {
       const updated = { ...tokens, access_token: newToken };
-      await access.kv.put(GOOGLE_TOKENS_PATH, JSON.stringify(updated));
+      await writeGoogleTokens(access, updated);
     };
 
     const client = createClient(tokens.access_token, onTokenRefresh, tokens.refresh_token);
@@ -425,22 +413,12 @@ export function createGoogleMeetPushRouter(config: GoogleMeetPushConfig) {
         return;
       }
 
-      // 2. Read Google tokens from user KV
-      const tokensResult = await access.kv.get(GOOGLE_TOKENS_PATH);
-      const tokensRaw = tokensResult.ok && tokensResult.data.data ? tokensResult.data.data : null;
-
-      if (!tokensRaw) {
+      // 2. Read Google tokens from the user's encrypted Listen secret.
+      const tokens = await readGoogleTokens(access);
+      if (!tokens) {
         res
           .status(400)
           .json({ error: "no_google_tokens", message: "Google tokens not configured" });
-        return;
-      }
-
-      let tokens: { access_token: string; refresh_token?: string };
-      try {
-        tokens = JSON.parse(tokensRaw as string);
-      } catch {
-        res.status(400).json({ error: "no_google_tokens", message: "Invalid Google token data" });
         return;
       }
 
@@ -448,7 +426,7 @@ export function createGoogleMeetPushRouter(config: GoogleMeetPushConfig) {
       await ensureSchema(access);
       const onTokenRefresh = async (newToken: string) => {
         const updated = { ...tokens, access_token: newToken };
-        await access.kv.put(GOOGLE_TOKENS_PATH, JSON.stringify(updated));
+        await writeGoogleTokens(access, updated);
       };
       const client = createClient(tokens.access_token, onTokenRefresh, tokens.refresh_token);
 
@@ -501,23 +479,13 @@ export function createGoogleMeetPushRouter(config: GoogleMeetPushConfig) {
         return;
       }
 
-      // 2. Read Google tokens from user KV
+      // 2. Read Google tokens from the user's encrypted Listen secret.
       const access = req.delegatedAccess!;
-      const tokensResult = await access.kv.get(GOOGLE_TOKENS_PATH);
-      const tokensRaw = tokensResult.ok && tokensResult.data.data ? tokensResult.data.data : null;
-
-      if (!tokensRaw) {
+      const tokens = await readGoogleTokens(access);
+      if (!tokens) {
         res
           .status(400)
           .json({ error: "no_google_tokens", message: "Google tokens not configured" });
-        return;
-      }
-
-      let tokens: { access_token: string };
-      try {
-        tokens = JSON.parse(tokensRaw as string);
-      } catch {
-        res.status(400).json({ error: "no_google_tokens", message: "Invalid Google token data" });
         return;
       }
 
@@ -570,29 +538,23 @@ export function createGoogleMeetPushRouter(config: GoogleMeetPushConfig) {
         }
       }
 
-      const tokensResult = await req.delegatedAccess!.kv.get(GOOGLE_TOKENS_PATH);
+      const tokens = await readGoogleTokens(req.delegatedAccess!);
       let googleTokens = {
-        exists: Boolean(tokensResult.ok && tokensResult.data.data),
+        exists: Boolean(tokens),
         parseable: false,
         hasAccessToken: false,
         hasRefreshToken: false,
         hasGoogleUserId: false,
       };
 
-      if (tokensResult.ok && tokensResult.data.data) {
-        try {
-          const tokens = JSON.parse(tokensResult.data.data as string) as Record<string, unknown>;
-          googleTokens = {
-            exists: true,
-            parseable: true,
-            hasAccessToken: typeof tokens.access_token === "string" && tokens.access_token !== "",
-            hasRefreshToken:
-              typeof tokens.refresh_token === "string" && tokens.refresh_token !== "",
-            hasGoogleUserId: typeof tokens.googleUserId === "string" && tokens.googleUserId !== "",
-          };
-        } catch {
-          googleTokens = { ...googleTokens, exists: true, parseable: false };
-        }
+      if (tokens) {
+        googleTokens = {
+          exists: true,
+          parseable: true,
+          hasAccessToken: typeof tokens.access_token === "string" && tokens.access_token !== "",
+          hasRefreshToken: typeof tokens.refresh_token === "string" && tokens.refresh_token !== "",
+          hasGoogleUserId: typeof tokens.googleUserId === "string" && tokens.googleUserId !== "",
+        };
       }
 
       const [pendingCount, failedCount] = await Promise.all([
