@@ -194,4 +194,93 @@ describe("delegation activation secrets", () => {
     });
     expect(decryptEnvelope).toHaveBeenCalledTimes(1);
   });
+
+  it("encrypts delegated secret writes and deletes through the secret KV resource", async () => {
+    const envelope = {
+      v: 1,
+      networkId: NETWORK_ID,
+      alg: "x25519-aes256gcm/v1",
+      keyVersion: 1,
+      encryptedSymmetricKey: "wrapped-symmetric-key",
+      encryptedSymmetricKeyHash: "hash",
+      ciphertext: "ciphertext",
+      metadata: {},
+    };
+    const kvPut = mock(async (key: string, value: string, options?: { prefix?: string }) => {
+      expect(key).toBe("vault/secrets/GOOGLE_MEET_TOKENS");
+      expect(JSON.parse(value)).toEqual(envelope);
+      expect(options).toEqual({ prefix: "" });
+      return { ok: true };
+    });
+    const kvDelete = mock(async (key: string, options?: { prefix?: string }) => {
+      expect(key).toBe("vault/secrets/GOOGLE_MEET_TOKENS");
+      expect(options).toEqual({ prefix: "" });
+      return { ok: true };
+    });
+    const encryptToNetwork = mock(
+      async (networkId: string, plaintext: Uint8Array, options: { aad: Uint8Array }) => {
+        expect(networkId).toBe(NETWORK_ID);
+        expect(JSON.parse(new TextDecoder().decode(plaintext))).toMatchObject({
+          value: '{"access_token":"ya29.test"}',
+        });
+        expect(new TextDecoder().decode(options.aad)).toBe(
+          `tinycloud.vault:${TEST_DID}:applications:secrets/GOOGLE_MEET_TOKENS`,
+        );
+        return { ok: true, data: envelope };
+      },
+    );
+    const useDelegation = mock(async (delegation: any) => ({
+      kv: {
+        get: async () => ({ ok: true, data: { data: null } }),
+        put: kvPut,
+        delete: kvDelete,
+        list: async () => ({ ok: true }),
+      },
+      sql: { query: async () => ({ ok: true }), execute: async () => ({ ok: true }) },
+      restorable: { delegationCid: delegation.cid },
+      delegation,
+      spaceId: delegation.spaceId,
+    }));
+
+    const node = {
+      useDelegation,
+      encryption: {
+        decryptEnvelope: async () => ({ ok: true, data: new Uint8Array() }),
+        encryptToNetwork,
+      },
+    } as any;
+
+    const access = await activatePortableDelegation(node, [
+      makeDelegation(
+        {
+          service: "tinycloud.kv",
+          space: "secrets",
+          path: "vault/secrets/GOOGLE_MEET_TOKENS",
+          actions: ["tinycloud.kv/get", "tinycloud.kv/put", "tinycloud.kv/del"],
+        },
+        "cid-secret",
+      ),
+      makeDelegation(
+        {
+          service: "tinycloud.sql",
+          space: "applications",
+          path: "conversations",
+          actions: ["tinycloud.sql/read"],
+        },
+        "cid-sql",
+      ),
+    ]);
+
+    expect(await access.secrets.put("GOOGLE_MEET_TOKENS", '{"access_token":"ya29.test"}')).toEqual({
+      ok: true,
+      data: undefined,
+    });
+    expect(await access.secrets.delete("GOOGLE_MEET_TOKENS")).toEqual({
+      ok: true,
+      data: undefined,
+    });
+    expect(encryptToNetwork).toHaveBeenCalledTimes(1);
+    expect(kvPut).toHaveBeenCalledTimes(1);
+    expect(kvDelete).toHaveBeenCalledTimes(1);
+  });
 });

@@ -8,6 +8,13 @@ import { GoogleAuthRevokedError } from "../services/google-auth.js";
 import { conversationSql, ensureSchema } from "../schema.js";
 import { syncSingleConference } from "../services/google-meet-sync.js";
 import { resolveAppPath } from "../manifest.js";
+import {
+  deleteGoogleTokens,
+  LEGACY_GOOGLE_TOKENS_PATH,
+  readGoogleTokens,
+  writeGoogleTokens,
+  type StoredGoogleTokens,
+} from "../services/google-tokens.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -42,7 +49,6 @@ interface BackendKV {
 
 // ── Constants ────────────────────────────────────────────────────────
 
-const GOOGLE_TOKENS_PATH = "config/google-tokens";
 const DEFAULT_SYNC_DELAY_MS = 200;
 const GOOGLE_MEET_JOB_PREFIX = resolveAppPath("sync/google-meet/jobs");
 
@@ -192,35 +198,14 @@ function requireGoogleConfig(_req: Request, res: Response): boolean {
 
 // ── Token helpers ────────────────────────────────────────────────────
 
-interface StoredTokens {
-  access_token: string;
-  refresh_token?: string;
-}
-
-async function readTokens(access: any): Promise<StoredTokens | null> {
-  const result = await access.kv.get(GOOGLE_TOKENS_PATH);
-  if (!result.ok || result.data.data == null) return null;
-  try {
-    const raw = result.data.data;
-    // KV may return data as string, object, or Uint8Array
-    if (typeof raw === "object" && raw !== null && !(raw instanceof Uint8Array)) {
-      return raw as StoredTokens;
-    }
-    const str = raw instanceof Uint8Array ? new TextDecoder().decode(raw) : String(raw);
-    return JSON.parse(str);
-  } catch {
-    return null;
-  }
-}
-
 function createClientWithTokenRefresh(
-  tokens: StoredTokens,
+  tokens: StoredGoogleTokens,
   access: any,
   makeClient: NonNullable<GoogleMeetSyncRoutesConfig["createClient"]>,
 ) {
   const onTokenRefresh = async (newToken: string) => {
     const updated = { ...tokens, access_token: newToken };
-    await access.kv.put(GOOGLE_TOKENS_PATH, JSON.stringify(updated));
+    await writeGoogleTokens(access, updated);
   };
   return makeClient(tokens.access_token, onTokenRefresh, tokens.refresh_token);
 }
@@ -415,7 +400,7 @@ function runGoogleMeetJob({
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (err instanceof GoogleAuthRevokedError) {
-        await access.kv.delete(GOOGLE_TOKENS_PATH);
+        await deleteGoogleTokens(access);
       }
       await updateJob({
         status: "failed",
@@ -520,7 +505,7 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
 
       if (isActiveJob(current)) {
         if (!runningGoogleMeetJobs.has(ownerAddress)) {
-          const tokens = await readTokens(req.delegatedAccess!);
+          const tokens = await readGoogleTokens(req.delegatedAccess!);
           if (!tokens) {
             const failedJob = {
               ...current,
@@ -552,7 +537,7 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
         return;
       }
 
-      const tokens = await readTokens(req.delegatedAccess!);
+      const tokens = await readGoogleTokens(req.delegatedAccess!);
       if (!tokens) {
         res.status(404).json({
           error: "no_tokens",
@@ -594,7 +579,7 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
       const ownerAddress = normalizeOwnerAddress(req);
       const job = await readCurrentGoogleMeetJob(ownerAddress);
       if (isActiveJob(job) && !runningGoogleMeetJobs.has(ownerAddress)) {
-        const tokens = await readTokens(req.delegatedAccess!);
+        const tokens = await readGoogleTokens(req.delegatedAccess!);
         if (tokens) {
           runGoogleMeetJob({
             runningJobs: runningGoogleMeetJobs,
@@ -711,8 +696,8 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
 
     const access = req.delegatedAccess!;
 
-    // 1. Read tokens from KV
-    const tokens = await readTokens(access);
+    // 1. Read tokens from encrypted Listen secret.
+    const tokens = await readGoogleTokens(access);
     if (!tokens) {
       res.status(404).json({
         error: "no_tokens",
@@ -760,7 +745,7 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
       res.json(result);
     } catch (err) {
       if (err instanceof GoogleAuthRevokedError) {
-        await access.kv.delete(GOOGLE_TOKENS_PATH);
+        await deleteGoogleTokens(access);
         res.status(401).json({
           error: "google_auth_revoked",
           message: "Google authorization has been revoked. Please reconnect.",
@@ -820,9 +805,9 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
 
     try {
       // 1. Read tokens
-      const tokens = await readTokens(access);
+      const tokens = await readGoogleTokens(access);
       if (!tokens) {
-        console.log("[google-meet-sync] no tokens found at", GOOGLE_TOKENS_PATH);
+        console.log("[google-meet-sync] no tokens found in secret or", LEGACY_GOOGLE_TOKENS_PATH);
         sendEvent("error", { message: "No Google tokens configured. Connect your account first." });
         closeStream();
         return;

@@ -4,6 +4,11 @@ import { FIREFLIES_SECRET_NAME, GRANOLA_SECRET_NAME, resolveAppPath } from "../m
 import { conversationSql, ensureSchema } from "../schema.js";
 import { updateConversationTranscriptFields } from "../services/persist-conversation.js";
 import { TRANSCRIPTION_SECRET_NAMES } from "../services/transcription.js";
+import {
+  deleteGoogleTokens,
+  googleTokensExist,
+  readGoogleTokens,
+} from "../services/google-tokens.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -46,7 +51,6 @@ interface ConfigRoutesConfig {
 
 // ── Constants ────────────────────────────────────────────────────────
 
-const GOOGLE_TOKENS_PATH = "config/google-tokens";
 const WEBHOOK_SECRET_PATH = resolveAppPath("webhooks/config/fireflies-secret");
 const WEBHOOK_USER_ADDRESS_PATH = resolveAppPath("webhooks/config/user-address");
 const WEBHOOK_PENDING_PATH = resolveAppPath("webhooks/pending/fireflies");
@@ -67,10 +71,6 @@ function kvError(result: unknown): KVError | undefined {
 function kvErrorMessage(result: unknown, fallback: string): string {
   const error = kvError(result);
   return error?.message ?? error?.code ?? fallback;
-}
-
-function isKvNotFound(result: KVResult): boolean {
-  return !result.ok && result.error?.code === "KV_NOT_FOUND";
 }
 
 function rowValue(
@@ -175,13 +175,13 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
     delegationMiddleware,
     async (req: Request, res: Response) => {
       try {
-        const result = await req.delegatedAccess!.kv.get(GOOGLE_TOKENS_PATH);
-        if (!result.ok && !isKvNotFound(result)) {
-          const message = kvErrorMessage(result, "TinyCloud rejected the Google token lookup");
+        const connected = await googleTokensExist(req.delegatedAccess!);
+        if (connected === null) {
+          const message = "TinyCloud rejected the Google token lookup";
           res.status(500).json({ error: "check_failed", message });
           return;
         }
-        res.json({ connected: kvData(result) != null });
+        res.json({ connected });
       } catch (err) {
         console.error("[config] failed to check google-meet connection:", err);
         res.status(500).json({ error: "check_failed", message: "Failed to check connection" });
@@ -195,8 +195,7 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
       const access = req.delegatedAccess!;
 
       // 1. Read tokens (needed for Workspace Events API delete call)
-      const tokensResult = await access.kv.get(GOOGLE_TOKENS_PATH);
-      const tokensRaw = kvData(tokensResult);
+      const tokens = await readGoogleTokens(access);
 
       // 2. Read subscription metadata from backend KV
       let metadata: SubscriptionMetadata | null = null;
@@ -211,9 +210,8 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
       }
 
       // 3. Delete Workspace Events subscription if we have both tokens and metadata
-      if (metadata && tokensRaw && deleteSubscription) {
+      if (metadata && tokens && deleteSubscription) {
         try {
-          const tokens = JSON.parse(tokensRaw as string);
           await deleteSubscription(metadata, tokens.access_token);
         } catch (err) {
           console.warn("[config] failed to delete Workspace Events subscription:", err);
@@ -222,12 +220,7 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
       }
 
       // 4. Delete user tokens
-      const deleteResult = await access.kv.delete(GOOGLE_TOKENS_PATH);
-      if (!deleteResult.ok) {
-        const message = kvErrorMessage(deleteResult, "TinyCloud rejected the Google token delete");
-        res.status(500).json({ error: "disconnect_failed", message });
-        return;
-      }
+      await deleteGoogleTokens(access);
 
       // 5. Clear webhook KV entries
       if (backendKV) {

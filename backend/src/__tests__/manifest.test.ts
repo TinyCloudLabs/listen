@@ -19,6 +19,7 @@ describe("manifest", () => {
       GRANOLA_API_KEY: ["read"],
       ASSEMBLYAI_API_KEY: ["read"],
       DEEPGRAM_API_KEY: ["read"],
+      GOOGLE_MEET_TOKENS: ["read", "write", "delete"],
     });
     expect(manifest.delegations).toBeUndefined();
     expect("backend" in manifest).toBe(false);

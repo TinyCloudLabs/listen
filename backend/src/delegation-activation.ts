@@ -1,4 +1,4 @@
-import { deserializeDelegation, type TinyCloudNode } from "@tinycloud/node-sdk";
+import { VaultHeaders, deserializeDelegation, type TinyCloudNode } from "@tinycloud/node-sdk";
 
 type PortableDelegation = Parameters<TinyCloudNode["useDelegation"]>[0];
 export type PortableDelegationSet = PortableDelegation | PortableDelegation[];
@@ -51,6 +51,7 @@ interface InlineEncryptedEnvelope {
   encryptedSymmetricKeyHash: string;
   ciphertext: string;
   keyVersion: number;
+  metadata?: Record<string, string>;
 }
 
 type DecryptEnvelopeResult =
@@ -63,6 +64,14 @@ interface EncryptionCapableNode {
       envelope: InlineEncryptedEnvelope,
       options: { proofs: string[] },
     ): Promise<DecryptEnvelopeResult>;
+    encryptToNetwork(
+      networkId: string,
+      plaintext: Uint8Array,
+      options: { aad: Uint8Array; metadata: Record<string, string> },
+    ): Promise<
+      | { ok: true; data: InlineEncryptedEnvelope }
+      | { ok: false; error: { code: string; message: string } }
+    >;
   };
 }
 
@@ -302,8 +311,85 @@ function attachDelegatedSecrets(
 
       return { ok: true, data: valueResult.data };
     },
-    put: async () => secretError("Delegated backend secret writes are not supported"),
-    delete: async () => secretError("Delegated backend secret deletes are not supported"),
+    put: async (name: string, value: string) => {
+      if (!/^[A-Z][A-Z0-9_]*$/.test(name)) {
+        return secretError(`Invalid secret name: ${name}`);
+      }
+
+      const vaultKey = `secrets/${name}`;
+      const secretKey = `vault/${vaultKey}`;
+      const match = findSecretResource(secretResources, secretKey, "tinycloud.kv/put");
+      if (!match) {
+        return secretError(`No delegated secret write permission for ${secretKey}`, "AUTH_DENIED");
+      }
+
+      const encryption = (node as TinyCloudNode & EncryptionCapableNode).encryption;
+      if (!encryption?.encryptToNetwork) {
+        return secretError("TinyCloud encryption service is not available", "ENCRYPT_UNAVAILABLE");
+      }
+
+      const ownerDid = ownerDidFromDelegation(match.access.delegation);
+      if (!ownerDid) {
+        return secretError(
+          "Unable to resolve delegation owner for secret encryption",
+          "AUTH_DENIED",
+        );
+      }
+
+      const now = new Date().toISOString();
+      const plaintext = new TextEncoder().encode(
+        JSON.stringify({ value, createdAt: now, updatedAt: now }),
+      );
+      const spaceId = match.access.spaceId ?? `${ownerDid}:secrets`;
+      const encrypted = await encryption.encryptToNetwork(
+        `urn:tinycloud:encryption:${ownerDid}:default`,
+        plaintext,
+        {
+          aad: new TextEncoder().encode(`tinycloud.vault:${spaceId}:${vaultKey}`),
+          metadata: {
+            [VaultHeaders.VERSION]: "2",
+            [VaultHeaders.CIPHER]: "tinycloud-network-envelope",
+            [VaultHeaders.CONTENT_TYPE]: "application/json",
+          },
+        },
+      );
+      if (!encrypted.ok) {
+        return secretError(encrypted.error.message, encrypted.error.code);
+      }
+
+      const result = await match.access.kv.put(secretKey, JSON.stringify(encrypted.data), {
+        prefix: "",
+      });
+      if (!result.ok) {
+        return secretError(
+          result.error?.message ?? `Failed to write ${secretKey}`,
+          result.error?.code,
+        );
+      }
+
+      return { ok: true, data: undefined };
+    },
+    delete: async (name: string) => {
+      if (!/^[A-Z][A-Z0-9_]*$/.test(name)) {
+        return secretError(`Invalid secret name: ${name}`);
+      }
+
+      const secretKey = `vault/secrets/${name}`;
+      const match = findSecretResource(secretResources, secretKey, "tinycloud.kv/del");
+      if (!match) {
+        return secretError(`No delegated secret delete permission for ${secretKey}`, "AUTH_DENIED");
+      }
+
+      const result = await match.access.kv.delete(secretKey, { prefix: "" });
+      if (!result.ok) {
+        return secretError(
+          result.error?.message ?? `Failed to delete ${secretKey}`,
+          result.error?.code,
+        );
+      }
+
+      return { ok: true, data: undefined };
+    },
     list: async () => secretError("Delegated backend secret listing is not supported"),
   };
 
@@ -343,10 +429,34 @@ function findSecretResource(
 ): ActivatedResource | null {
   return (
     resources.find(({ resource }) => {
-      if (!resource.actions.includes(action)) return false;
+      const service = normalizeResourceService(resource.service);
+      if (!resource.actions.some((entry) => normalizeResourceAction(entry, service) === action)) {
+        return false;
+      }
       return key === resource.path || key.startsWith(`${resource.path.replace(/\/$/, "")}/`);
     }) ?? null
   );
+}
+
+function ownerDidFromDelegation(delegation: DelegatedAccess["delegation"]): string | null {
+  const entry = delegation as {
+    ownerAddress?: unknown;
+    address?: unknown;
+    chainId?: unknown;
+    spaceId?: unknown;
+  };
+  const address = typeof entry.ownerAddress === "string" ? entry.ownerAddress : entry.address;
+  if (typeof address === "string" && address) {
+    const chainId = typeof entry.chainId === "number" ? entry.chainId : 1;
+    return `did:pkh:eip155:${chainId}:${address}`;
+  }
+
+  if (typeof entry.spaceId === "string") {
+    const match = entry.spaceId.match(/^(did:pkh:eip155:\d+:0x[a-fA-F0-9]{40})(?::[^:]+)?$/);
+    return match?.[1] ?? null;
+  }
+
+  return null;
 }
 
 function isSecretsSpace(space: string | undefined): boolean {

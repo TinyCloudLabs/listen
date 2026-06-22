@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
 import { GoogleMeetClient } from "../services/google-meet-client.js";
+import { readGoogleTokens } from "../services/google-tokens.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -14,10 +15,6 @@ interface GoogleMeetStatusRoutesConfig {
     refreshToken?: string,
   ) => Pick<GoogleMeetClient, "listConferenceRecords">;
 }
-
-// ── Constants ────────────────────────────────────────────────────────
-
-const GOOGLE_TOKENS_PATH = "config/google-tokens";
 
 // ── Status Router ───────────────────────────────────────────────────
 
@@ -45,13 +42,12 @@ export function createGoogleMeetStatusRouter(config: GoogleMeetStatusRoutesConfi
     const access = req.delegatedAccess!;
 
     try {
-      const result = await access.kv.get(GOOGLE_TOKENS_PATH);
-      if (!result.ok || result.data.data == null) {
+      const tokens = await readGoogleTokens(access);
+      if (!tokens) {
         res.json({ connected: false });
         return;
       }
 
-      const tokens = JSON.parse(String(result.data.data));
       const client = makeClient(tokens.access_token, undefined, tokens.refresh_token);
 
       // Try a lightweight API call to verify tokens work

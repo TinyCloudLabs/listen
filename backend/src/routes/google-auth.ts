@@ -8,6 +8,7 @@ import {
 import { resolveAppPath } from "../manifest.js";
 import type { GoogleTokenResponse } from "../services/google-auth.js";
 import type { SubscriptionMetadata } from "../services/pubsub-manager.js";
+import { writeGoogleTokens } from "../services/google-tokens.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -45,7 +46,6 @@ interface StateEntry {
 
 // ── Constants ────────────────────────────────────────────────────────
 
-const GOOGLE_TOKENS_PATH = "config/google-tokens";
 const SUBSCRIPTION_KV_PATH = resolveAppPath("webhooks/config/google-meet-subscription");
 const USER_ADDRESS_KV_PATH = resolveAppPath("webhooks/config/google-meet-user-address");
 const STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
@@ -193,14 +193,10 @@ export function createGoogleAuthRouter(config: GoogleAuthRoutesConfig) {
         return;
       }
 
-      // Store tokens (with googleUserId if available) in user's KV
+      // Store tokens (with googleUserId if available) in user's encrypted Listen secret.
       const tokenData = googleUserId ? { ...tokens, googleUserId } : tokens;
-      console.log("[google-auth] storing tokens in KV...");
-      const putResult = await access.kv.put(GOOGLE_TOKENS_PATH, JSON.stringify(tokenData));
-      console.log("[google-auth] KV put result:", JSON.stringify(putResult));
-      if (!putResult?.ok) {
-        throw new Error(putResult?.error?.message ?? "Failed to store Google tokens");
-      }
+      console.log("[google-auth] storing tokens in TinyCloud Secrets...");
+      await writeGoogleTokens(access, tokenData);
 
       // Create Workspace Events subscription if webhooks are enabled
       if (
