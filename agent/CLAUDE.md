@@ -1,6 +1,6 @@
 # listen — your own TinyCloud space
 
-You can read and write the user's listen data (meeting transcripts, conversations) through the official `tc` CLI. Every command prints JSON to stdout; pipe to `jq` to extract fields.
+You can read and write the user's listen data (meeting transcripts, conversations) through the official `tc` CLI. Every command prints JSON to stdout; pipe to `jq` to extract fields. In the Feed Modules workspace, also read `../../AGENTS.md` for the current cross-repo data contract before changing source names, transcript shapes, or TinyCloud namespaces.
 
 If a command exits non-zero with an `AUTH_REQUIRED` error, the user has not yet granted you access (or the delegation was revoked). Ask them to click **Connect Agent** in listen.
 
@@ -22,14 +22,16 @@ Notes:
 
 ## SQL schema
 
-Database name: `conversations`. If `tc sql query` defaults to the wrong database, append `--db conversations`.
+Database name in the manifest app space: `xyz.tinycloud.listen/conversations`.
+Use `--space applications --db xyz.tinycloud.listen/conversations` when reading
+the shared Listen store that listen-importer and Artifactory also use.
 
 ### `conversation`
 | column | type | notes |
 |---|---|---|
 | `id` | TEXT PK | |
 | `title` | TEXT | |
-| `source` | TEXT | `'fireflies'` or `'google-meet'` |
+| `source` | TEXT | Fireflies, Granola, Google Meet, manual import, Soundcore Sync, or importer-written values such as `recorder`, `voice_memos`, and `voxterm` |
 | `source_id` | TEXT | |
 | `source_url` | TEXT | link to the original meeting |
 | `started_at` | TEXT | ISO-8601 |
@@ -53,12 +55,13 @@ Database name: `conversations`. If `tc sql query` defaults to the wrong database
 
 | key pattern | contents |
 |---|---|
-| `/app.conversations/transcript/{id}` | full transcript JSON (segments, timings, speakers) |
-| `/app.conversations/config/fireflies-key` | user's Fireflies API key — **do not echo, never log** |
+| `xyz.tinycloud.listen/transcript/{id}` | full transcript JSON (segments, timings, speakers), used for KV compatibility |
+| inline `conversation.transcript_json` / `conversation.transcript_text` | transcript content for current Listen sync rows |
+| TinyCloud Secrets `vault/secrets/<NAME>` | provider keys and captured source credentials such as Fireflies, Granola, and Soundcore — **do not echo, never log** |
 | `/app.webhooks/*` | webhook configuration — don't mutate unless the user asks |
 
 ## Typical flows
 
-- **"Summarize my most recent meeting"**: `tc sql query "SELECT * FROM conversation ORDER BY started_at DESC LIMIT 1"` to get the id, then `tc kv get /app.conversations/transcript/<id>` for the full transcript.
-- **"List meetings from last week"**: `tc sql query "SELECT id, title, started_at FROM conversation WHERE started_at >= '2026-04-16' ORDER BY started_at DESC"` (substitute dates).
-- **"Who was in that meeting?"**: `tc sql query "SELECT name, email FROM participant WHERE conversation_id = ?" --params '["<id>"]'`.
+- **"Summarize my most recent meeting"**: `tc sql query "SELECT * FROM conversation ORDER BY started_at DESC LIMIT 1" --space applications --db xyz.tinycloud.listen/conversations` to get the id, then prefer inline transcript columns when present and fall back to `tc kv get xyz.tinycloud.listen/transcript/<id> --space applications`.
+- **"List meetings from last week"**: `tc sql query "SELECT id, title, started_at FROM conversation WHERE started_at >= '2026-04-16' ORDER BY started_at DESC" --space applications --db xyz.tinycloud.listen/conversations` (substitute dates).
+- **"Who was in that meeting?"**: `tc sql query "SELECT name, email FROM participant WHERE conversation_id = ?" --params '["<id>"]' --space applications --db xyz.tinycloud.listen/conversations`.

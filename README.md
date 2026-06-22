@@ -1,6 +1,9 @@
 # Listen
 
-Listen is a transcript workspace for TinyCloud. It syncs Fireflies and Google Meet transcripts, supports manual transcript import, stores normalized conversation rows in TinyCloud SQL, and stores transcript blobs in TinyCloud KV.
+Listen is a transcript workspace for TinyCloud. It syncs Fireflies, Granola,
+Soundcore, and Google Meet transcripts, supports manual transcript import, stores
+normalized conversation rows in TinyCloud SQL, and stores transcript content
+either inline on conversation rows or in TinyCloud KV compatibility blobs.
 
 ## Run Locally
 
@@ -62,7 +65,8 @@ listen/
 ## Secrets and encryption
 
 - Secret names are uppercase env-style identifiers such as `FIREFLIES_API_KEY`,
-  `GRANOLA_API_KEY`, `ASSEMBLYAI_API_KEY`, and `DEEPGRAM_API_KEY`.
+  `GRANOLA_API_KEY`, `SOUNDCORE_AUTH_TOKEN`, `SOUNDCORE_UID`,
+  `SOUNDCORE_OPENUDID`, `ASSEMBLYAI_API_KEY`, and `DEEPGRAM_API_KEY`.
 - Listen stores backend secret values as encrypted vault entries under
   `vault/secrets/<NAME>`.
 - During TinyCloud sign-in, the SDK creates or discovers the default encryption network,
@@ -109,6 +113,19 @@ VITE_ENABLE_AGENT=true docker compose up --build listen-agent
 ```
 
 Set `VITE_ENABLE_AGENT=true` in `.env` when you want the frontend to show the agent connection control. Production config keeps it disabled.
+
+## Shared Listen Data Contract
+
+Listen writes the source side of the cross-repo feed pipeline. Normalized
+conversations live in the owner's `applications` space under
+`xyz.tinycloud.listen/conversations`; supported `conversation.source` values
+include Fireflies, Granola, Google Meet, manual import, Soundcore Sync, and the
+importer-written values `recorder`, `voice_memos`, and `voxterm`.
+
+The Artifactory/Feed pipeline does not call Listen over HTTP. Artifactory reads
+the same TinyCloud SQL/KV namespace under a delegated owner grant, generates
+artifacts with its skills/Smithers workflows, and publishes those artifacts to
+`xyz.tinycloud.artifacts` for TinyFeed to render.
 
 ## License
 
