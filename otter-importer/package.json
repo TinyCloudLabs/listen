@@ -1,0 +1,20 @@
+{
+  "name": "otter-importer",
+  "version": "0.1.0",
+  "description": "CLI importer that pulls Otter.ai transcripts (via the unofficial cookie API) into TinyCloud for Listen.",
+  "type": "module",
+  "bin": {
+    "otter-importer": "src/cli.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.0",
+    "typescript": "^5.5.0"
+  }
+}

@@ -1,0 +1,23 @@
+Alice Chen  0:03
+Morning everyone, thanks for hopping on. Let's keep this quick — I want to cover the release, the migration, and anything blocking before we wrap. I'll start with the release since that's the thing with a date attached to it.
+
+Speaker 1  0:21
+sounds good, go for it
+
+Bob  0:24
+Before that, did the staging deploy finish? I saw the pipeline go red around midnight and I wasn't sure if anyone picked it up.
+
+Alice Chen  0:35
+It did eventually, the red was a flaky integration test, not the build. I restarted it and it went green. We should still de-flake that test though, it's bitten us twice this week.
+
+Unknown Speaker  1:02
+agreed, I'll file a ticket
+
+Bob  1:05
+Okay, then on the migration — I think we're close but the backfill is slow. At the current rate it finishes sometime tomorrow afternoon. If we want it sooner we batch larger, but that adds lock pressure.
+
+Speaker 2  1:28
+let's not risk the locks right before a release, tomorrow afternoon is fine
+
+Alice Chen  1:33:10
+Works for me. Last thing — anyone blocked? Going once. Alright, that's a wrap, thanks all.
