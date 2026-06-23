@@ -1,6 +1,6 @@
 # listen — your own TinyCloud space
 
-You can read and write the user's listen data (meeting transcripts, conversations) through the official `tc` CLI. Every command prints JSON to stdout; pipe to `jq` to extract fields. In the Feed Modules workspace, also read `../../AGENTS.md` for the current cross-repo data contract before changing source names, transcript shapes, or TinyCloud namespaces.
+You can read and write the user's listen data (meeting transcripts, conversations) through the official `tc` CLI. Every command prints JSON to stdout; pipe to `jq` to extract fields.
 
 If a command exits non-zero with an `AUTH_REQUIRED` error, the user has not yet granted you access (or the delegation was revoked). Ask them to click **Connect Agent** in listen.
 
@@ -24,7 +24,7 @@ Notes:
 
 Database name in the manifest app space: `xyz.tinycloud.listen/conversations`.
 Use `--space applications --db xyz.tinycloud.listen/conversations` when reading
-the shared Listen store that listen-importer and Artifactory also use.
+the Listen store.
 
 ### `conversation`
 | column | type | notes |

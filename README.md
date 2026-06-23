@@ -114,18 +114,17 @@ VITE_ENABLE_AGENT=true docker compose up --build listen-agent
 
 Set `VITE_ENABLE_AGENT=true` in `.env` when you want the frontend to show the agent connection control. Production config keeps it disabled.
 
-## Shared Listen Data Contract
+## Listen Data Contract
 
-Listen writes the source side of the cross-repo feed pipeline. Normalized
-conversations live in the owner's `applications` space under
-`xyz.tinycloud.listen/conversations`; supported `conversation.source` values
-include Fireflies, Granola, Google Meet, manual import, Soundcore Sync, and the
-importer-written values `recorder`, `voice_memos`, and `voxterm`.
+Normalized conversations live in the owner's `applications` space under
+`xyz.tinycloud.listen/conversations`. Transcript content may be stored inline on
+conversation rows and may also be mirrored to KV under
+`xyz.tinycloud.listen/transcript/{id}` for compatibility with readers that
+expect transcript blobs.
 
-The Artifactory/Feed pipeline does not call Listen over HTTP. Artifactory reads
-the same TinyCloud SQL/KV namespace under a delegated owner grant, generates
-artifacts with its skills/Smithers workflows, and publishes those artifacts to
-`xyz.tinycloud.artifacts` for TinyFeed to render.
+Supported `conversation.source` values include Fireflies, Granola, Google Meet,
+manual import, Soundcore Sync, and recorder-style imports such as `recorder`,
+`voice_memos`, and `voxterm`.
 
 ## License
 
