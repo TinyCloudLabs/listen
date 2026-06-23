@@ -304,10 +304,15 @@ describe("Conversations Routes — GET /api/conversations", () => {
 
     await fetch(`http://localhost:${port}/api/conversations`);
 
-    // First SQL calls should be CREATE TABLE statements (via execute)
-    const firstCall = mockSQL._calls[0];
-    expect(firstCall.sql.trim().startsWith("CREATE")).toBe(true);
-    expect(firstCall.method).toBe("execute");
+    const listCallIndex = mockSQL._calls.findIndex(
+      (c) => c.sql.includes("ORDER BY") && c.sql.includes("LIMIT"),
+    );
+    expect(listCallIndex).toBeGreaterThan(1);
+
+    const schemaCalls = mockSQL._calls.slice(0, listCallIndex);
+    expect(schemaCalls.some((c) => c.sql.includes("transcript_json"))).toBe(true);
+    expect(schemaCalls.some((c) => c.sql.includes("FROM participant"))).toBe(true);
+    expect(schemaCalls.every((c) => c.method === "query")).toBe(true);
   });
 });
 

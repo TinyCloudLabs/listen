@@ -60,6 +60,73 @@ const COLUMN_MIGRATION_STATEMENTS = [
   `ALTER TABLE conversation ADD COLUMN transcript_text TEXT`,
 ];
 
+function normalizeSqlErrorMessage(message: string): string {
+  if (
+    /524\s*-/i.test(message) ||
+    /Error code 524/i.test(message) ||
+    /A timeout occurred/i.test(message) ||
+    /<!doctype html/i.test(message) ||
+    /<html[\s>]/i.test(message)
+  ) {
+    return "TinyCloud SQL timed out while preparing the conversations database. Please try again.";
+  }
+
+  const compact = message.replace(/\s+/g, " ").trim();
+  return compact.length > 500 ? `${compact.slice(0, 500)}...` : compact;
+}
+
+function resultErrorMessage(result: unknown): string {
+  const raw =
+    (result as { error?: { message?: unknown; code?: unknown } } | null)?.error?.message ??
+    (result as { error?: { message?: unknown; code?: unknown } } | null)?.error?.code ??
+    "unknown error";
+
+  return normalizeSqlErrorMessage(String(raw));
+}
+
+async function schemaIsReady(sqlDb: ConversationSql): Promise<boolean> {
+  let conversationCheck;
+  let participantCheck;
+  try {
+    [conversationCheck, participantCheck] = await Promise.all([
+      sqlDb.query("SELECT transcript_json, transcript_text FROM conversation LIMIT 1"),
+      sqlDb.query("SELECT 1 FROM participant LIMIT 1"),
+    ]);
+  } catch {
+    return false;
+  }
+
+  return conversationCheck.ok && participantCheck.ok;
+}
+
+async function statementSucceededByInspection(
+  sqlDb: ConversationSql,
+  sql: string,
+): Promise<boolean> {
+  try {
+    if (sql.includes("CREATE TABLE IF NOT EXISTS conversation")) {
+      const check = await sqlDb.query("SELECT 1 FROM conversation LIMIT 1");
+      return check.ok;
+    }
+
+    if (sql.includes("CREATE TABLE IF NOT EXISTS participant")) {
+      const check = await sqlDb.query("SELECT 1 FROM participant LIMIT 1");
+      return check.ok;
+    }
+
+    if (sql.includes("ADD COLUMN transcript_json") || sql.includes("ADD COLUMN transcript_text")) {
+      const check = await sqlDb.query(
+        "SELECT transcript_json, transcript_text FROM conversation LIMIT 1",
+      );
+      return check.ok;
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+}
+
 /**
  * Track schema initialization per DelegatedAccess instance.
  * WeakMap ensures cleanup when the access object is GC'd.
@@ -75,10 +142,19 @@ export async function ensureSchema(access: DelegatedAccess): Promise<void> {
 
   const sqlDb = conversationSql(access);
 
+  if (await schemaIsReady(sqlDb)) {
+    schemaInitialized.set(access, true);
+    return;
+  }
+
   for (const sql of SCHEMA_STATEMENTS) {
     const result = await sqlDb.execute(sql);
     if (!result.ok) {
-      const msg = (result as any).error?.message ?? "unknown error";
+      const msg = resultErrorMessage(result);
+      if (await statementSucceededByInspection(sqlDb, sql)) {
+        console.log(`[schema] Statement succeeded despite reported error, continuing: ${msg}`);
+        continue;
+      }
       // If table already exists, that's fine — skip
       if (msg.includes("already exists")) {
         console.log(`[schema] Table already exists, skipping: ${msg}`);
@@ -104,7 +180,8 @@ export async function ensureSchema(access: DelegatedAccess): Promise<void> {
     for (const sql of COLUMN_MIGRATION_STATEMENTS) {
       const result = await sqlDb.execute(sql);
       if (!result.ok) {
-        const msg = (result as any).error?.message ?? "unknown error";
+        const msg = resultErrorMessage(result);
+        if (await statementSucceededByInspection(sqlDb, sql)) continue;
         if (msg.includes("duplicate column") || msg.includes("already exists")) {
           continue;
         }

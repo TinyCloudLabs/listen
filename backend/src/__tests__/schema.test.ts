@@ -12,6 +12,19 @@ function createMockAccess() {
   } as any;
 }
 
+function mockSchemaMissing(access: ReturnType<typeof createMockAccess>) {
+  let schemaCreated = false;
+  access.sql.execute.mockImplementation(async () => {
+    schemaCreated = true;
+    return { ok: true };
+  });
+  access.sql.query.mockImplementation(async () =>
+    schemaCreated
+      ? { ok: true, data: { rows: [], columns: [] } }
+      : { ok: false, error: { message: "no such table: conversation" } },
+  );
+}
+
 // ── Tests ────────────────────────────────────────────────────────────
 
 import { conversationSql, ensureSchema, DATABASE_NAME } from "../schema.js";
@@ -30,7 +43,15 @@ describe("schema", () => {
       access = createMockAccess();
     });
 
+    it("skips DDL when the conversation schema is already ready", async () => {
+      await ensureSchema(access);
+
+      expect(access.sql.execute.mock.calls.length).toBe(0);
+      expect(access.sql.query.mock.calls.length).toBe(2);
+    });
+
     it("executes CREATE TABLE for conversation table", async () => {
+      mockSchemaMissing(access);
       await ensureSchema(access);
 
       const calls = access.sql.execute.mock.calls;
@@ -41,6 +62,7 @@ describe("schema", () => {
     });
 
     it("executes CREATE TABLE for participant table", async () => {
+      mockSchemaMissing(access);
       await ensureSchema(access);
 
       const calls = access.sql.execute.mock.calls;
@@ -49,6 +71,7 @@ describe("schema", () => {
     });
 
     it("executes exactly 2 CREATE TABLE statements", async () => {
+      mockSchemaMissing(access);
       await ensureSchema(access);
 
       const calls = access.sql.execute.mock.calls;
@@ -66,6 +89,16 @@ describe("schema", () => {
         expect(name).toBe(DATABASE_NAME);
         return dbHandle;
       });
+      let schemaCreated = false;
+      dbHandle.execute.mockImplementation(async () => {
+        schemaCreated = true;
+        return { ok: true };
+      });
+      dbHandle.query.mockImplementation(async () =>
+        schemaCreated
+          ? { ok: true, data: { rows: [], columns: [] } }
+          : { ok: false, error: { message: "no such table: conversation" } },
+      );
 
       expect(conversationSql(access)).toBe(dbHandle);
       await ensureSchema(access);
@@ -91,6 +124,7 @@ describe("schema", () => {
     });
 
     it("no-ops on subsequent calls with the same access", async () => {
+      mockSchemaMissing(access);
       await ensureSchema(access);
       const firstCallCount = access.sql.execute.mock.calls.length;
 
@@ -99,21 +133,47 @@ describe("schema", () => {
     });
 
     it("runs schema again for a different access object", async () => {
+      mockSchemaMissing(access);
       await ensureSchema(access);
 
       const access2 = createMockAccess();
+      mockSchemaMissing(access2);
       await ensureSchema(access2);
 
       expect(access2.sql.execute.mock.calls.length).toBeGreaterThan(0);
     });
 
     it("throws when sql.execute returns ok: false", async () => {
+      access.sql.query.mockImplementation(async () => ({
+        ok: false,
+        error: { message: "no such table: conversation" },
+      }));
       access.sql.execute.mockImplementation(async () => ({
         ok: false,
         error: { message: "DB unavailable" },
       }));
 
       expect(ensureSchema(access)).rejects.toThrow("Failed to initialize conversations schema");
+    });
+
+    it("does not leak Cloudflare timeout HTML in schema errors", async () => {
+      access.sql.query.mockImplementation(async () => ({
+        ok: false,
+        error: { message: "no such table: conversation" },
+      }));
+      access.sql.execute.mockImplementation(async () => ({
+        ok: false,
+        error: {
+          message:
+            "SQL execute failed: 524 - <!DOCTYPE html><html><head><title>tinycloud.xyz | 524: A timeout occurred</title></head><body>Error code 524</body></html>",
+        },
+      }));
+
+      await expect(ensureSchema(access)).rejects.toThrow(
+        "TinyCloud SQL timed out while preparing the conversations database",
+      );
+
+      await expect(ensureSchema(access)).rejects.not.toThrow("<!DOCTYPE html>");
     });
   });
 });
