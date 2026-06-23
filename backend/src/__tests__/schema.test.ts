@@ -3,12 +3,21 @@ import { describe, it, expect, beforeEach, mock } from "bun:test";
 // ── Mock DelegatedAccess ─────────────────────────────────────────────
 
 function createMockAccess() {
+  const dbHandle = {
+    execute: mock(async (_sql: string) => ({ ok: true })),
+    query: mock(async () => ({ ok: true, data: { rows: [], columns: [] } })),
+    migrations: {
+      apply: mock(async () => ({ ok: true })),
+    },
+  };
   return {
     sql: {
       execute: mock(async (_sql: string) => ({ ok: true })),
       query: mock(async () => ({ ok: true, data: { rows: [], columns: [] } })),
+      db: mock((_name: string) => dbHandle),
     },
     kv: {},
+    dbHandle,
   } as any;
 }
 
@@ -30,37 +39,48 @@ describe("schema", () => {
       access = createMockAccess();
     });
 
-    it("executes CREATE TABLE for conversation table", async () => {
+    it("applies an initial migration for the conversation table", async () => {
       await ensureSchema(access);
 
-      const calls = access.sql.execute.mock.calls;
-      const allSql = calls.map((c: any) => c[0]).join("\n");
+      const migrations = access.dbHandle.migrations.apply.mock.calls;
+      const allSql = migrations[0][0].migrations[0].sql.join("\n");
       expect(allSql).toContain("CREATE TABLE IF NOT EXISTS conversation");
-      expect(allSql).toContain("transcript_json TEXT");
-      expect(allSql).toContain("transcript_text TEXT");
     });
 
-    it("executes CREATE TABLE for participant table", async () => {
+    it("applies an initial migration for the participant table", async () => {
       await ensureSchema(access);
 
-      const calls = access.sql.execute.mock.calls;
-      const allSql = calls.map((c: any) => c[0]).join("\n");
+      const migrations = access.dbHandle.migrations.apply.mock.calls;
+      const allSql = migrations[0][0].migrations[0].sql.join("\n");
       expect(allSql).toContain("CREATE TABLE IF NOT EXISTS participant");
     });
 
-    it("executes exactly 2 CREATE TABLE statements", async () => {
+    it("records the transcript column migration when those columns already exist", async () => {
       await ensureSchema(access);
 
-      const calls = access.sql.execute.mock.calls;
+      const calls = access.dbHandle.migrations.apply.mock.calls;
       expect(calls.length).toBe(2);
-      expect(calls[0][0]).toContain("CREATE TABLE IF NOT EXISTS conversation");
-      expect(calls[1][0]).toContain("CREATE TABLE IF NOT EXISTS participant");
+      expect(calls[0][0]).toMatchObject({
+        namespace: "xyz.tinycloud.listen.conversations",
+        migrations: [{ id: "001_initial" }],
+      });
+      expect(calls[0][0].migrations[0].sql.length).toBe(2);
+      expect(calls[1][0]).toMatchObject({
+        namespace: "xyz.tinycloud.listen.conversations",
+        migrations: [{ id: "002_transcript_columns" }],
+      });
+      expect(calls[1][0].migrations[0].sql).toEqual([
+        "UPDATE conversation SET id = id WHERE 1 = 0",
+      ]);
     });
 
     it("uses the named conversations database when a db handle is available", async () => {
       const dbHandle = {
         execute: mock(async (_sql: string) => ({ ok: true })),
         query: mock(async () => ({ ok: true, data: { rows: [], columns: [] } })),
+        migrations: {
+          apply: mock(async () => ({ ok: true })),
+        },
       };
       access.sql.db = mock((name: string) => {
         expect(name).toBe(DATABASE_NAME);
@@ -71,12 +91,12 @@ describe("schema", () => {
       await ensureSchema(access);
 
       expect(access.sql.db).toHaveBeenCalled();
-      expect(dbHandle.execute.mock.calls.length).toBe(2);
+      expect(dbHandle.migrations.apply.mock.calls.length).toBe(2);
       expect(access.sql.execute.mock.calls.length).toBe(0);
     });
 
     it("adds transcript columns when an existing conversation table is missing them", async () => {
-      access.sql.query.mockImplementation(async (sql: string) => {
+      access.dbHandle.query.mockImplementation(async (sql: string) => {
         if (sql.includes("transcript_json")) {
           return { ok: false, error: { message: "no such column: transcript_json" } };
         }
@@ -85,17 +105,19 @@ describe("schema", () => {
 
       await ensureSchema(access);
 
-      const allSql = access.sql.execute.mock.calls.map((c: any) => c[0]).join("\n");
+      const migrations = access.dbHandle.migrations.apply.mock.calls;
+      const allSql = migrations[1][0].migrations[0].sql.join("\n");
+      expect(migrations[1][0].migrations[0].id).toBe("002_transcript_columns");
       expect(allSql).toContain("ALTER TABLE conversation ADD COLUMN transcript_json TEXT");
       expect(allSql).toContain("ALTER TABLE conversation ADD COLUMN transcript_text TEXT");
     });
 
     it("no-ops on subsequent calls with the same access", async () => {
       await ensureSchema(access);
-      const firstCallCount = access.sql.execute.mock.calls.length;
+      const firstCallCount = access.dbHandle.migrations.apply.mock.calls.length;
 
       await ensureSchema(access);
-      expect(access.sql.execute.mock.calls.length).toBe(firstCallCount);
+      expect(access.dbHandle.migrations.apply.mock.calls.length).toBe(firstCallCount);
     });
 
     it("runs schema again for a different access object", async () => {
@@ -104,11 +126,11 @@ describe("schema", () => {
       const access2 = createMockAccess();
       await ensureSchema(access2);
 
-      expect(access2.sql.execute.mock.calls.length).toBeGreaterThan(0);
+      expect(access2.dbHandle.migrations.apply.mock.calls.length).toBeGreaterThan(0);
     });
 
-    it("throws when sql.execute returns ok: false", async () => {
-      access.sql.execute.mockImplementation(async () => ({
+    it("throws when migrations.apply returns ok: false", async () => {
+      access.dbHandle.migrations.apply.mockImplementation(async () => ({
         ok: false,
         error: { message: "DB unavailable" },
       }));
