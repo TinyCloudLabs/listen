@@ -149,6 +149,7 @@ vi.mock("@listen/client", () => {
 });
 
 import { App } from "../App";
+import { backendWorkspaceCacheKey, writeBackendWorkspaceCache } from "../lib/backendWorkspaceCache";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -465,6 +466,98 @@ describe("App manual sign-in processing", () => {
     );
     await waitFor(() => {
       expect(mockGet).toHaveBeenCalledWith("/api/workspace-state");
+    });
+  });
+
+  it("stores active backend workspace readiness locally until delegation expiry", async () => {
+    const expiresAt = new Date(Date.now() + 3600_000).toISOString();
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(workspaceState({ delegation: { expiresAt } }));
+      }
+      if (url === "/api/config/webhook-status") {
+        return Promise.resolve({ configured: true, pendingCount: 0, webhookUrl: "" });
+      }
+      if (url === "/api/webhooks/fireflies/pending") {
+        return Promise.resolve({ processed: [], skipped: [], errors: [] });
+      }
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({ conversations: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
+
+    await renderAndSignIn();
+
+    await waitFor(() => {
+      const raw = localStorage.getItem(backendWorkspaceCacheKey("0xabc123", "did:key:backend"));
+      expect(raw).not.toBeNull();
+      expect(JSON.parse(raw!)).toMatchObject({
+        address: "0xabc123",
+        backendDid: "did:key:backend",
+        expiresAt,
+        backendReadableSecrets: {
+          fireflies: { readable: true },
+          granola: { readable: true },
+        },
+      });
+    });
+  });
+
+  it("hydrates backend readiness from a valid local cache without checking workspace state", async () => {
+    storeBackendSession();
+    vi.mocked(loadPersistedSession).mockReturnValue({
+      address: "0xabc123",
+      chainId: 1,
+      did: "did:pkh:eip155:1:0xabc123",
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      spaceId: "tinycloud:pkh:eip155:1:0xabc123:applications",
+    });
+    vi.mocked(restoreTinyCloudWeb).mockResolvedValue(null);
+    writeBackendWorkspaceCache(
+      "0xabc123",
+      "did:key:backend",
+      workspaceState({
+        delegation: { expiresAt: new Date(Date.now() + 3600_000).toISOString() },
+        conversations: { hasAny: true, total: 1 },
+      }),
+    );
+
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: /open app/i })[0]);
+
+    await waitFor(() => {
+      expect(mockGet).toHaveBeenCalledWith("/api/webhooks/fireflies/pending");
+    });
+    expect(mockGet).not.toHaveBeenCalledWith("/api/workspace-state");
+  });
+
+  it("clears cached backend readiness when an API call reports delegated access failure", async () => {
+    storeBackendSession();
+    vi.mocked(loadPersistedSession).mockReturnValue({
+      address: "0xabc123",
+      chainId: 1,
+      did: "did:pkh:eip155:1:0xabc123",
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      spaceId: "tinycloud:pkh:eip155:1:0xabc123:applications",
+    });
+    vi.mocked(restoreTinyCloudWeb).mockResolvedValue(null);
+    writeBackendWorkspaceCache(
+      "0xabc123",
+      "did:key:backend",
+      workspaceState({
+        delegation: { expiresAt: new Date(Date.now() + 3600_000).toISOString() },
+      }),
+    );
+    mockPost.mockRejectedValueOnce(new Error("API error (500): Unauthorized Action"));
+
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: /open app/i })[0]);
+
+    await waitFor(() => {
+      expect(localStorage.getItem(backendWorkspaceCacheKey("0xabc123", "did:key:backend"))).toBe(
+        null,
+      );
     });
   });
 
