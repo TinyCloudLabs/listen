@@ -3,8 +3,16 @@ import { resolveAppPath } from "./manifest.js";
 
 /** Database name for the conversations SQL store. */
 export const DATABASE_NAME = resolveAppPath("conversations", "tinycloud.sql");
+const MIGRATION_NAMESPACE = "xyz.tinycloud.listen.conversations";
 
-type ConversationSql = Pick<DelegatedAccess["sql"], "query" | "execute">;
+type ConversationSql = Pick<DelegatedAccess["sql"], "query" | "execute"> & {
+  migrations: {
+    apply(options: {
+      namespace: string;
+      migrations: Array<{ id: string; sql: string[] }>;
+    }): Promise<{ ok: boolean; error?: { message?: string } }>;
+  };
+};
 
 /**
  * Conversation data lives in its own TinyCloud SQL database. The SDK's
@@ -16,14 +24,43 @@ export function conversationSql(access: DelegatedAccess): ConversationSql {
     db?: (name: string) => ConversationSql;
   };
 
-  return typeof sql.db === "function" ? sql.db(DATABASE_NAME) : sql;
+  const scoped = typeof sql.db === "function" ? sql.db(DATABASE_NAME) : sql;
+  return withMigrationFallback(scoped);
 }
 
-/**
- * SQL statements to initialize the conversations schema.
- * Each statement is executed separately since TinyCloud SQL
- * handles one statement per execute() call.
- */
+function withMigrationFallback(sqlDb: unknown): ConversationSql {
+  const candidate = sqlDb as Partial<Pick<DelegatedAccess["sql"], "query" | "execute">> & {
+    migrations?: ConversationSql["migrations"];
+  };
+  if (candidate.migrations?.apply) return candidate as ConversationSql;
+  const execute: ConversationSql["execute"] =
+    typeof candidate.execute === "function"
+      ? candidate.execute.bind(candidate)
+      : async () => ({
+          ok: false as const,
+          error: {
+            code: "SQL_EXECUTE_UNAVAILABLE",
+            message: "SQL execute is unavailable on this access handle",
+          } as any,
+        });
+
+  return {
+    query: candidate.query!.bind(candidate),
+    execute,
+    migrations: {
+      apply: async (options) => {
+        for (const migration of options.migrations) {
+          for (const sql of migration.sql) {
+            const result = await execute(sql);
+            if (!result.ok) return result;
+          }
+        }
+        return { ok: true };
+      },
+    },
+  };
+}
+
 /**
  * TinyCloud's SQLite authorizer restricts CREATE INDEX, UNIQUE constraints,
  * and REFERENCES. Keep schema simple — PRIMARY KEY only.
@@ -41,8 +78,6 @@ const SCHEMA_STATEMENTS = [
     duration_secs   REAL,
     summary         TEXT,
     metadata        TEXT,
-    transcript_json TEXT,
-    transcript_text TEXT,
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL
   )`,
@@ -59,6 +94,7 @@ const COLUMN_MIGRATION_STATEMENTS = [
   `ALTER TABLE conversation ADD COLUMN transcript_json TEXT`,
   `ALTER TABLE conversation ADD COLUMN transcript_text TEXT`,
 ];
+const COLUMN_MIGRATION_ALREADY_APPLIED_STATEMENTS = ["UPDATE conversation SET id = id WHERE 1 = 0"];
 
 /**
  * Track schema initialization per DelegatedAccess instance.
@@ -67,50 +103,44 @@ const COLUMN_MIGRATION_STATEMENTS = [
 const schemaInitialized = new WeakMap<object, boolean>();
 
 /**
- * Ensure the conversations schema exists. Runs CREATE TABLE/INDEX
- * statements at most once per DelegatedAccess instance.
+ * Ensure the conversations schema exists. Runs migrations at most once
+ * per DelegatedAccess instance.
  */
 export async function ensureSchema(access: DelegatedAccess): Promise<void> {
   if (schemaInitialized.has(access)) return;
 
   const sqlDb = conversationSql(access);
-
-  for (const sql of SCHEMA_STATEMENTS) {
-    const result = await sqlDb.execute(sql);
-    if (!result.ok) {
-      const msg = (result as any).error?.message ?? "unknown error";
-      // If table already exists, that's fine — skip
-      if (msg.includes("already exists")) {
-        console.log(`[schema] Table already exists, skipping: ${msg}`);
-        continue;
-      }
-      // "not authorized" on CREATE TABLE IF NOT EXISTS likely means
-      // the table already exists and the authorizer blocks redundant DDL.
-      if (msg.includes("not authorized")) {
-        const check = await sqlDb.query("SELECT 1 FROM conversation LIMIT 1");
-        if (check.ok) {
-          console.log("[schema] Tables exist (verified via SELECT), skipping DDL");
-          continue;
-        }
-      }
-      throw new Error(`Failed to initialize conversations schema: ${msg}`);
-    }
+  const created = await sqlDb.migrations.apply({
+    namespace: MIGRATION_NAMESPACE,
+    migrations: [
+      {
+        id: "001_initial",
+        sql: SCHEMA_STATEMENTS,
+      },
+    ],
+  });
+  if (!created.ok) {
+    const msg = created.error?.message ?? "unknown error";
+    throw new Error(`Failed to initialize conversations schema: ${msg}`);
   }
 
   const columnCheck = await sqlDb.query(
     "SELECT transcript_json, transcript_text FROM conversation LIMIT 1",
   );
-  if (!columnCheck.ok) {
-    for (const sql of COLUMN_MIGRATION_STATEMENTS) {
-      const result = await sqlDb.execute(sql);
-      if (!result.ok) {
-        const msg = (result as any).error?.message ?? "unknown error";
-        if (msg.includes("duplicate column") || msg.includes("already exists")) {
-          continue;
-        }
-        throw new Error(`Failed to update conversations schema: ${msg}`);
-      }
-    }
+  const updated = await sqlDb.migrations.apply({
+    namespace: MIGRATION_NAMESPACE,
+    migrations: [
+      {
+        id: "002_transcript_columns",
+        sql: columnCheck.ok
+          ? COLUMN_MIGRATION_ALREADY_APPLIED_STATEMENTS
+          : COLUMN_MIGRATION_STATEMENTS,
+      },
+    ],
+  });
+  if (!updated.ok) {
+    const msg = updated.error?.message ?? "unknown error";
+    throw new Error(`Failed to update conversations schema: ${msg}`);
   }
 
   schemaInitialized.set(access, true);
