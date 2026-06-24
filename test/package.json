@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@listen/client": "workspace:*",
-    "@tinycloud/node-sdk": "2.4.0-beta.10",
+    "@tinycloud/node-sdk": "2.4.0-beta.17",
     "@playwright/test": "^1.50.0",
     "playwright": "^1.50.0"
   }
