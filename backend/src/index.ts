@@ -34,6 +34,8 @@ import { createGranolaRouter } from "./routes/granola.js";
 import { createSoundcoreRouter } from "./routes/soundcore.js";
 import { createSyncRouter } from "./routes/sync.js";
 import { createGranolaSyncRouter } from "./routes/granola-sync.js";
+import { createOtterRouter } from "./routes/otter.js";
+import { createOtterSyncRouter } from "./routes/otter-sync.js";
 import { createSoundcoreSyncRouter } from "./routes/soundcore-sync.js";
 import { createConversationsRouter } from "./routes/conversations.js";
 import { createWebhookRouter } from "./routes/webhooks.js";
@@ -393,6 +395,15 @@ async function main() {
     }),
   );
 
+  // Otter connection routes (validate + seal the session cookie)
+  app.use(
+    "/api/otter",
+    createOtterRouter({
+      authMiddleware,
+      delegationMiddleware,
+    }),
+  );
+
   // Soundcore proxy routes (connection test)
   app.use(
     "/api/soundcore",
@@ -426,6 +437,15 @@ async function main() {
   app.use(
     "/api/sync/soundcore",
     createSoundcoreSyncRouter({
+      authMiddleware,
+      delegationMiddleware,
+    }),
+  );
+
+  // Otter sync routes (incremental transcript sync via the sealed cookie)
+  app.use(
+    "/api/sync/otter",
+    createOtterSyncRouter({
       authMiddleware,
       delegationMiddleware,
     }),

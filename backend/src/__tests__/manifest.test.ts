@@ -27,6 +27,10 @@ describe("manifest", () => {
         scope: "listen",
         actions: ["read", "write", "delete"],
       },
+      OTTER_COOKIE: {
+        scope: "listen",
+        actions: ["read", "write", "delete"],
+      },
     });
     expect(manifest.delegations).toBeUndefined();
     expect("backend" in manifest).toBe(false);

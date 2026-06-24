@@ -41,7 +41,13 @@ async function main(): Promise<void> {
         break;
       }
       console.log(
-        createDelegation(to, `${config.listenKvPrefix}/`, ["kv/get", "kv/put", "kv/list"], expiry, tcOptions(args)),
+        createDelegation(
+          to,
+          `${config.listenKvPrefix}/`,
+          ["kv/get", "kv/put", "kv/list"],
+          expiry,
+          tcOptions(args),
+        ),
       );
       break;
     }
@@ -74,7 +80,9 @@ async function main(): Promise<void> {
         else unchanged += 1;
       }
       store.close();
-      console.log(`Scanned ${slice.length} speech(es): ${created} new, ${changed} changed, ${unchanged} unchanged`);
+      console.log(
+        `Scanned ${slice.length} speech(es): ${created} new, ${changed} changed, ${unchanged} unchanged`,
+      );
       break;
     }
 
@@ -88,7 +96,12 @@ async function main(): Promise<void> {
       for (const row of rows) {
         try {
           const sentences = parseOtterTxt(await client.exportTxt(row.otid));
-          store.savePull(row.otid, JSON.stringify(sentences), transcriptText(sentences), sentences.length);
+          store.savePull(
+            row.otid,
+            JSON.stringify(sentences),
+            transcriptText(sentences),
+            sentences.length,
+          );
           pulled += 1;
         } catch (err) {
           store.markPullFailed(row.otid, err instanceof Error ? err.message : String(err));
@@ -114,7 +127,9 @@ async function main(): Promise<void> {
       const rows = store.list(limit);
       store.close();
       for (const row of rows) {
-        console.log(`${row.status.padEnd(13)} ${(row.title ?? "").slice(0, 48).padEnd(48)} ${row.otid}`);
+        console.log(
+          `${row.status.padEnd(13)} ${(row.title ?? "").slice(0, 48).padEnd(48)} ${row.otid}`,
+        );
       }
       break;
     }
@@ -122,7 +137,10 @@ async function main(): Promise<void> {
     case "upload": {
       const limit = numberFlag(args, "limit") ?? 25;
       const store = new Store(config.dbPath);
-      const result = uploadPending(config, store, limit, { ...tcOptions(args), dryRun: Boolean(args.flags["dry-run"]) });
+      const result = uploadPending(config, store, limit, {
+        ...tcOptions(args),
+        dryRun: Boolean(args.flags["dry-run"]),
+      });
       store.close();
       console.log(`Published ${result.published}; failed ${result.failed}`);
       break;
@@ -199,7 +217,8 @@ function numberFlag(args: ParsedArgs, name: string): number | undefined {
   const value = stringFlag(args, name);
   if (!value) return undefined;
   const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 1) throw new Error(`--${name} must be a positive number`);
+  if (!Number.isFinite(parsed) || parsed < 1)
+    throw new Error(`--${name} must be a positive number`);
   return Math.floor(parsed);
 }
 

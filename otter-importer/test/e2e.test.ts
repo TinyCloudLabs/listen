@@ -10,7 +10,14 @@ const PROJECT = join(import.meta.dir, "..");
 const FAKE_TC = join(import.meta.dir, "fake-tc.ts");
 
 const OWNED = [
-  { otid: "OAAA", title: "Owned Meeting", start_time: 1700000000, duration: 120, transcript_updated_at: 5, hasPhotos: 0 },
+  {
+    otid: "OAAA",
+    title: "Owned Meeting",
+    start_time: 1700000000,
+    duration: 120,
+    transcript_updated_at: 5,
+    hasPhotos: 0,
+  },
 ];
 const SHARED = [
   { otid: "OAAA", title: "Owned Meeting", start_time: 1700000000, transcript_updated_at: 5 },
@@ -30,7 +37,8 @@ beforeAll(() => {
     port: 0,
     async fetch(req) {
       const url = new URL(req.url);
-      if (url.pathname === "/user") return Response.json({ userid: "u1", email: "sam@tinycloud.xyz" });
+      if (url.pathname === "/user")
+        return Response.json({ userid: "u1", email: "sam@tinycloud.xyz" });
       if (url.pathname === "/speeches") {
         const source = url.searchParams.get("source");
         return Response.json({ speeches: source === "owned" ? OWNED : SHARED });
@@ -93,7 +101,10 @@ describe("full pipeline (scan -> pull -> upload) via CLI + fake tc", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+    const [out, err] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
     return { code: await proc.exited, out, err };
   }
 
@@ -141,9 +152,11 @@ describe("full pipeline (scan -> pull -> upload) via CLI + fake tc", () => {
 
   test("participant rows are one per distinct speaker", () => {
     const db = conversationDb();
-    const names = (db.query("SELECT name FROM participant WHERE conversation_id = 'otter-OAAA' ORDER BY name").all() as any[]).map(
-      (r) => r.name,
-    );
+    const names = (
+      db
+        .query("SELECT name FROM participant WHERE conversation_id = 'otter-OAAA' ORDER BY name")
+        .all() as any[]
+    ).map((r) => r.name);
     expect(names).toEqual(["Andrew Miller", "Sri"]);
     db.close();
   });

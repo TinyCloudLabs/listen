@@ -67,6 +67,12 @@ function fullPolicyResources(space = "applications") {
       actions: ["tinycloud.kv/get", "tinycloud.kv/put", "tinycloud.kv/del"],
     },
     {
+      service: "tinycloud.kv",
+      space: "secrets",
+      path: "vault/secrets/scoped/listen/OTTER_COOKIE",
+      actions: ["tinycloud.kv/get", "tinycloud.kv/put", "tinycloud.kv/del"],
+    },
+    {
       service: "tinycloud.capabilities",
       space: "secrets",
       path: "",
@@ -398,7 +404,7 @@ describe("Delegation Routes", () => {
         body: JSON.stringify({ serialized: "activatable" }),
       });
 
-      expect(mockUseDelegation).toHaveBeenCalledTimes(12);
+      expect(mockUseDelegation).toHaveBeenCalledTimes(13);
       expect(mockUseDelegation.mock.calls.map((call) => call[0].path)).toEqual([
         "xyz.tinycloud.listen/",
         "xyz.tinycloud.listen/conversations",
@@ -412,6 +418,7 @@ describe("Delegation Routes", () => {
         "vault/secrets/ASSEMBLYAI_API_KEY",
         "vault/secrets/DEEPGRAM_API_KEY",
         "vault/secrets/scoped/listen/GOOGLE_MEET_TOKENS",
+        "vault/secrets/scoped/listen/OTTER_COOKIE",
       ]);
     });
 
@@ -429,7 +436,7 @@ describe("Delegation Routes", () => {
       expect(stored!.actions).toContain("tinycloud.sql/write");
       expect(stored!.path).toContain("tinycloud.sql:xyz.tinycloud.listen/conversations");
       expect(stored!.policyHash).toBeDefined();
-      expect(stored!.resources?.length).toBe(15);
+      expect(stored!.resources?.length).toBe(16);
     });
 
     it("accepts SDK portable resources with short service names and fully qualified spaces", async () => {
@@ -509,6 +516,12 @@ describe("Delegation Routes", () => {
           service: "tinycloud.kv",
           space: "secrets",
           path: "vault/secrets/scoped/listen/GOOGLE_MEET_TOKENS",
+          actions: ["tinycloud.kv/get", "tinycloud.kv/put", "tinycloud.kv/del"],
+        },
+        {
+          service: "tinycloud.kv",
+          space: "secrets",
+          path: "vault/secrets/scoped/listen/OTTER_COOKIE",
           actions: ["tinycloud.kv/get", "tinycloud.kv/put", "tinycloud.kv/del"],
         },
         {

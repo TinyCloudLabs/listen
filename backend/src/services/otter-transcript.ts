@@ -1,4 +1,4 @@
-export interface TranscriptSentence {
+export interface OtterTranscriptSentence {
   index: number;
   speaker_id: string;
   speaker_name: string;
@@ -12,7 +12,7 @@ export interface TranscriptSentence {
 const HEADER = /^(.+?)\s{2,}(\d{1,2}:\d{2}(?::\d{2})?)\s*$/;
 
 /** Parse an Otter bulk_export diarized .txt into normalized sentences. */
-export function parseOtterTxt(txt: string): TranscriptSentence[] {
+export function parseOtterTxt(txt: string): OtterTranscriptSentence[] {
   const segments: { name: string; start: number; lines: string[] }[] = [];
   for (const rawLine of txt.split(/\r?\n/)) {
     const line = rawLine.trimEnd();
@@ -24,7 +24,7 @@ export function parseOtterTxt(txt: string): TranscriptSentence[] {
     }
   }
 
-  const sentences: TranscriptSentence[] = [];
+  const sentences: OtterTranscriptSentence[] = [];
   for (let i = 0; i < segments.length; i += 1) {
     const seg = segments[i]!;
     const text = seg.lines.join(" ").trim();
@@ -42,30 +42,11 @@ export function parseOtterTxt(txt: string): TranscriptSentence[] {
   return sentences;
 }
 
-/** Match Listen's transcript_text: "[mm:ss] Speaker: text" per line. */
-export function transcriptText(sentences: TranscriptSentence[]): string {
-  return sentences
-    .map((s) => {
-      const ts = formatTimestamp(s.start_time);
-      return `${ts ? `[${ts}] ` : ""}${s.speaker_name}: ${s.text}`;
-    })
-    .join("\n");
-}
-
 function toSeconds(ts: string): number {
-  const parts = ts.split(":").map(Number);
-  return parts.reduce((acc, n) => acc * 60 + n, 0);
-}
-
-function formatTimestamp(value: number | null): string | null {
-  if (value == null || !Number.isFinite(value)) return null;
-  const total = Math.max(0, Math.floor(value));
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  const mm = String(m).padStart(2, "0");
-  const ss = String(s).padStart(2, "0");
-  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+  return ts
+    .split(":")
+    .map(Number)
+    .reduce((acc, n) => acc * 60 + n, 0);
 }
 
 function slugify(name: string, index: number): string {

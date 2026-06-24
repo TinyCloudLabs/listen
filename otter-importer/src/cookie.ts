@@ -6,10 +6,7 @@ export interface OtterCookie {
 }
 
 /** Resolve the Otter cookie: explicit > env (OTTER_SESSIONID/OTTER_CSRFTOKEN) > stored file. */
-export function resolveCookie(
-  cookiePath: string,
-  explicit?: Partial<OtterCookie>,
-): OtterCookie {
+export function resolveCookie(cookiePath: string, explicit?: Partial<OtterCookie>): OtterCookie {
   const sessionid =
     explicit?.sessionid ?? process.env.OTTER_SESSIONID ?? storedField(cookiePath, "sessionid");
   const csrftoken =
