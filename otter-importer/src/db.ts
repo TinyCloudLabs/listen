@@ -84,51 +84,80 @@ export class Store {
     return "changed";
   }
 
-  savePull(otid: string, transcriptJson: string, transcriptText: string, segmentCount: number): void {
+  savePull(
+    otid: string,
+    transcriptJson: string,
+    transcriptText: string,
+    segmentCount: number,
+  ): void {
     this.db
       .query(
         `UPDATE otter_speech SET transcript_json=$json, transcript_text=$text, segment_count=$n,
            status='pulled', error=NULL, pulled_at=$now WHERE otid=$otid`,
       )
-      .run({ $otid: otid, $json: transcriptJson, $text: transcriptText, $n: segmentCount, $now: now() });
+      .run({
+        $otid: otid,
+        $json: transcriptJson,
+        $text: transcriptText,
+        $n: segmentCount,
+        $now: now(),
+      });
   }
 
   markPullFailed(otid: string, error: string): void {
-    this.db.query(`UPDATE otter_speech SET status='pull_failed', error=$e WHERE otid=$otid`).run({ $otid: otid, $e: error });
+    this.db
+      .query(`UPDATE otter_speech SET status='pull_failed', error=$e WHERE otid=$otid`)
+      .run({ $otid: otid, $e: error });
   }
 
   markPublished(otid: string, conversationId: string): void {
     this.db
-      .query(`UPDATE otter_speech SET status='published', conversation_id=$cid, error=NULL, published_at=$now WHERE otid=$otid`)
+      .query(
+        `UPDATE otter_speech SET status='published', conversation_id=$cid, error=NULL, published_at=$now WHERE otid=$otid`,
+      )
       .run({ $otid: otid, $cid: conversationId, $now: now() });
   }
 
   markUploadFailed(otid: string, error: string): void {
-    this.db.query(`UPDATE otter_speech SET status='upload_failed', error=$e WHERE otid=$otid`).run({ $otid: otid, $e: error });
+    this.db
+      .query(`UPDATE otter_speech SET status='upload_failed', error=$e WHERE otid=$otid`)
+      .run({ $otid: otid, $e: error });
   }
 
   pendingPull(limit: number): SpeechRow[] {
     return this.db
-      .query(`SELECT * FROM otter_speech WHERE status IN ('scanned','pull_failed') ORDER BY start_epoch DESC LIMIT $n`)
+      .query(
+        `SELECT * FROM otter_speech WHERE status IN ('scanned','pull_failed') ORDER BY start_epoch DESC LIMIT $n`,
+      )
       .all({ $n: limit }) as SpeechRow[];
   }
 
   pendingUpload(limit: number): SpeechRow[] {
     return this.db
-      .query(`SELECT * FROM otter_speech WHERE status IN ('pulled','upload_failed') ORDER BY start_epoch DESC LIMIT $n`)
+      .query(
+        `SELECT * FROM otter_speech WHERE status IN ('pulled','upload_failed') ORDER BY start_epoch DESC LIMIT $n`,
+      )
       .all({ $n: limit }) as SpeechRow[];
   }
 
   get(otid: string): SpeechRow | null {
-    return (this.db.query(`SELECT * FROM otter_speech WHERE otid=$otid`).get({ $otid: otid }) as SpeechRow) ?? null;
+    return (
+      (this.db
+        .query(`SELECT * FROM otter_speech WHERE otid=$otid`)
+        .get({ $otid: otid }) as SpeechRow) ?? null
+    );
   }
 
   list(limit: number): SpeechRow[] {
-    return this.db.query(`SELECT * FROM otter_speech ORDER BY start_epoch DESC LIMIT $n`).all({ $n: limit }) as SpeechRow[];
+    return this.db
+      .query(`SELECT * FROM otter_speech ORDER BY start_epoch DESC LIMIT $n`)
+      .all({ $n: limit }) as SpeechRow[];
   }
 
   counts(): Record<string, number> {
-    const rows = this.db.query(`SELECT status, COUNT(*) as n FROM otter_speech GROUP BY status`).all() as {
+    const rows = this.db
+      .query(`SELECT status, COUNT(*) as n FROM otter_speech GROUP BY status`)
+      .all() as {
       status: string;
       n: number;
     }[];

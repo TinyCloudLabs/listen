@@ -61,7 +61,8 @@ export function uploadPending(
       result.published += 1;
     } catch (err) {
       result.failed += 1;
-      if (!options.dryRun) store.markUploadFailed(row.otid, err instanceof Error ? err.message : String(err));
+      if (!options.dryRun)
+        store.markUploadFailed(row.otid, err instanceof Error ? err.message : String(err));
     }
   }
   return result;
@@ -78,7 +79,9 @@ function publishConversation(
   const now = new Date().toISOString();
   const startedAt = row.start_epoch ? new Date(row.start_epoch * 1000).toISOString() : null;
   const endedAt =
-    startedAt && row.duration_secs ? new Date((row.start_epoch! + row.duration_secs) * 1000).toISOString() : null;
+    startedAt && row.duration_secs
+      ? new Date((row.start_epoch! + row.duration_secs) * 1000).toISOString()
+      : null;
   const transcriptKvKey = remoteKey(config, `transcript/${conversationId}`);
   const metadata = {
     importer: "otter-importer",
@@ -128,7 +131,12 @@ function insertParticipants(
   appOptions: TcOptions,
 ): void {
   const names = [...new Set(sentences.map((s) => s.speaker_name).filter(Boolean))];
-  sqlExecute(config.listenSqlDb, `DELETE FROM participant WHERE conversation_id = ?`, [conversationId], appOptions);
+  sqlExecute(
+    config.listenSqlDb,
+    `DELETE FROM participant WHERE conversation_id = ?`,
+    [conversationId],
+    appOptions,
+  );
   names.forEach((name, i) => {
     sqlExecute(
       config.listenSqlDb,

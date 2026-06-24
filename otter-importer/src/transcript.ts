@@ -69,5 +69,10 @@ function formatTimestamp(value: number | null): string | null {
 }
 
 function slugify(name: string, index: number): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || `speaker-${index + 1}`;
+  return (
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || `speaker-${index + 1}`
+  );
 }

@@ -29,8 +29,7 @@ export function runTc(args: string[], options: TcOptions = {}): TcRunResult {
 
   if (result.error) throw result.error;
   if (result.status !== 0) {
-    const detail =
-      result.stderr.trim() || result.stdout.trim() || `tc exited ${result.status}`;
+    const detail = result.stderr.trim() || result.stdout.trim() || `tc exited ${result.status}`;
     throw new Error(`${tc} ${fullArgs.join(" ")} failed: ${detail}`);
   }
   return { stdout: result.stdout, stderr: result.stderr };
@@ -71,7 +70,18 @@ export function createDelegation(
   options: TcOptions = {},
 ): string {
   return runTc(
-    ["delegation", "create", "--to", to, "--path", path, "--actions", actions.join(","), "--expiry", expiry],
+    [
+      "delegation",
+      "create",
+      "--to",
+      to,
+      "--path",
+      path,
+      "--actions",
+      actions.join(","),
+      "--expiry",
+      expiry,
+    ],
     options,
   ).stdout.trim();
 }
