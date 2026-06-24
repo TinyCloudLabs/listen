@@ -1,0 +1,6 @@
+node_modules/
+*.sqlite
+.otter-importer/
+cookie.json
+.env
+.env.local
