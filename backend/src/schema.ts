@@ -96,6 +96,34 @@ const COLUMN_MIGRATION_STATEMENTS = [
 ];
 const COLUMN_MIGRATION_ALREADY_APPLIED_STATEMENTS = ["UPDATE conversation SET id = id WHERE 1 = 0"];
 
+function normalizeSchemaErrorMessage(message: string): string {
+  if (
+    /524\s*-/i.test(message) ||
+    /Error code 524/i.test(message) ||
+    /A timeout occurred/i.test(message) ||
+    /<!doctype html/i.test(message) ||
+    /<html[\s>]/i.test(message)
+  ) {
+    return "TinyCloud SQL timed out while preparing the conversations database. Please try again.";
+  }
+
+  const compact = message.replace(/\s+/g, " ").trim();
+  return compact.length > 500 ? `${compact.slice(0, 500)}...` : compact;
+}
+
+function schemaErrorMessage(result: unknown): string {
+  const raw =
+    (result as { error?: { message?: unknown; code?: unknown } } | null)?.error?.message ??
+    (result as { error?: { message?: unknown; code?: unknown } } | null)?.error?.code ??
+    "unknown error";
+
+  return normalizeSchemaErrorMessage(String(raw));
+}
+
+function thrownSchemaErrorMessage(error: unknown): string {
+  return normalizeSchemaErrorMessage(error instanceof Error ? error.message : String(error));
+}
+
 /**
  * Track schema initialization per DelegatedAccess instance.
  * WeakMap ensures cleanup when the access object is GC'd.
@@ -110,7 +138,7 @@ export async function ensureSchema(access: DelegatedAccess): Promise<void> {
   if (schemaInitialized.has(access)) return;
 
   const sqlDb = conversationSql(access);
-  const created = await sqlDb.migrations.apply({
+  const initialMigration = {
     namespace: MIGRATION_NAMESPACE,
     migrations: [
       {
@@ -118,16 +146,20 @@ export async function ensureSchema(access: DelegatedAccess): Promise<void> {
         sql: SCHEMA_STATEMENTS,
       },
     ],
-  });
+  };
+  const created = await sqlDb.migrations.apply(initialMigration).catch((error) => ({
+    ok: false as const,
+    error: { message: thrownSchemaErrorMessage(error) },
+  }));
   if (!created.ok) {
-    const msg = created.error?.message ?? "unknown error";
+    const msg = schemaErrorMessage(created);
     throw new Error(`Failed to initialize conversations schema: ${msg}`);
   }
 
   const columnCheck = await sqlDb.query(
     "SELECT transcript_json, transcript_text FROM conversation LIMIT 1",
   );
-  const updated = await sqlDb.migrations.apply({
+  const columnMigration = {
     namespace: MIGRATION_NAMESPACE,
     migrations: [
       {
@@ -137,9 +169,13 @@ export async function ensureSchema(access: DelegatedAccess): Promise<void> {
           : COLUMN_MIGRATION_STATEMENTS,
       },
     ],
-  });
+  };
+  const updated = await sqlDb.migrations.apply(columnMigration).catch((error) => ({
+    ok: false as const,
+    error: { message: thrownSchemaErrorMessage(error) },
+  }));
   if (!updated.ok) {
-    const msg = updated.error?.message ?? "unknown error";
+    const msg = schemaErrorMessage(updated);
     throw new Error(`Failed to update conversations schema: ${msg}`);
   }
 

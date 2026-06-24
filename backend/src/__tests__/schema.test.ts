@@ -137,5 +137,53 @@ describe("schema", () => {
 
       expect(ensureSchema(access)).rejects.toThrow("Failed to initialize conversations schema");
     });
+
+    it("does not leak TinyCloud timeout HTML from initial migration errors", async () => {
+      access.dbHandle.migrations.apply.mockImplementation(async () => ({
+        ok: false,
+        error: {
+          message:
+            "SQL batch failed: 524 - <!DOCTYPE html><html><head><title>tinycloud.xyz | 524: A timeout occurred</title></head><body>Error code 524</body></html>",
+        },
+      }));
+
+      await expect(ensureSchema(access)).rejects.toThrow(
+        "TinyCloud SQL timed out while preparing the conversations database",
+      );
+      await expect(ensureSchema(access)).rejects.not.toThrow("<!DOCTYPE html>");
+    });
+
+    it("does not leak TinyCloud timeout HTML from transcript migration errors", async () => {
+      access.dbHandle.migrations.apply.mockImplementation(
+        async (options: { migrations: Array<{ id: string }> }) => {
+          if (options.migrations[0].id === "001_initial") return { ok: true };
+          return {
+            ok: false,
+            error: {
+              message:
+                "SQL batch failed: 524 - <html><head><title>A timeout occurred</title></head><body>Error code 524</body></html>",
+            },
+          };
+        },
+      );
+
+      await expect(ensureSchema(access)).rejects.toThrow(
+        "TinyCloud SQL timed out while preparing the conversations database",
+      );
+      await expect(ensureSchema(access)).rejects.not.toThrow("<html>");
+    });
+
+    it("normalizes thrown TinyCloud timeout HTML from migrations", async () => {
+      access.dbHandle.migrations.apply.mockImplementation(async () => {
+        throw new Error(
+          "SQL batch failed: 524 - <!doctype html><html><body>A timeout occurred</body></html>",
+        );
+      });
+
+      await expect(ensureSchema(access)).rejects.toThrow(
+        "TinyCloud SQL timed out while preparing the conversations database",
+      );
+      await expect(ensureSchema(access)).rejects.not.toThrow("<!doctype html>");
+    });
   });
 });
