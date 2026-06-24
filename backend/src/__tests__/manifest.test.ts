@@ -17,6 +17,10 @@ describe("manifest", () => {
     expect(manifest.secrets).toEqual({
       FIREFLIES_API_KEY: ["read"],
       GRANOLA_API_KEY: ["read"],
+      SOUNDCORE_SESSION: ["read"],
+      SOUNDCORE_AUTH_TOKEN: ["read"],
+      SOUNDCORE_UID: ["read"],
+      SOUNDCORE_OPENUDID: ["read"],
       ASSEMBLYAI_API_KEY: ["read"],
       DEEPGRAM_API_KEY: ["read"],
       GOOGLE_MEET_TOKENS: {
@@ -51,31 +55,50 @@ describe("manifest", () => {
     );
   });
 
-  test("includes the owner default-network decrypt grant in concrete backend policy", () => {
+  test("keeps app data grants scoped and adds explicit backend secret grants", () => {
     const ownerDid = "did:pkh:eip155:1:0xTEST";
+    const permissions = backendDelegationResolvedPermissions("did:key:backend", ownerDid);
 
-    expect(backendDelegationResolvedPermissions("did:key:backend", ownerDid)).toContainEqual({
-      service: "tinycloud.encryption",
-      space: "encryption",
-      path: `urn:tinycloud:encryption:${ownerDid}:default`,
-      actions: ["tinycloud.encryption/decrypt"],
-      skipPrefix: true,
-      description: "Decrypt Listen secrets through the user's default encryption network.",
-    });
+    expect(permissions).toContainEqual(
+      expect.objectContaining({
+        service: "tinycloud.kv",
+        space: "applications",
+        path: "xyz.tinycloud.listen/",
+      }),
+    );
+    expect(permissions).toContainEqual(
+      expect.objectContaining({
+        service: "tinycloud.sql",
+        space: "applications",
+        path: "xyz.tinycloud.listen/conversations",
+      }),
+    );
+    expect(permissions).toContainEqual(
+      expect.objectContaining({
+        service: "tinycloud.kv",
+        space: "secrets",
+        path: "vault/secrets/SOUNDCORE_SESSION",
+      }),
+    );
+    expect(permissions).toContainEqual(
+      expect.objectContaining({
+        service: "tinycloud.kv",
+        space: "secrets",
+        path: "vault/secrets/scoped/listen/GOOGLE_MEET_TOKENS",
+      }),
+    );
+    expect(permissions).toContainEqual(
+      expect.objectContaining({
+        service: "tinycloud.encryption",
+        space: "encryption",
+        path: `urn:tinycloud:encryption:${ownerDid}:default`,
+      }),
+    );
   });
 
-  test("matches backend policy when the session DID and delegated encryption network differ only by address casing", () => {
+  test("matches backend policy when the grant covers the app data policy", () => {
     const ownerDid = "did:pkh:eip155:1:0xd559ccd9eb87c530a9a349262669386de93cf412";
-    const checksummedOwnerDid = "did:pkh:eip155:1:0xd559CCd9EB87c530A9a349262669386dE93cf412";
-    const granted = backendDelegationResolvedPermissions("did:key:backend", ownerDid).map(
-      (permission) =>
-        permission.service === "tinycloud.encryption"
-          ? {
-              ...permission,
-              path: `urn:tinycloud:encryption:${checksummedOwnerDid}:default`,
-            }
-          : permission,
-    );
+    const granted = backendDelegationResolvedPermissions("did:key:backend", ownerDid);
 
     expect(delegationCoversBackendPolicy(granted, "did:key:backend", ownerDid)).toBe(true);
   });

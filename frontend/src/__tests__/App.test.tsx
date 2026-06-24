@@ -6,6 +6,7 @@ import {
   createAndSignIn,
   createApiClient,
   createManifestDelegation,
+  createPermissionDelegation,
   clearPersistedSession,
   loadPersistedSession,
   requestNonce,
@@ -28,6 +29,7 @@ const mockGet = vi.fn();
 const mockPost = vi.fn();
 const mockPut = vi.fn();
 const mockDel = vi.fn();
+const mockSecretGet = vi.fn();
 const mockSecretDelete = vi.fn();
 const mockTinyCloudQuery = vi.fn();
 const mockTinyCloudKvGet = vi.fn();
@@ -88,6 +90,7 @@ vi.mock("@listen/client", () => {
     restoreTinyCloudWeb: vi.fn(() => Promise.resolve(null)),
     createApiClient: vi.fn(() => mockApiClient),
     createManifestDelegation: vi.fn(),
+    createPermissionDelegation: vi.fn(),
     clearPersistedSession: vi.fn(),
     loadPersistedSession: vi.fn(() => null),
     sendDelegation: vi.fn(),
@@ -188,6 +191,10 @@ function workspaceState(overrides: Partial<Record<string, unknown>> = {}) {
     backendReadableSecrets: {
       fireflies: { readable: true },
       granola: { readable: true },
+      soundcoreSession: { readable: false },
+      soundcoreAuthToken: { readable: false },
+      soundcoreUid: { readable: false },
+      soundcoreOpenudid: { readable: false },
       assemblyai: { readable: true },
       deepgram: { readable: true },
       ...(overrides.backendReadableSecrets as Record<string, unknown> | undefined),
@@ -243,7 +250,7 @@ function mockAuthFlow() {
       hosts: ["http://localhost:5112"],
       secrets: {
         unlock: vi.fn().mockResolvedValue({ ok: true }),
-        get: vi.fn().mockResolvedValue({ ok: true, data: "fireflies-key" }),
+        get: mockSecretGet,
         delete: mockSecretDelete,
       },
       sql: {
@@ -258,6 +265,10 @@ function mockAuthFlow() {
   });
   vi.mocked(verifySession).mockResolvedValue({ token: "mock-token", expiresIn: 3600 });
   vi.mocked(createManifestDelegation).mockResolvedValue({
+    serialized: "mock-delegation",
+    prompted: false,
+  });
+  vi.mocked(createPermissionDelegation).mockResolvedValue({
     serialized: "mock-delegation",
     prompted: false,
   });
@@ -363,6 +374,7 @@ describe("App manual sign-in processing", () => {
     );
     mockAuthFlow();
     vi.mocked(loadPersistedSession).mockReturnValue(null);
+    mockSecretGet.mockResolvedValue({ ok: true, data: "saved-secret" });
     mockSecretDelete.mockResolvedValue({ ok: true });
     mockTinyCloudConversationPage([]);
     mockTinyCloudKvGet.mockResolvedValue({ ok: true, data: { data: null } });
@@ -592,7 +604,7 @@ describe("App manual sign-in processing", () => {
     expect(createAndSignIn).toHaveBeenCalled();
   });
 
-  it("posts backend delegation after manual sign-in when none is stored", async () => {
+  it("does not post backend delegation after manual sign-in when none is stored", async () => {
     mockGet.mockImplementation((url: string) => {
       if (url === "/api/workspace-state") {
         return Promise.resolve(
@@ -607,6 +619,9 @@ describe("App manual sign-in processing", () => {
             backendReadableSecrets: {
               fireflies: { readable: null },
               granola: { readable: null },
+              soundcoreAuthToken: { readable: null },
+              soundcoreUid: { readable: null },
+              soundcoreOpenudid: { readable: null },
               assemblyai: { readable: null },
               deepgram: { readable: null },
             },
@@ -622,21 +637,11 @@ describe("App manual sign-in processing", () => {
     await renderAndSignIn();
 
     await waitFor(() => {
-      expect(sendDelegation).toHaveBeenCalledWith(
-        "http://localhost:3001",
-        "mock-delegation",
-        "mock-token",
-      );
+      expect(mockGet).toHaveBeenCalledWith("/api/workspace-state");
     });
-    expect(createManifestDelegation).toHaveBeenCalledWith(
-      expect.objectContaining({ did: "did:pkh:eip155:1:0xabc123" }),
-      "did:key:backend",
-      expect.objectContaining({
-        delegationTargets: expect.arrayContaining([
-          expect.objectContaining({ did: "did:key:backend" }),
-        ]),
-      }),
-    );
+    expect(sendDelegation).not.toHaveBeenCalled();
+    expect(createManifestDelegation).not.toHaveBeenCalled();
+    expect(createPermissionDelegation).not.toHaveBeenCalled();
   });
 
   it("keeps the frontend signed in when the workspace state check fails", async () => {
@@ -760,7 +765,39 @@ describe("App manual sign-in processing", () => {
     expect(
       screen.getByText(/Backend offline\. Sync and source setup are unavailable/i),
     ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /reconnect backend/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /sync fireflies/i })).not.toBeInTheDocument();
+  });
+
+  it("does not silently fall back to direct mode during explicit backend reconnect", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("backend offline"))),
+    );
+    mockTinyCloudConversationPage([
+      {
+        id: "01OFFLINE",
+        title: "Offline Planning",
+        source: "fireflies",
+        source_url: null,
+        started_at: "2026-05-14T14:00:00Z",
+        duration_secs: 1200,
+        summary: "Roadmap",
+        created_at: "2026-05-14T14:30:00Z",
+        participant_count: 2,
+      },
+    ]);
+
+    await renderAndSignIn();
+    expect(await screen.findByText("Offline Planning")).toBeInTheDocument();
+    expect(createAndSignIn).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /reconnect backend/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Backend reconnect failed:/i)).toBeInTheDocument();
+    });
+    expect(createAndSignIn).toHaveBeenCalledTimes(1);
   });
 
   it("falls back to direct TinyCloud sign-in when nonce request fails", async () => {
@@ -794,7 +831,7 @@ describe("App manual sign-in processing", () => {
     expect(sendDelegation).not.toHaveBeenCalled();
   });
 
-  it("renews backend delegation when the connected workspace sees an expired record", async () => {
+  it("does not renew backend delegation just because the connected workspace sees an expired record", async () => {
     mockGet.mockImplementation((url: string) => {
       if (url === "/api/workspace-state") {
         return Promise.resolve(
@@ -809,6 +846,9 @@ describe("App manual sign-in processing", () => {
             backendReadableSecrets: {
               fireflies: { readable: null },
               granola: { readable: null },
+              soundcoreAuthToken: { readable: null },
+              soundcoreUid: { readable: null },
+              soundcoreOpenudid: { readable: null },
               assemblyai: { readable: null },
               deepgram: { readable: null },
             },
@@ -824,15 +864,13 @@ describe("App manual sign-in processing", () => {
     await renderAndSignIn();
 
     await waitFor(() => {
-      expect(sendDelegation).toHaveBeenCalledWith(
-        "http://localhost:3001",
-        "mock-delegation",
-        "mock-token",
-      );
+      expect(mockGet).toHaveBeenCalledWith("/api/workspace-state");
     });
+    expect(sendDelegation).not.toHaveBeenCalled();
+    expect(createManifestDelegation).not.toHaveBeenCalled();
   });
 
-  it("requires Fireflies access when the backend cannot read the shared secret", async () => {
+  it("does not treat an unreadable Fireflies secret as connected during sign-in", async () => {
     mockGet.mockImplementation((url: string) => {
       if (url === "/api/workspace-state") {
         return Promise.resolve(
@@ -840,6 +878,9 @@ describe("App manual sign-in processing", () => {
             backendReadableSecrets: {
               fireflies: { readable: false },
               granola: { readable: true },
+              soundcoreAuthToken: { readable: true },
+              soundcoreUid: { readable: true },
+              soundcoreOpenudid: { readable: true },
               assemblyai: { readable: true },
               deepgram: { readable: true },
             },
@@ -861,9 +902,86 @@ describe("App manual sign-in processing", () => {
     await renderAndSignIn();
 
     await waitFor(() => {
-      expect(screen.getAllByText(/finish fireflies access/i).length).toBeGreaterThan(0);
+      expect(mockGet).toHaveBeenCalledWith("/api/workspace-state");
     });
+    expect(screen.queryByText(/finish fireflies access/i)).not.toBeInTheDocument();
     expect(mockGet).not.toHaveBeenCalledWith("/api/webhooks/fireflies/pending");
+  });
+
+  it("opens Soundcore credential setup from Connections when another source is connected", async () => {
+    mockSecretGet.mockImplementation((secretName: string) => {
+      if (secretName.startsWith("SOUNDCORE_")) {
+        return Promise.resolve({
+          ok: false,
+          error: { code: "key_not_found", message: "Secret not found" },
+        });
+      }
+      return Promise.resolve({ ok: true, data: "saved-secret" });
+    });
+
+    await renderAndSignIn();
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Fireflies$/i }));
+
+    await waitFor(() => {
+      expect(screen.getAllByRole("heading", { name: /connections/i }).length).toBeGreaterThan(0);
+    });
+    expect(await screen.findByText(/available connections/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /add credentials/i }));
+
+    expect(await screen.findByText(/Soundcore web session/i)).toBeInTheDocument();
+    expect(screen.getByText(/Paste Soundcore values/i)).toBeInTheDocument();
+  });
+
+  it("detects saved Soundcore credentials after reload", async () => {
+    mockSecretGet.mockImplementation((secretName: string) => {
+      if (secretName.startsWith("SOUNDCORE_")) {
+        return Promise.resolve({ ok: true, data: "saved-soundcore-secret" });
+      }
+      return Promise.resolve({
+        ok: false,
+        error: { code: "key_not_found", message: "Secret not found" },
+      });
+    });
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(
+          workspaceState({
+            backendReadableSecrets: {
+              fireflies: { readable: false },
+              granola: { readable: false },
+              soundcoreAuthToken: { readable: true },
+              soundcoreUid: { readable: true },
+              soundcoreOpenudid: { readable: true },
+              assemblyai: { readable: false },
+              deepgram: { readable: false },
+            },
+            conversations: { hasAny: true, total: 1 },
+          }),
+        );
+      }
+      if (url === "/api/webhooks/google-meet/check") {
+        return Promise.resolve({ status: "not_configured" });
+      }
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({ conversations: [], total: 1 });
+      }
+      return Promise.resolve({});
+    });
+
+    await renderAndSignIn();
+
+    await waitFor(() => {
+      expect(screen.getByText(/connected · 1 source/i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Soundcore$/i }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Soundcore").length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByRole("button", { name: /add credentials/i })).not.toBeInTheDocument();
   });
 
   it("shows banner when pending items were processed", async () => {

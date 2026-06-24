@@ -25,6 +25,7 @@ import {
   type TranscriptionProviderName,
   type TranscriptionResult,
 } from "../services/transcription.js";
+import { withTimeout } from "../middleware/timeout.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -39,6 +40,10 @@ interface ConversationsRoutesConfig {
 
 const DEFAULT_LIMIT = 20;
 const DEFAULT_OFFSET = 0;
+const CONVERSATION_DETAIL_TIMEOUT_MS = Number.parseInt(
+  process.env.CONVERSATION_DETAIL_TIMEOUT_MS ?? "30000",
+  10,
+);
 
 interface ManualTranscriptImportBody {
   title?: unknown;
@@ -166,6 +171,43 @@ function transcriptAvailableStatus(row: Record<string, unknown>): TranscriptStat
 function isMissingKvError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
   return /key not found|not[_ -]?found|kv_not_found/i.test(message);
+}
+
+function detailLog(
+  requestId: string,
+  stage: string,
+  data: Record<string, unknown> = {},
+  level: "info" | "warn" | "error" = "info",
+) {
+  const parts = Object.entries(data)
+    .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
+    .join(" ");
+  const message = `[conversations:detail:${requestId}] ${stage}${parts ? ` ${parts}` : ""}`;
+  if (level === "warn") console.warn(message);
+  else if (level === "error") console.error(message);
+  else console.info(message);
+}
+
+async function timedDetailStep<T>(
+  requestId: string,
+  stage: string,
+  promise: Promise<T>,
+): Promise<T> {
+  const started = Date.now();
+  detailLog(requestId, `${stage}:start`);
+  try {
+    const result = await withTimeout(promise, CONVERSATION_DETAIL_TIMEOUT_MS);
+    detailLog(requestId, `${stage}:ok`, { ms: Date.now() - started });
+    return result;
+  } catch (err) {
+    detailLog(
+      requestId,
+      `${stage}:failed`,
+      { ms: Date.now() - started, error: err instanceof Error ? err.message : String(err) },
+      "error",
+    );
+    throw err;
+  }
 }
 
 async function resolveAudioPlaybackMetadata(
@@ -606,37 +648,56 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
   router.get("/:id", async (req: Request, res: Response) => {
     const access = req.delegatedAccess!;
     const { id } = req.params;
+    const requestId = `${Date.now().toString(36)}-${id.slice(0, 8)}`;
+    const started = Date.now();
+    detailLog(requestId, "request", { id });
 
     try {
-      await ensureSchema(access);
+      await timedDetailStep(requestId, "schema", ensureSchema(access));
       const sqlDb = conversationSql(access);
 
-      // Fetch conversation
-      const convoResult = await sqlDb.query(
-        `SELECT id, title, source, source_id, source_url, started_at, ended_at, duration_secs, summary, metadata, transcript_json, transcript_text, created_at, updated_at
+      // Fetch conversation without transcript payload columns. Some Soundcore transcripts are
+      // large enough that selecting them from SQL makes detail loads slow; KV is the primary
+      // transcript read path and SQL transcript_json is only a fallback.
+      const convoResult = await timedDetailStep(
+        requestId,
+        "conversation-query",
+        sqlDb.query(
+          `SELECT id, title, source, source_id, source_url, started_at, ended_at, duration_secs, summary, metadata, created_at, updated_at,
+                LENGTH(transcript_json) AS transcript_json_length
          FROM conversation WHERE id = ?`,
-        [id],
+          [id],
+        ),
       );
 
       if (!convoResult.ok || !convoResult.data.rows?.length) {
+        detailLog(requestId, "not-found", { id }, "warn");
         res.status(404).json({ error: "not_found", message: `Conversation ${id} not found` });
         return;
       }
 
       const row = rowToObject(convoResult.data.rows[0] as unknown[], convoResult.data.columns);
+      detailLog(requestId, "conversation-row", {
+        source: row.source,
+        transcriptJsonLength: row.transcript_json_length,
+      });
 
-      const metadata = await resolveAudioPlaybackMetadata(
-        access,
-        id,
-        normalizeConversationMetadata(row.metadata),
+      const metadata = await timedDetailStep(
+        requestId,
+        "audio-metadata",
+        resolveAudioPlaybackMetadata(access, id, normalizeConversationMetadata(row.metadata)),
       );
 
       const conversation = { ...row, metadata };
 
       // Fetch participants
-      const participantsResult = await sqlDb.query(
-        `SELECT id, name, email, speaker_label FROM participant WHERE conversation_id = ?`,
-        [id],
+      const participantsResult = await timedDetailStep(
+        requestId,
+        "participants-query",
+        sqlDb.query(
+          `SELECT id, name, email, speaker_label FROM participant WHERE conversation_id = ?`,
+          [id],
+        ),
       );
       const participants = participantsResult.ok
         ? rowsToObjects(
@@ -644,48 +705,81 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
             participantsResult.data.columns,
           )
         : [];
+      detailLog(requestId, "participants", { count: participants.length });
 
       let transcript: unknown = null;
       let transcript_status: TranscriptStatus = missingTranscriptStatus(row);
 
-      if (typeof row.transcript_json === "string" && row.transcript_json.length > 0) {
-        transcript = normalizeTranscript(row.transcript_json);
-        transcript_status = transcriptAvailableStatus(row);
-      } else {
-        // Load legacy transcript blob from KV.
-        const kvKey = resolveAppPath(`transcript/${id}`);
-        console.log(`[conversations] Loading transcript from KV: ${kvKey}`);
-        try {
-          const kvResult = await access.kv.get(kvKey);
-          console.log(
-            `[conversations] KV result ok=${kvResult.ok}, hasData=${kvResult.ok && kvResult.data?.data != null}, type=${kvResult.ok ? typeof kvResult.data?.data : "n/a"}`,
-          );
-          if (kvResult.ok && kvResult.data.data) {
-            const raw = kvResult.data.data;
-            // KV may return already-parsed object or a JSON string.
-            transcript = normalizeTranscript(raw);
-            transcript_status = transcriptAvailableStatus(row);
-          } else if (kvResult.ok) {
-            transcript_status = missingTranscriptStatus(row);
-          } else {
-            const message =
-              kvResult.error?.message ?? kvResult.error?.code ?? "Transcript KV read failed";
-            transcript_status = isMissingKvError(message)
-              ? missingTranscriptStatus(row, message)
-              : transcriptReadErrorStatus(row, message);
-          }
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          console.warn(`[conversations] transcript unavailable for ${id}: ${message}`);
-          transcript_status = isMissingKvError(err)
+      // Load transcript blob from KV first.
+      const kvKey = resolveAppPath(`transcript/${id}`);
+      try {
+        const kvResult = await timedDetailStep(requestId, "transcript-kv", access.kv.get(kvKey));
+        detailLog(requestId, "transcript-kv-result", {
+          ok: kvResult.ok,
+          hasData: kvResult.ok && kvResult.data?.data != null,
+          type: kvResult.ok ? typeof kvResult.data?.data : "n/a",
+        });
+        if (kvResult.ok && kvResult.data.data) {
+          const raw = kvResult.data.data;
+          // KV may return already-parsed object or a JSON string.
+          transcript = normalizeTranscript(raw);
+          transcript_status = transcriptAvailableStatus(row);
+        } else if (kvResult.ok) {
+          transcript_status = missingTranscriptStatus(row);
+        } else {
+          const message =
+            kvResult.error?.message ?? kvResult.error?.code ?? "Transcript KV read failed";
+          transcript_status = isMissingKvError(message)
             ? missingTranscriptStatus(row, message)
             : transcriptReadErrorStatus(row, message);
         }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        detailLog(requestId, "transcript-kv-unavailable", { error: message }, "warn");
+        transcript_status = isMissingKvError(err)
+          ? missingTranscriptStatus(row, message)
+          : transcriptReadErrorStatus(row, message);
       }
 
+      if (!transcript && Number(row.transcript_json_length) > 0) {
+        try {
+          const transcriptResult = await timedDetailStep(
+            requestId,
+            "transcript-sql-fallback",
+            sqlDb.query(`SELECT transcript_json FROM conversation WHERE id = ?`, [id]),
+          );
+          if (transcriptResult.ok && transcriptResult.data.rows?.[0]) {
+            const transcriptRow = rowToObject(
+              transcriptResult.data.rows[0] as unknown[],
+              transcriptResult.data.columns,
+            );
+            if (
+              typeof transcriptRow.transcript_json === "string" &&
+              transcriptRow.transcript_json.length > 0
+            ) {
+              transcript = normalizeTranscript(transcriptRow.transcript_json);
+              transcript_status = transcriptAvailableStatus(row);
+            }
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          detailLog(requestId, "transcript-sql-fallback-unavailable", { error: message }, "warn");
+        }
+      }
+
+      detailLog(requestId, "response", {
+        ms: Date.now() - started,
+        transcriptAvailable: transcript_status.available,
+        transcriptCount: Array.isArray(transcript) ? transcript.length : null,
+      });
       res.json({ conversation, participants, transcript, transcript_status });
     } catch (err) {
-      console.error("[conversations] detail failed:", err);
+      detailLog(
+        requestId,
+        "failed",
+        { ms: Date.now() - started, error: err instanceof Error ? err.message : String(err) },
+        "error",
+      );
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: "detail_failed", message });
     }

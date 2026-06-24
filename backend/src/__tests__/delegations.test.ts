@@ -6,9 +6,13 @@ const TEST_ADDRESS = "0xTEST";
 const TEST_DID = "did:pkh:eip155:1:0xTEST";
 const SECRET_NAMES = [
   "FIREFLIES_API_KEY",
+  "GRANOLA_API_KEY",
+  "SOUNDCORE_SESSION",
+  "SOUNDCORE_AUTH_TOKEN",
+  "SOUNDCORE_UID",
+  "SOUNDCORE_OPENUDID",
   "ASSEMBLYAI_API_KEY",
   "DEEPGRAM_API_KEY",
-  "GRANOLA_API_KEY",
 ];
 const DEFAULT_ENCRYPTION_NETWORK_ID = `urn:tinycloud:encryption:${TEST_DID}:default`;
 
@@ -400,15 +404,19 @@ describe("Delegation Routes", () => {
         body: JSON.stringify({ serialized: "activatable" }),
       });
 
-      expect(mockUseDelegation).toHaveBeenCalledTimes(9);
+      expect(mockUseDelegation).toHaveBeenCalledTimes(13);
       expect(mockUseDelegation.mock.calls.map((call) => call[0].path)).toEqual([
         "xyz.tinycloud.listen/",
         "xyz.tinycloud.listen/conversations",
         DEFAULT_ENCRYPTION_NETWORK_ID,
         "vault/secrets/FIREFLIES_API_KEY",
+        "vault/secrets/GRANOLA_API_KEY",
+        "vault/secrets/SOUNDCORE_SESSION",
+        "vault/secrets/SOUNDCORE_AUTH_TOKEN",
+        "vault/secrets/SOUNDCORE_UID",
+        "vault/secrets/SOUNDCORE_OPENUDID",
         "vault/secrets/ASSEMBLYAI_API_KEY",
         "vault/secrets/DEEPGRAM_API_KEY",
-        "vault/secrets/GRANOLA_API_KEY",
         "vault/secrets/scoped/listen/GOOGLE_MEET_TOKENS",
         "vault/secrets/scoped/listen/OTTER_COOKIE",
       ]);
@@ -428,7 +436,7 @@ describe("Delegation Routes", () => {
       expect(stored!.actions).toContain("tinycloud.sql/write");
       expect(stored!.path).toContain("tinycloud.sql:xyz.tinycloud.listen/conversations");
       expect(stored!.policyHash).toBeDefined();
-      expect(stored!.resources?.length).toBe(12);
+      expect(stored!.resources?.length).toBe(16);
     });
 
     it("accepts SDK portable resources with short service names and fully qualified spaces", async () => {

@@ -52,6 +52,8 @@ interface ConversationDetailProps {
   onShare?: (id: string) => void;
 }
 
+const DETAIL_LOAD_TIMEOUT_MS = 45_000;
+
 // ── Helpers ──────────────────────────────────────────────────────────
 
 function formatDurationClock(secs: number | null): string {
@@ -91,6 +93,8 @@ function sourceLabel(source: string): string {
       return "VOICE MEMOS";
     case "voxterm":
       return "VOXTERM";
+    case "soundcore_sync":
+      return "SOUNDCORE";
     case "granola":
       return "GRANOLA";
     case "otter":
@@ -120,14 +124,119 @@ function sourceLinkLabel(source: string): string {
   }
 }
 
-/** Render markdown-ish summary text (newlines, bullets, bold) as HTML. */
-function renderSummary(text: string): string {
+function escapeHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function renderInlineMarkdown(text: string): string {
+  return escapeHtml(text)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/^[-*]\s+/gm, "\u2022 ")
-    .replace(/\n/g, "<br />");
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(
+      /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+      '<a href="$2" target="_blank" rel="noreferrer">$1</a>',
+    );
+}
+
+/** Render a safe, focused subset of markdown used by provider summaries. */
+function renderSummary(text: string): string {
+  const html: string[] = [];
+  const paragraph: string[] = [];
+  let listType: "ul" | "ol" | null = null;
+  let codeLines: string[] | null = null;
+
+  const flushParagraph = () => {
+    if (paragraph.length === 0) return;
+    html.push(`<p>${renderInlineMarkdown(paragraph.join(" "))}</p>`);
+    paragraph.length = 0;
+  };
+
+  const closeList = () => {
+    if (!listType) return;
+    html.push(`</${listType}>`);
+    listType = null;
+  };
+
+  const ensureList = (nextType: "ul" | "ol") => {
+    flushParagraph();
+    if (listType === nextType) return;
+    closeList();
+    listType = nextType;
+    html.push(`<${nextType}>`);
+  };
+
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trimEnd();
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith("```")) {
+      if (codeLines) {
+        html.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+        codeLines = null;
+      } else {
+        flushParagraph();
+        closeList();
+        codeLines = [];
+      }
+      continue;
+    }
+
+    if (codeLines) {
+      codeLines.push(line);
+      continue;
+    }
+
+    if (!trimmed) {
+      flushParagraph();
+      closeList();
+      continue;
+    }
+
+    const heading = trimmed.match(/^(#{1,4})\s+(.+)$/);
+    if (heading) {
+      flushParagraph();
+      closeList();
+      const level = heading[1]!.length;
+      html.push(`<h${level}>${renderInlineMarkdown(heading[2]!)}</h${level}>`);
+      continue;
+    }
+
+    const unordered = trimmed.match(/^[-*]\s+(.+)$/);
+    if (unordered) {
+      ensureList("ul");
+      html.push(`<li>${renderInlineMarkdown(unordered[1]!)}</li>`);
+      continue;
+    }
+
+    const ordered = trimmed.match(/^\d+\.\s+(.+)$/);
+    if (ordered) {
+      ensureList("ol");
+      html.push(`<li>${renderInlineMarkdown(ordered[1]!)}</li>`);
+      continue;
+    }
+
+    const quote = trimmed.match(/^>\s?(.+)$/);
+    if (quote) {
+      flushParagraph();
+      closeList();
+      html.push(`<blockquote>${renderInlineMarkdown(quote[1]!)}</blockquote>`);
+      continue;
+    }
+
+    closeList();
+    paragraph.push(trimmed);
+  }
+
+  if (codeLines) html.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+  flushParagraph();
+  closeList();
+
+  return html.join("");
 }
 
 async function copyText(text: string): Promise<void> {
@@ -189,6 +298,30 @@ function normalizeDetailResponse(response: DetailResponse): DetailResponse {
   };
 }
 
+async function withDetailTimeout<T>(promise: Promise<T>, conversationId: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(
+      () =>
+        reject(
+          new Error(
+            `Timed out loading conversation ${conversationId} after ${DETAIL_LOAD_TIMEOUT_MS / 1000}s`,
+          ),
+        ),
+      DETAIL_LOAD_TIMEOUT_MS,
+    );
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        window.clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 function downloadText(filename: string, text: string): void {
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -215,14 +348,18 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [repairingTranscript, setRepairingTranscript] = useState(false);
+  const [summaryView, setSummaryView] = useState<"formatted" | "markdown">("formatted");
 
   useEffect(() => {
     const cached = readConversationDetailCache<DetailResponse>(conversationId);
     let cancelled = false;
+    const path = `/api/conversations/${conversationId}`;
+    const started = Date.now();
 
     setError(null);
     setNotice(null);
     setRepairingTranscript(false);
+    setSummaryView("formatted");
     if (cached) {
       setData(normalizeDetailResponse(cached.data));
       setLoading(false);
@@ -231,20 +368,38 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
       setLoading(true);
     }
 
-    api
-      .get<DetailResponse>(`/api/conversations/${conversationId}`)
+    console.info("[conversation-detail] loading", {
+      conversationId,
+      path,
+      cached: Boolean(cached),
+    });
+
+    withDetailTimeout(api.get<DetailResponse>(path), conversationId)
       .then((res) => {
         if (cancelled) return;
         const normalized = normalizeDetailResponse(res);
         setData(normalized);
         writeConversationDetailCache(conversationId, normalized);
+        console.info("[conversation-detail] loaded", {
+          conversationId,
+          ms: Date.now() - started,
+          transcriptCount: normalized.transcript?.length ?? 0,
+          transcriptStatus: normalized.transcript_status?.reason ?? "available",
+        });
       })
       .catch((err) => {
         if (cancelled) return;
+        const message = err instanceof Error ? err.message : String(err);
+        console.error("[conversation-detail] failed", {
+          conversationId,
+          path,
+          ms: Date.now() - started,
+          error: message,
+        });
         if (cached) {
           setNotice("Could not refresh cached conversation");
         } else {
-          setError(err instanceof Error ? err.message : String(err));
+          setError(message);
         }
       })
       .finally(() => {
@@ -420,6 +575,32 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
           <div style={s.summaryHead}>
             <span style={s.eyebrow}>· summary</span>
             <span style={s.summaryActions}>
+              {conversation.summary && (
+                <span style={s.viewToggle} aria-label="Summary view">
+                  <button
+                    style={{
+                      ...s.viewToggleBtn,
+                      ...(summaryView === "formatted" ? s.viewToggleBtnActive : {}),
+                    }}
+                    type="button"
+                    onClick={() => setSummaryView("formatted")}
+                    aria-pressed={summaryView === "formatted"}
+                  >
+                    Rendered
+                  </button>
+                  <button
+                    style={{
+                      ...s.viewToggleBtn,
+                      ...(summaryView === "markdown" ? s.viewToggleBtnActive : {}),
+                    }}
+                    type="button"
+                    onClick={() => setSummaryView("markdown")}
+                    aria-pressed={summaryView === "markdown"}
+                  >
+                    Markdown
+                  </button>
+                </span>
+              )}
               <button
                 style={{ ...s.tinyBtn, ...(!conversation.summary ? s.tinyBtnDisabled : {}) }}
                 type="button"
@@ -431,11 +612,13 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
             </span>
           </div>
 
-          {conversation.summary ? (
+          {conversation.summary && summaryView === "formatted" ? (
             <div
               style={s.summaryBody}
               dangerouslySetInnerHTML={{ __html: renderSummary(conversation.summary) }}
             />
+          ) : conversation.summary ? (
+            <pre style={s.summaryMarkdown}>{conversation.summary}</pre>
           ) : (
             <p style={s.summaryEmpty}>No summary yet.</p>
           )}
@@ -685,6 +868,28 @@ const s: Record<string, React.CSSProperties> = {
     marginLeft: "auto",
     display: "flex",
     gap: 6,
+    alignItems: "center",
+  },
+  viewToggle: {
+    display: "inline-flex",
+    border: "var(--lst-border)",
+    borderRadius: 999,
+    overflow: "hidden",
+  },
+  viewToggleBtn: {
+    fontFamily: FONT,
+    fontSize: 10.5,
+    fontWeight: 500,
+    color: "var(--lst-ink-55)",
+    background: "transparent",
+    border: "none",
+    borderRight: "var(--lst-hair)",
+    padding: "3px 8px",
+    cursor: "pointer",
+  },
+  viewToggleBtnActive: {
+    color: "var(--lst-blue)",
+    background: "var(--lst-bg)",
   },
   eyebrow: {
     fontFamily: "var(--lst-font-eyebrow)",
@@ -714,6 +919,19 @@ const s: Record<string, React.CSSProperties> = {
     color: "var(--lst-blue)",
     lineHeight: "var(--lst-leading-body)",
     margin: 0,
+  },
+  summaryMarkdown: {
+    fontFamily: MONO,
+    fontSize: 11.5,
+    color: "var(--lst-blue)",
+    lineHeight: 1.55,
+    whiteSpace: "pre-wrap" as const,
+    overflowWrap: "anywhere" as const,
+    margin: 0,
+    border: "var(--lst-border)",
+    borderRadius: 4,
+    background: "var(--lst-bg)",
+    padding: 12,
   },
   summaryEmpty: {
     fontFamily: FONT,

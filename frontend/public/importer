@@ -1,6 +1,6 @@
 ---
 name: listen-importer
-description: Use when importing local audio or transcript sources into Listen with the listen-importer CLI, including MIC MINI or generic recorder volumes, Apple Voice Memos, VoxTerm transcripts, preprocessing/downsampling, transcription, and upload/publish into Listen's TinyCloud storage.
+description: Use when importing local audio or transcript sources into Listen with the listen-importer CLI, including MIC MINI or generic recorder volumes, Apple Voice Memos, VoxTerm transcripts, Soundcore Sync transcripts, preprocessing/downsampling, transcription, and upload/publish into Listen's TinyCloud storage.
 ---
 
 # Listen Importer
@@ -13,7 +13,7 @@ Use this skill when a user wants to bring local audio or transcripts into Listen
 - Audio is preprocessed/downsampled when useful for transcription or upload size.
 - Audio without transcripts is transcribed with the chosen provider.
 - Imported conversations are uploaded with `--publish` so they appear in Listen.
-- Imported source labels match Listen: `recorder`, `voice_memos`, or `voxterm`.
+- Imported source labels match Listen: `recorder`, `voice_memos`, `voxterm`, or `soundcore_sync`.
 
 ## Prerequisites
 
@@ -68,8 +68,8 @@ Use `LISTEN_IMPORTER_HOME=/path/to/state` to isolate a run. Use `--profile` or `
 
 ## Agent Workflow
 
-1. Ask what source to import: recorder volume, Apple Voice Memos, VoxTerm transcripts, or all known local sources.
-2. Ask for path/time window when needed: recorder mount path, VoxTerm transcript directory, and Voice Memos `--since`.
+1. Ask what source to import: recorder volume, Apple Voice Memos, VoxTerm transcripts, Soundcore Sync transcripts, or all known local sources.
+2. Ask for path/time window when needed: recorder mount path, VoxTerm/Soundcore transcript directory, and Voice Memos `--since`.
 3. Run `doctor`, then a dry run if the command supports it.
 4. Scan source data.
 5. Run `status --json` and inspect counts.
@@ -105,6 +105,13 @@ listen-importer scan-source voxterm
 listen-importer scan-source voxterm --path ~/Documents/voxterm-transcripts
 ```
 
+Soundcore Sync markdown transcripts:
+
+```sh
+listen-importer scan-source soundcore-sync
+listen-importer scan-source soundcore-sync --path ~/Documents/Soundcore-Transcripts
+```
+
 If `--since` is omitted for app-library sources, the importer defaults to local midnight seven calendar days ago.
 
 ## Preprocess And Transcribe
@@ -133,6 +140,7 @@ Publish makes rows visible in Listen:
 ```sh
 listen-importer upload --publish --use-downsampled --source all
 listen-importer upload --publish --transcripts-only --source voxterm
+listen-importer upload --publish --transcripts-only --source soundcore_sync
 ```
 
 Use source-specific upload commands when keeping workflows separated:
@@ -141,6 +149,7 @@ Use source-specific upload commands when keeping workflows separated:
 listen-importer upload --publish --use-downsampled --source recorder
 listen-importer upload --publish --use-downsampled --source voice_memos
 listen-importer upload --publish --transcripts-only --source voxterm
+listen-importer upload --publish --transcripts-only --source soundcore_sync
 ```
 
 ## Useful Commands
@@ -150,13 +159,13 @@ listen-importer init
 listen-importer auth [--profile name] [--host url]
 listen-importer permissions [--to did] [--expiry 30d]
 listen-importer scan <path> [--recorder mic-mini|generic] [--dry-run]
-listen-importer scan-source voice-memos|voxterm [--since yesterday|YYYY-MM-DD] [--path path] [--include-deleted] [--dry-run]
-listen-importer status [--source recorder|voice_memos|voxterm|all] [--json]
-listen-importer list [--limit n] [--source recorder|voice_memos|voxterm|all]
-listen-importer preprocess [--limit n] [--source recorder|voice_memos|voxterm|all] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
-listen-importer downsample [--limit n] [--source recorder|voice_memos|voxterm|all] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
-listen-importer transcribe [--limit n] [--source recorder|voice_memos|voxterm|all] [--provider deepgram|assemblyai] [--api-key key] [--force]
-listen-importer upload [--limit n] [--publish] [--use-downsampled] [--transcripts-only] [--source recorder|voice_memos|voxterm|all] [--profile name] [--host url]
+listen-importer scan-source voice-memos|voxterm|soundcore-sync [--since yesterday|YYYY-MM-DD] [--path path] [--include-deleted] [--dry-run]
+listen-importer status [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--json]
+listen-importer list [--limit n] [--source recorder|voice_memos|voxterm|soundcore_sync|all]
+listen-importer preprocess [--limit n] [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
+listen-importer downsample [--limit n] [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
+listen-importer transcribe [--limit n] [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--provider deepgram|assemblyai] [--api-key key] [--force]
+listen-importer upload [--limit n] [--publish] [--use-downsampled] [--transcripts-only] [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--profile name] [--host url]
 listen-importer doctor
 ```
 

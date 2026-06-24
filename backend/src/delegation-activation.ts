@@ -273,6 +273,10 @@ function attachDelegatedSecrets(
   );
 
   if (secretResources.length === 0) return;
+  const decryptProofCids = activated
+    .filter(({ service }) => service === "encryption")
+    .map(({ access }) => delegationProofCid(access))
+    .filter((cid): cid is string => typeof cid === "string" && cid.length > 0);
 
   const secrets = {
     get: async (name: string, options?: SecretScopeOptions) => {
@@ -296,8 +300,9 @@ function attachDelegatedSecrets(
       const envelopeResult = parseEncryptedEnvelope(result.data?.data, secretKey);
       if (!envelopeResult.ok) return envelopeResult;
 
-      const proofCid = match.access.restorable?.delegationCid ?? match.access.delegation.cid;
-      if (!proofCid) {
+      const kvProofCid = delegationProofCid(match.access);
+      const proofs = [...new Set([kvProofCid, ...decryptProofCids].filter(Boolean))] as string[];
+      if (proofs.length === 0) {
         return secretError(`No decrypt proof available for ${secretKey}`, "DECRYPT_DENIED");
       }
 
@@ -307,7 +312,7 @@ function attachDelegatedSecrets(
       }
 
       const decrypted = await encryption.decryptEnvelope(envelopeResult.data, {
-        proofs: [proofCid],
+        proofs,
       });
       if (!decrypted.ok) {
         return secretError(decrypted.error.message, decrypted.error.code);
@@ -414,6 +419,14 @@ function delegatedSecretPath(
   } catch (err) {
     return secretError(err instanceof Error ? err.message : String(err), "INVALID_SECRET_NAME");
   }
+}
+
+function delegationProofCid(access: DelegatedAccess): string | undefined {
+  const maybeAccess = access as DelegatedAccess & {
+    delegation?: { cid?: string };
+    restorable?: { delegationCid?: string };
+  };
+  return maybeAccess.restorable?.delegationCid ?? maybeAccess.delegation?.cid;
 }
 
 function parseEncryptedEnvelope(

@@ -50,6 +50,7 @@ export {
 export {
   createDelegation,
   createManifestDelegation,
+  createPermissionDelegation,
   sendDelegation,
   checkDelegationStatus,
   revokeDelegation,

@@ -42,7 +42,17 @@ export const FIREFLIES_SECRET_NAME = "FIREFLIES_API_KEY";
 export const FIREFLIES_SECRET_VAULT_KEY = `secrets/${FIREFLIES_SECRET_NAME}`;
 export const GRANOLA_SECRET_NAME = "GRANOLA_API_KEY";
 export const GRANOLA_SECRET_VAULT_KEY = `secrets/${GRANOLA_SECRET_NAME}`;
+export const SOUNDCORE_SESSION_SECRET_NAME = "SOUNDCORE_SESSION";
+export const SOUNDCORE_AUTH_TOKEN_SECRET_NAME = "SOUNDCORE_AUTH_TOKEN";
+export const SOUNDCORE_UID_SECRET_NAME = "SOUNDCORE_UID";
+export const SOUNDCORE_OPENUDID_SECRET_NAME = "SOUNDCORE_OPENUDID";
 export const TRANSCRIPTION_SECRET_NAMES = ["ASSEMBLYAI_API_KEY", "DEEPGRAM_API_KEY"] as const;
+const SOUNDCORE_SECRET_NAMES = [
+  SOUNDCORE_SESSION_SECRET_NAME,
+  SOUNDCORE_AUTH_TOKEN_SECRET_NAME,
+  SOUNDCORE_UID_SECRET_NAME,
+  SOUNDCORE_OPENUDID_SECRET_NAME,
+] as const;
 const BACKEND_SECRET_GRANTS = [
   {
     name: FIREFLIES_SECRET_NAME,
@@ -54,6 +64,11 @@ const BACKEND_SECRET_GRANTS = [
     actions: ["get"],
     description: `Read the encrypted ${GRANOLA_SECRET_NAME} payload for backend workflows.`,
   },
+  ...SOUNDCORE_SECRET_NAMES.map((name) => ({
+    name,
+    actions: ["get"],
+    description: `Read the encrypted ${name} payload for Soundcore sync.`,
+  })),
   ...TRANSCRIPTION_SECRET_NAMES.map((name) => ({
     name,
     actions: ["get"],
@@ -112,7 +127,7 @@ function backendEncryptionPermissions(ownerDid?: string): ServerInfoPermission[]
 }
 
 function backendDelegationPermissions(
-  backendDid: string,
+  _backendDid: string,
   ownerDid?: string,
 ): ServerInfoPermission[] {
   return [

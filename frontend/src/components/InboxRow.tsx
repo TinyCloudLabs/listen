@@ -29,6 +29,7 @@ const SOURCE_LABEL: Record<string, string> = {
   recorder: "RECORDER",
   voice_memos: "VOICE MEMOS",
   voxterm: "VOXTERM",
+  soundcore_sync: "SOUNDCORE",
 };
 
 function formatTime(iso: string | null): string {

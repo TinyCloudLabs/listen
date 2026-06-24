@@ -82,6 +82,17 @@ const CONVERSATIONS = [
     created_at: "2026-03-15T12:15:00Z",
     participant_count: 1,
   },
+  {
+    id: "07STU",
+    title: "Soundcore Planning",
+    source: "soundcore_sync",
+    source_url: null,
+    started_at: "2026-03-14T12:00:00Z",
+    duration_secs: 1380,
+    summary: "Soundcore transcript from the voice recorder cloud sync.",
+    created_at: "2026-03-14T12:25:00Z",
+    participant_count: 2,
+  },
 ];
 
 const PAGE_SIZE = 20;
@@ -90,6 +101,7 @@ const IMPORTED_SOURCE_COUNTS = [
   { source: "recorder", total: 1 },
   { source: "voice_memos", total: 1 },
   { source: "voxterm", total: 1 },
+  { source: "soundcore_sync", total: 1 },
 ];
 
 describe("ConversationList", () => {
@@ -123,6 +135,7 @@ describe("ConversationList", () => {
       expect(screen.getByText("Recorder Memo")).toBeInTheDocument();
       expect(screen.getByText("Voice Memo")).toBeInTheDocument();
       expect(screen.getByText("VoxTerm Session")).toBeInTheDocument();
+      expect(screen.getByText("Soundcore Planning")).toBeInTheDocument();
     });
 
     expect(getMock).toHaveBeenCalledWith("/api/conversations?limit=20&offset=0");
@@ -178,6 +191,7 @@ describe("ConversationList", () => {
       expect(screen.getByText("10 min")).toBeInTheDocument(); // 600s
       expect(screen.getByText("2 min")).toBeInTheDocument(); // 120s
       expect(screen.getByText("15 min")).toBeInTheDocument(); // 900s
+      expect(screen.getByText("23 min")).toBeInTheDocument(); // 1380s
     });
   });
 
@@ -436,6 +450,7 @@ describe("ConversationList", () => {
       expect(screen.getByRole("button", { name: /^recorder$/i })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /^voice memos$/i })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /^voxterm$/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^soundcore$/i })).toBeInTheDocument();
     });
     expect(screen.queryByRole("button", { name: /^meet$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^granola$/i })).not.toBeInTheDocument();
@@ -459,6 +474,7 @@ describe("ConversationList", () => {
     expect(screen.queryByRole("button", { name: /^recorder$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^voice memos$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^voxterm$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^soundcore$/i })).not.toBeInTheDocument();
   });
 
   it("filters by source with a filtered conversations request", async () => {
@@ -520,6 +536,7 @@ describe("ConversationList", () => {
       { ...CONVERSATIONS[3], source: "recorder" }, // recorder
       { ...CONVERSATIONS[4], source: "voice_memos" }, // voice_memos
       { ...CONVERSATIONS[5], source: "voxterm" }, // voxterm
+      { ...CONVERSATIONS[6], source: "soundcore_sync" }, // soundcore_sync
     ];
     api = mockApi({
       get: vi
@@ -534,6 +551,7 @@ describe("ConversationList", () => {
       expect(screen.getByText("RECORDER")).toBeInTheDocument();
       expect(screen.getByText("VOICE MEMOS")).toBeInTheDocument();
       expect(screen.getByText("VOXTERM")).toBeInTheDocument();
+      expect(screen.getByText("SOUNDCORE")).toBeInTheDocument();
     });
   });
 

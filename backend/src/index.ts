@@ -31,10 +31,12 @@ import { createWorkspaceStateRouter } from "./routes/workspace-state.js";
 import { createConfigRouter } from "./routes/config.js";
 import { createFirefliesRouter } from "./routes/fireflies.js";
 import { createGranolaRouter } from "./routes/granola.js";
+import { createSoundcoreRouter } from "./routes/soundcore.js";
 import { createSyncRouter } from "./routes/sync.js";
 import { createGranolaSyncRouter } from "./routes/granola-sync.js";
 import { createOtterRouter } from "./routes/otter.js";
 import { createOtterSyncRouter } from "./routes/otter-sync.js";
+import { createSoundcoreSyncRouter } from "./routes/soundcore-sync.js";
 import { createConversationsRouter } from "./routes/conversations.js";
 import { createWebhookRouter } from "./routes/webhooks.js";
 import { createGoogleMeetPushRouter } from "./routes/google-meet-webhooks.js";
@@ -61,6 +63,18 @@ if (!process.env.BACKEND_PRIVATE_KEY) {
 const BACKEND_PRIVATE_KEY: string = process.env.BACKEND_PRIVATE_KEY;
 const TINYCLOUD_HOST = process.env.TINYCLOUD_HOST ?? "https://node.tinycloud.xyz";
 const FRONTEND_URL = process.env.FRONTEND_URL ?? "https://localhost:5173";
+const LOCAL_FRONTEND_ORIGINS = [
+  "https://listen.localhost",
+  "https://listen.localhost:1355",
+  "https://localhost:5173",
+  "http://localhost:5173",
+] as const;
+const FRONTEND_ORIGINS = new Set([
+  ...FRONTEND_URL.split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+  ...LOCAL_FRONTEND_ORIGINS,
+]);
 const PORT = parseInt(process.env.PORT ?? "3001", 10);
 
 // ── Bootstrap ────────────────────────────────────────────────────────
@@ -182,7 +196,17 @@ async function main() {
   // 5. Set up Express
   const app = express();
   app.set("trust proxy", "loopback");
-  app.use(cors({ origin: FRONTEND_URL }));
+  app.use(
+    cors({
+      origin(origin, callback) {
+        if (!origin || FRONTEND_ORIGINS.has(origin)) {
+          callback(null, true);
+          return;
+        }
+        callback(new Error(`CORS origin not allowed: ${origin}`));
+      },
+    }),
+  );
   app.use("/healthz", createHealthRouter());
 
   // Webhook routes — mounted before express.json() so raw body is preserved for HMAC verification
@@ -380,10 +404,10 @@ async function main() {
     }),
   );
 
-  // Otter sync routes (incremental transcript sync via the sealed cookie)
+  // Soundcore proxy routes (connection test)
   app.use(
-    "/api/sync/otter",
-    createOtterSyncRouter({
+    "/api/soundcore",
+    createSoundcoreRouter({
       authMiddleware,
       delegationMiddleware,
     }),
@@ -406,6 +430,24 @@ async function main() {
       authMiddleware,
       delegationMiddleware,
       backendKV,
+    }),
+  );
+
+  // Soundcore sync routes
+  app.use(
+    "/api/sync/soundcore",
+    createSoundcoreSyncRouter({
+      authMiddleware,
+      delegationMiddleware,
+    }),
+  );
+
+  // Otter sync routes (incremental transcript sync via the sealed cookie)
+  app.use(
+    "/api/sync/otter",
+    createOtterSyncRouter({
+      authMiddleware,
+      delegationMiddleware,
     }),
   );
 

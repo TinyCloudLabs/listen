@@ -1,6 +1,9 @@
 # Listen
 
-Listen is a transcript workspace for TinyCloud. It syncs Fireflies and Google Meet transcripts, supports manual transcript import, stores normalized conversation rows in TinyCloud SQL, and stores transcript blobs in TinyCloud KV.
+Listen is a transcript workspace for TinyCloud. It syncs Fireflies, Granola,
+Soundcore, and Google Meet transcripts, supports manual transcript import, stores
+normalized conversation rows in TinyCloud SQL, and stores transcript content
+either inline on conversation rows or in TinyCloud KV compatibility blobs.
 
 ## Run Locally
 
@@ -21,8 +24,8 @@ Edit `.env`:
 ```bash
 BACKEND_PRIVATE_KEY=0x...
 VITE_OPENKEY_HOST=https://openkey.so
-VITE_BACKEND_URL=https://api.listen.localhost
-FRONTEND_URL=https://listen.localhost
+VITE_BACKEND_URL=https://api.listen.localhost:1355
+FRONTEND_URL=https://listen.localhost:1355
 PORT=3001
 ```
 
@@ -32,7 +35,7 @@ Run the app:
 bun run dev
 ```
 
-The default dev stack uses Portless. The frontend runs at `https://listen.localhost` and the backend runs at `https://api.listen.localhost`.
+The default dev stack uses Portless. The frontend runs at `https://listen.localhost:1355` and the backend runs at `https://api.listen.localhost:1355`.
 
 For raw localhost ports:
 
@@ -62,7 +65,8 @@ listen/
 ## Secrets and encryption
 
 - Secret names are uppercase env-style identifiers such as `FIREFLIES_API_KEY`,
-  `GRANOLA_API_KEY`, `ASSEMBLYAI_API_KEY`, and `DEEPGRAM_API_KEY`.
+  `GRANOLA_API_KEY`, `SOUNDCORE_AUTH_TOKEN`, `SOUNDCORE_UID`,
+  `SOUNDCORE_OPENUDID`, `ASSEMBLYAI_API_KEY`, and `DEEPGRAM_API_KEY`.
 - Listen stores backend secret values as encrypted vault entries under
   `vault/secrets/<NAME>`.
 - During TinyCloud sign-in, the SDK creates or discovers the default encryption network,
@@ -109,6 +113,18 @@ VITE_ENABLE_AGENT=true docker compose up --build listen-agent
 ```
 
 Set `VITE_ENABLE_AGENT=true` in `.env` when you want the frontend to show the agent connection control. Production config keeps it disabled.
+
+## Listen Data Contract
+
+Normalized conversations live in the owner's `applications` space under
+`xyz.tinycloud.listen/conversations`. Transcript content may be stored inline on
+conversation rows and may also be mirrored to KV under
+`xyz.tinycloud.listen/transcript/{id}` for compatibility with readers that
+expect transcript blobs.
+
+Supported `conversation.source` values include Fireflies, Granola, Google Meet,
+manual import, Soundcore Sync, and recorder-style imports such as `recorder`,
+`voice_memos`, and `voxterm`.
 
 ## License
 

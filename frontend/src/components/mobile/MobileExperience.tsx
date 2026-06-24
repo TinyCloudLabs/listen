@@ -46,9 +46,11 @@ interface MobileExperienceProps {
   refreshKey: number;
   hasFireflies: boolean;
   hasGranola?: boolean;
+  hasSoundcore?: boolean;
   hasGoogleMeet: boolean;
   hasFirefliesBackendAccess: boolean;
   hasGranolaBackendAccess?: boolean;
+  hasSoundcoreBackendAccess?: boolean;
   hasAssemblyAIKey?: boolean | null;
   hasAssemblyAIBackendAccess?: boolean | null;
   hasDeepgramKey?: boolean | null;
@@ -103,6 +105,8 @@ function sourceLabel(source: string): string {
       return "VOICE MEMOS";
     case "voxterm":
       return "VOXTERM";
+    case "soundcore_sync":
+      return "SOUNDCORE";
     default:
       return source.toUpperCase();
   }
@@ -212,9 +216,11 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
   refreshKey,
   hasFireflies,
   hasGranola,
+  hasSoundcore,
   hasGoogleMeet,
   hasFirefliesBackendAccess,
   hasGranolaBackendAccess,
+  hasSoundcoreBackendAccess,
   hasAssemblyAIKey,
   hasAssemblyAIBackendAccess,
   hasDeepgramKey,
@@ -499,9 +505,11 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
         api={api}
         hasFireflies={hasFireflies}
         hasGranola={hasGranola}
+        hasSoundcore={hasSoundcore}
         hasGoogleMeet={hasGoogleMeet}
         hasFirefliesBackendAccess={hasFirefliesBackendAccess}
         hasGranolaBackendAccess={hasGranolaBackendAccess}
+        hasSoundcoreBackendAccess={hasSoundcoreBackendAccess}
         hasAssemblyAIKey={hasAssemblyAIKey}
         hasAssemblyAIBackendAccess={hasAssemblyAIBackendAccess}
         hasDeepgramKey={hasDeepgramKey}

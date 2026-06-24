@@ -104,7 +104,15 @@ export interface DelegationResponse {
   activation?: "active" | "pending";
 }
 
-export type WorkspaceSecretKey = "fireflies" | "granola" | "assemblyai" | "deepgram";
+export type WorkspaceSecretKey =
+  | "fireflies"
+  | "granola"
+  | "soundcoreSession"
+  | "soundcoreAuthToken"
+  | "soundcoreUid"
+  | "soundcoreOpenudid"
+  | "assemblyai"
+  | "deepgram";
 
 export interface WorkspaceStateResponse {
   delegation: {
