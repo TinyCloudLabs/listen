@@ -24,6 +24,10 @@ const ACTIVATION_TIMEOUT_MS = 5_000;
 const WORKSPACE_SECRET_NAMES: Record<WorkspaceSecretKey, string> = {
   fireflies: "FIREFLIES_API_KEY",
   granola: "GRANOLA_API_KEY",
+  soundcoreSession: "SOUNDCORE_SESSION",
+  soundcoreAuthToken: "SOUNDCORE_AUTH_TOKEN",
+  soundcoreUid: "SOUNDCORE_UID",
+  soundcoreOpenudid: "SOUNDCORE_OPENUDID",
   assemblyai: "ASSEMBLYAI_API_KEY",
   deepgram: "DEEPGRAM_API_KEY",
 };
@@ -55,6 +59,10 @@ export function createWorkspaceStateRouter(config: WorkspaceStateRoutesConfig) {
       backendReadableSecrets: {
         fireflies: { readable: null },
         granola: { readable: null },
+        soundcoreSession: { readable: null },
+        soundcoreAuthToken: { readable: null },
+        soundcoreUid: { readable: null },
+        soundcoreOpenudid: { readable: null },
         assemblyai: { readable: null },
         deepgram: { readable: null },
       },

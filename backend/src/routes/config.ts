@@ -1,6 +1,14 @@
 import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
-import { FIREFLIES_SECRET_NAME, GRANOLA_SECRET_NAME, resolveAppPath } from "../manifest.js";
+import {
+  FIREFLIES_SECRET_NAME,
+  GRANOLA_SECRET_NAME,
+  SOUNDCORE_AUTH_TOKEN_SECRET_NAME,
+  SOUNDCORE_OPENUDID_SECRET_NAME,
+  SOUNDCORE_SESSION_SECRET_NAME,
+  SOUNDCORE_UID_SECRET_NAME,
+  resolveAppPath,
+} from "../manifest.js";
 import { conversationSql, ensureSchema } from "../schema.js";
 import { updateConversationTranscriptFields } from "../services/persist-conversation.js";
 import { TRANSCRIPTION_SECRET_NAMES } from "../services/transcription.js";
@@ -132,6 +140,135 @@ function createSecretExistsHandler(secretName: string, label: string) {
   };
 }
 
+function createAllSecretsExistHandler(secretNames: readonly string[], label: string) {
+  return async (req: Request, res: Response) => {
+    try {
+      const secrets = req.delegatedAccess?.secrets;
+      if (!secrets?.get) {
+        res.status(500).json({
+          error: "check_failed",
+          message: "Delegation does not include TinyCloud Secrets access",
+        });
+        return;
+      }
+
+      const results = await Promise.all(secretNames.map((name) => secrets.get(name)));
+      const missing = secretNames.filter((_, index) => {
+        const result = results[index];
+        if (!result?.ok) return true;
+        return !result.data;
+      });
+
+      const unexpected = results.find((result: any) => {
+        if (result?.ok) return false;
+        const code = result?.error?.code?.toLowerCase();
+        return code !== "key_not_found" && code !== "not_found" && code !== "grant_not_found";
+      });
+
+      if (unexpected && !unexpected.ok) {
+        res.status(500).json({
+          error: "check_failed",
+          message: unexpected.error?.message ?? `Failed to check ${label} credentials`,
+        });
+        return;
+      }
+
+      res.json({ exists: missing.length === 0, missing });
+    } catch (err) {
+      console.error(`[config] failed to check ${label} credentials:`, err);
+      res.status(500).json({
+        error: "check_failed",
+        message: "Failed to check credentials",
+      });
+    }
+  };
+}
+
+interface SecretReader {
+  get(name: string): Promise<any>;
+}
+
+export type SecretSetExistsResult =
+  | { ok: true; exists: boolean; missing: string[] }
+  | { ok: false; message: string };
+
+export async function checkAnySecretSetExists(
+  secrets: SecretReader,
+  secretSets: readonly (readonly string[])[],
+  label: string,
+): Promise<SecretSetExistsResult> {
+  const allNames = [...new Set(secretSets.flat())];
+  const resultEntries = await Promise.all(
+    allNames.map(async (name) => [name, await secrets.get(name)] as const),
+  );
+  const results = new Map(resultEntries);
+  const unexpected = resultEntries.find(([, result]) => {
+    if (result?.ok) return false;
+    const code = result?.error?.code?.toLowerCase();
+    return code !== "key_not_found" && code !== "not_found" && code !== "grant_not_found";
+  });
+
+  if (unexpected && !unexpected[1].ok) {
+    return {
+      ok: false,
+      message: unexpected[1].error?.message ?? `Failed to check ${label} credentials`,
+    };
+  }
+
+  const missingSets = secretSets.map((secretNames) =>
+    secretNames.filter((name) => {
+      const result = results.get(name);
+      if (!result?.ok) return true;
+      return !result.data;
+    }),
+  );
+  const matchedSet = missingSets.find((missing) => missing.length === 0);
+
+  return {
+    ok: true,
+    exists: Boolean(matchedSet),
+    missing: matchedSet ? [] : (missingSets[0] ?? []),
+  };
+}
+
+function createAnySecretSetExistsHandler(
+  secretSets: readonly (readonly string[])[],
+  label: string,
+) {
+  return async (req: Request, res: Response) => {
+    try {
+      const secrets = req.delegatedAccess?.secrets;
+      if (!secrets?.get) {
+        res.status(500).json({
+          error: "check_failed",
+          message: "Delegation does not include TinyCloud Secrets access",
+        });
+        return;
+      }
+
+      const result = await checkAnySecretSetExists(secrets, secretSets, label);
+      if (!result.ok) {
+        res.status(500).json({
+          error: "check_failed",
+          message: result.message,
+        });
+        return;
+      }
+
+      res.json({
+        exists: result.exists,
+        missing: result.missing,
+      });
+    } catch (err) {
+      console.error(`[config] failed to check ${label} credentials:`, err);
+      res.status(500).json({
+        error: "check_failed",
+        message: "Failed to check credentials",
+      });
+    }
+  };
+}
+
 // ── Config Routes ────────────────────────────────────────────────────
 
 export function createConfigRouter(config: ConfigRoutesConfig) {
@@ -153,6 +290,22 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
     "/granola-key/exists",
     delegationMiddleware,
     createSecretExistsHandler(GRANOLA_SECRET_NAME, "granola"),
+  );
+
+  router.get(
+    "/soundcore-key/exists",
+    delegationMiddleware,
+    createAnySecretSetExistsHandler(
+      [
+        [SOUNDCORE_SESSION_SECRET_NAME],
+        [
+          SOUNDCORE_AUTH_TOKEN_SECRET_NAME,
+          SOUNDCORE_UID_SECRET_NAME,
+          SOUNDCORE_OPENUDID_SECRET_NAME,
+        ],
+      ],
+      "soundcore",
+    ),
   );
 
   router.get(

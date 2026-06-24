@@ -134,6 +134,7 @@ describe("MobileExperience", () => {
       { ...CONVERSATION, id: "02GRN", title: "Granola Review", source: "granola" },
       { ...CONVERSATION, id: "03VM", title: "Voice Memo", source: "voice_memos" },
       { ...CONVERSATION, id: "04VX", title: "VoxTerm Session", source: "voxterm" },
+      { ...CONVERSATION, id: "05SC", title: "Soundcore Planning", source: "soundcore_sync" },
     ];
     const getMock = vi.fn().mockResolvedValue({ conversations, total: conversations.length });
     api = mockApi({ get: getMock });
@@ -145,8 +146,10 @@ describe("MobileExperience", () => {
       expect(screen.getByText("Granola Review")).toBeInTheDocument();
       expect(screen.getByText("Voice Memo")).toBeInTheDocument();
       expect(screen.getByText("VoxTerm Session")).toBeInTheDocument();
+      expect(screen.getByText("Soundcore Planning")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "VOICE MEMOS" })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "VOXTERM" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "SOUNDCORE" })).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole("button", { name: "FIREFLIES" }));
@@ -159,6 +162,7 @@ describe("MobileExperience", () => {
     expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
     expect(screen.getByText("Granola Review")).toBeInTheDocument();
     expect(screen.getByText("Voice Memo")).toBeInTheDocument();
+    expect(screen.getByText("Soundcore Planning")).toBeInTheDocument();
     expect(getMock).toHaveBeenCalledTimes(1);
     expect(getMock).toHaveBeenCalledWith(MOBILE_CONVERSATIONS_PATH);
   });

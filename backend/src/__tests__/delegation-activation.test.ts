@@ -287,4 +287,74 @@ describe("delegation activation secrets", () => {
     expect(kvPut).toHaveBeenCalledTimes(1);
     expect(kvDelete).toHaveBeenCalledTimes(1);
   });
+
+  it("includes encryption delegation proofs when decrypting delegated secrets", async () => {
+    const envelope = {
+      v: 1,
+      networkId: NETWORK_ID,
+      alg: "x25519-aes256gcm/v1",
+      keyVersion: 1,
+      encryptedSymmetricKey: "wrapped-symmetric-key",
+      encryptedSymmetricKeyHash: "hash",
+      ciphertext: "ciphertext",
+      metadata: {},
+    };
+    const kvGet = mock(async () => ({
+      ok: true,
+      data: { data: JSON.stringify(envelope) },
+    }));
+    const decryptEnvelope = mock(async (_input: unknown, proof: unknown) => {
+      expect(proof).toEqual({ proofs: ["cid-secret", "cid-encryption"] });
+      return {
+        ok: true,
+        data: new TextEncoder().encode(JSON.stringify({ value: "session-secret" })),
+      };
+    });
+    const useDelegation = mock(async (delegation: any) => ({
+      kv: { get: kvGet, put: async () => ({ ok: true }), list: async () => ({ ok: true }) },
+      sql: { query: async () => ({ ok: true }), execute: async () => ({ ok: true }) },
+      restorable: { delegationCid: delegation.cid },
+      delegation,
+    }));
+
+    const node = {
+      useDelegation,
+      encryption: { decryptEnvelope },
+    } as any;
+
+    const access = await activatePortableDelegation(node, [
+      makeDelegation(
+        {
+          service: "tinycloud.kv",
+          space: "secrets",
+          path: "vault/secrets/SOUNDCORE_SESSION",
+          actions: ["tinycloud.kv/get"],
+        },
+        "cid-secret",
+      ),
+      makeDelegation(
+        {
+          service: "tinycloud.encryption",
+          space: "encryption",
+          path: NETWORK_ID,
+          actions: ["tinycloud.encryption/decrypt"],
+        },
+        "cid-encryption",
+      ),
+      makeDelegation(
+        {
+          service: "tinycloud.sql",
+          space: "applications",
+          path: "conversations",
+          actions: ["tinycloud.sql/read"],
+        },
+        "cid-sql",
+      ),
+    ]);
+
+    const result = await access.secrets.get("SOUNDCORE_SESSION");
+
+    expect(result).toEqual({ ok: true, data: "session-secret" });
+    expect(decryptEnvelope).toHaveBeenCalledTimes(1);
+  });
 });

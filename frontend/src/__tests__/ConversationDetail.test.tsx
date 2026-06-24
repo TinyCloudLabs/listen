@@ -196,6 +196,31 @@ describe("ConversationDetail", () => {
     });
   });
 
+  it("toggles summary between rendered markdown and raw markdown", async () => {
+    api = mockApi({
+      get: vi.fn().mockResolvedValue({
+        ...DETAIL_RESPONSE,
+        conversation: {
+          ...DETAIL_RESPONSE.conversation,
+          summary: "## Decisions\n\n- **Ship Soundcore**\n- `Debug logs`",
+        },
+      }),
+    });
+
+    render(<ConversationDetail api={api} conversationId="01ABC" onBack={onBack} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Decisions" })).toBeInTheDocument();
+    });
+    expect(screen.getByText("Ship Soundcore").tagName.toLowerCase()).toBe("strong");
+    expect(screen.getByText("Debug logs").tagName.toLowerCase()).toBe("code");
+
+    fireEvent.click(screen.getByRole("button", { name: "Markdown" }));
+
+    expect(screen.getByText(/## Decisions/)).toBeInTheDocument();
+    expect(screen.getByText(/- \*\*Ship Soundcore\*\*/)).toBeInTheDocument();
+  });
+
   it("renders transcript with speaker names and text", async () => {
     api = mockApi({ get: vi.fn().mockResolvedValue(DETAIL_RESPONSE) });
 
@@ -266,6 +291,25 @@ describe("ConversationDetail", () => {
       expect(screen.getByText("RECORDER")).toBeInTheDocument();
       expect(screen.getAllByText("—").length).toBeGreaterThan(0);
       expect(screen.getByText(/let's start the sprint planning/i)).toBeInTheDocument();
+    });
+  });
+
+  it("renders Soundcore conversations with the polished source label", async () => {
+    api = mockApi({
+      get: vi.fn().mockResolvedValue({
+        ...DETAIL_RESPONSE,
+        conversation: {
+          ...DETAIL_RESPONSE.conversation,
+          source: "soundcore_sync",
+          title: "Soundcore Planning",
+        },
+      }),
+    });
+
+    render(<ConversationDetail api={api} conversationId="01ABC" onBack={onBack} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("SOUNDCORE")).toBeInTheDocument();
     });
   });
 

@@ -116,7 +116,7 @@ interface GoogleMeetWebhookStatus {
   failedCount: number;
 }
 
-type SyncSource = "fireflies" | "granola" | "google-meet";
+type SyncSource = "fireflies" | "granola" | "soundcore" | "google-meet";
 
 interface SyncControlProps {
   api: ApiClient;
@@ -125,6 +125,7 @@ interface SyncControlProps {
   onSyncComplete: () => void;
   hasFireflies?: boolean;
   hasGranola?: boolean;
+  hasSoundcore?: boolean;
   hasGoogleMeet?: boolean;
 }
 
@@ -307,10 +308,12 @@ export const SyncControl: FC<SyncControlProps> = ({
   onSyncComplete,
   hasFireflies: hasFirefliesProp,
   hasGranola: hasGranolaProp,
+  hasSoundcore: hasSoundcoreProp,
   hasGoogleMeet: hasGoogleMeetProp,
 }) => {
   const hasFireflies = hasFirefliesProp !== false;
   const hasGranola = hasGranolaProp === true;
+  const hasSoundcore = hasSoundcoreProp === true;
   const hasGM = hasGoogleMeetProp === true;
 
   const [syncing, setSyncing] = useState(false);
@@ -1104,6 +1107,7 @@ export const SyncControl: FC<SyncControlProps> = ({
     const sources: SyncSource[] = [
       ...(hasFireflies ? (["fireflies"] as const) : []),
       ...(hasGranola ? (["granola"] as const) : []),
+      ...(hasSoundcore ? (["soundcore"] as const) : []),
       ...(hasGM ? (["google-meet"] as const) : []),
     ];
     if (sources.length === 0) return;
@@ -1135,6 +1139,16 @@ export const SyncControl: FC<SyncControlProps> = ({
           applyGranolaJob(job);
           if (isActiveGranolaJob(job)) pollGranolaJob(job.id);
           return { source, jobId: job.id, status: job.status };
+        }
+
+        if (source === "soundcore") {
+          const data = await api.post<SyncResult>("/api/sync/soundcore", {});
+          setResult(data);
+          const ts = new Date().toISOString();
+          localStorage.setItem(LAST_SYNC_KEY, ts);
+          setLastSync(ts);
+          onSyncComplete();
+          return { source, jobId: null, status: "completed" };
         }
 
         const job = await api.post<GoogleMeetSyncJob>("/api/sync/google-meet/jobs", {
@@ -1179,10 +1193,35 @@ export const SyncControl: FC<SyncControlProps> = ({
     hasFireflies,
     hasGM,
     hasGranola,
+    hasSoundcore,
+    onSyncComplete,
     pollFirefliesJob,
     pollGoogleMeetJob,
     pollGranolaJob,
   ]);
+
+  const handleSoundcoreSync = useCallback(async () => {
+    setSyncing(true);
+    setSyncSource("soundcore");
+    setProgress({ phase: "syncing", current: 0, total: 0 });
+    setResult(null);
+    setError(null);
+
+    try {
+      const data = await api.post<SyncResult>("/api/sync/soundcore", {});
+      setResult(data);
+      const ts = new Date().toISOString();
+      localStorage.setItem(LAST_SYNC_KEY, ts);
+      setLastSync(ts);
+      onSyncComplete();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSyncing(false);
+      setSyncSource(null);
+      setProgress(null);
+    }
+  }, [api, onSyncComplete]);
 
   const handleClearAndResync = useCallback(async () => {
     setSyncing(true);
@@ -1273,15 +1312,21 @@ export const SyncControl: FC<SyncControlProps> = ({
   const listingLabel =
     syncSource === "google-meet"
       ? "Scanning Google Meet"
-      : syncSource === "granola"
-        ? "Scanning Granola"
-        : "Scanning Fireflies";
+      : syncSource === "soundcore"
+        ? "Scanning Soundcore"
+        : syncSource === "granola"
+          ? "Scanning Granola"
+          : "Scanning Fireflies";
   const queuedLabel =
     syncSource === "google-meet"
       ? "Queued Google Meet sync"
-      : syncSource === "fireflies"
-        ? "Queued Fireflies sync"
-        : "Queued sync";
+      : syncSource === "soundcore"
+        ? "Queued Soundcore sync"
+        : syncSource === "granola"
+          ? "Queued Granola sync"
+          : syncSource === "fireflies"
+            ? "Queued Fireflies sync"
+            : "Queued sync";
 
   // ── Render ────────────────────────────────────────────────────────
 
@@ -1309,7 +1354,7 @@ export const SyncControl: FC<SyncControlProps> = ({
         <div style={s.buttonGroup}>
           {!syncing ? (
             <>
-              {(hasFireflies || hasGranola || hasGM) && (
+              {(hasFireflies || hasGranola || hasSoundcore || hasGM) && (
                 <button style={s.btnPrimary} onClick={handleSyncAll}>
                   Sync all
                 </button>
@@ -1322,6 +1367,11 @@ export const SyncControl: FC<SyncControlProps> = ({
               {hasGranola && (
                 <button style={s.btnPrimary} onClick={handleGranolaSync}>
                   Sync Granola
+                </button>
+              )}
+              {hasSoundcore && (
+                <button style={s.btnPrimary} onClick={handleSoundcoreSync}>
+                  Sync Soundcore
                 </button>
               )}
               {hasGM && (

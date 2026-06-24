@@ -8,7 +8,8 @@ export type SourceFilter =
   | "manual"
   | "recorder"
   | "voice_memos"
-  | "voxterm";
+  | "voxterm"
+  | "soundcore_sync";
 
 interface InboxFiltersProps {
   total: number;
@@ -27,6 +28,7 @@ export const SOURCE_CHIPS: Array<{ key: SourceFilter; label: string }> = [
   { key: "recorder", label: "Recorder" },
   { key: "voice_memos", label: "Voice Memos" },
   { key: "voxterm", label: "VoxTerm" },
+  { key: "soundcore_sync", label: "Soundcore" },
 ];
 
 // Calm per-source accent hues so sources are distinguishable at a glance.
@@ -39,6 +41,7 @@ const SOURCE_ACCENT: Record<string, string> = {
   recorder: "#3a9aa0",
   voice_memos: "#b0853a",
   voxterm: "#5b7a52",
+  soundcore_sync: "#8f5b4f",
 };
 
 export const InboxFilters: FC<InboxFiltersProps> = ({

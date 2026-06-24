@@ -5,7 +5,7 @@ import { ThemeToggle } from "./ThemeToggle";
 
 export type ShellRoute = "inbox" | "shared" | "chat" | "connections" | "sources";
 
-export type ShellSourceKey = "fireflies" | "granola" | "gmeet";
+export type ShellSourceKey = "fireflies" | "granola" | "soundcore" | "gmeet";
 
 export type ShellSourceStatus = "connected" | "syncing" | "error";
 

@@ -96,6 +96,8 @@ function sourceLabel(source: string): string {
       return "VOICE MEMOS";
     case "voxterm":
       return "VOXTERM";
+    case "soundcore_sync":
+      return "SOUNDCORE";
     default:
       return source.toUpperCase();
   }

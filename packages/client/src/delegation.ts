@@ -5,7 +5,7 @@ import {
   type PortableDelegation,
   type ResourceCapability,
 } from "@tinycloud/web-sdk";
-import { type DelegationResponse } from "@listen/core";
+import { type DelegationResponse, type ServerInfoPermission } from "@listen/core";
 import { listenDebugFetch } from "./debug.js";
 
 // ── Create Delegation ────────────────────────────────────────────────
@@ -69,6 +69,76 @@ export async function createManifestDelegation(
 }
 
 export const createDelegation = createManifestDelegation;
+
+/**
+ * Build a backend delegation from an explicit permission list.
+ *
+ * This is used for source-specific access that should be requested after the
+ * user opts into a connector, while preserving the core backend permissions
+ * that were part of initial sign-in.
+ */
+export async function createPermissionDelegation(
+  tcw: TinyCloudWeb,
+  backendDID: string,
+  permissions: readonly (ResourceCapability | ServerInfoPermission)[],
+  options?: { expiryMs?: number },
+): Promise<{ serialized: string; prompted: boolean }> {
+  if (permissions.length === 0) {
+    throw new Error("createPermissionDelegation: permissions list is empty");
+  }
+
+  const resourcePermissions = dedupePermissions(permissions.map(toResourceCapability));
+  const permissionsBySpace = groupPermissionsBySpace(resourcePermissions);
+  const delegations: PortableDelegation[] = [];
+  let prompted = false;
+
+  for (const groupedPermissions of permissionsBySpace.values()) {
+    const result = await tcw.delegateTo(backendDID, groupedPermissions, {
+      expiry: options?.expiryMs,
+    });
+    delegations.push(result.delegation);
+    prompted ||= result.prompted;
+  }
+
+  return {
+    serialized: serializeDelegationBundle(delegations),
+    prompted,
+  };
+}
+
+function toResourceCapability(
+  permission: ResourceCapability | ServerInfoPermission,
+): ResourceCapability {
+  const capability = {
+    service: permission.service,
+    path: permission.path,
+    actions: [...permission.actions],
+    ...(permission.description !== undefined ? { description: permission.description } : {}),
+  };
+
+  return permission.space !== undefined
+    ? ({ ...capability, space: permission.space } as ResourceCapability)
+    : (capability as ResourceCapability);
+}
+
+function dedupePermissions(permissions: readonly ResourceCapability[]): ResourceCapability[] {
+  const seen = new Set<string>();
+  const deduped: ResourceCapability[] = [];
+
+  for (const permission of permissions) {
+    const key = JSON.stringify({
+      service: permission.service,
+      space: permission.space ?? null,
+      path: permission.path,
+      actions: [...permission.actions].sort(),
+    });
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(permission);
+  }
+
+  return deduped;
+}
 
 function groupPermissionsBySpace(
   permissions: readonly ResourceCapability[],

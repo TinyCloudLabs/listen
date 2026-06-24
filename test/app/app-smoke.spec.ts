@@ -84,6 +84,10 @@ async function mockListenBackend(page: Page): Promise<void> {
         backendReadableSecrets: {
           fireflies: { readable: false },
           granola: { readable: false },
+          soundcoreSession: { readable: false },
+          soundcoreAuthToken: { readable: false },
+          soundcoreUid: { readable: false },
+          soundcoreOpenudid: { readable: false },
           assemblyai: { readable: false },
           deepgram: { readable: false },
         },
@@ -183,6 +187,7 @@ test.beforeEach(async ({ page }) => {
   await mockListenBackend(page);
   await page.addInitScript(
     ({ address, token }) => {
+      localStorage.setItem("listen:capability-version", "soundcore-secrets-v2");
       localStorage.setItem(
         "listen:session",
         JSON.stringify({
