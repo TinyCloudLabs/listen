@@ -12,6 +12,10 @@
     "GOOGLE_MEET_TOKENS": {
       "scope": "listen",
       "actions": ["read", "write", "delete"]
+    },
+    "OTTER_COOKIE": {
+      "scope": "listen",
+      "actions": ["read", "write", "delete"]
     }
   },
   "permissions": [

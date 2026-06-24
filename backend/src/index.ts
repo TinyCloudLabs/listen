@@ -33,6 +33,8 @@ import { createFirefliesRouter } from "./routes/fireflies.js";
 import { createGranolaRouter } from "./routes/granola.js";
 import { createSyncRouter } from "./routes/sync.js";
 import { createGranolaSyncRouter } from "./routes/granola-sync.js";
+import { createOtterRouter } from "./routes/otter.js";
+import { createOtterSyncRouter } from "./routes/otter-sync.js";
 import { createConversationsRouter } from "./routes/conversations.js";
 import { createWebhookRouter } from "./routes/webhooks.js";
 import { createGoogleMeetPushRouter } from "./routes/google-meet-webhooks.js";
@@ -364,6 +366,24 @@ async function main() {
   app.use(
     "/api/granola",
     createGranolaRouter({
+      authMiddleware,
+      delegationMiddleware,
+    }),
+  );
+
+  // Otter connection routes (validate + seal the session cookie)
+  app.use(
+    "/api/otter",
+    createOtterRouter({
+      authMiddleware,
+      delegationMiddleware,
+    }),
+  );
+
+  // Otter sync routes (incremental transcript sync via the sealed cookie)
+  app.use(
+    "/api/sync/otter",
+    createOtterSyncRouter({
       authMiddleware,
       delegationMiddleware,
     }),

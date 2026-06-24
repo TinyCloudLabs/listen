@@ -16,6 +16,7 @@ import {
   GOOGLE_MEET_TOKENS_SECRET_NAME,
   GOOGLE_MEET_TOKENS_SECRET_SCOPE,
 } from "./services/google-tokens.js";
+import { OTTER_COOKIE_SECRET_NAME, OTTER_COOKIE_SECRET_SCOPE } from "./services/otter-secret.js";
 
 export interface DescribedPermissionEntry extends PermissionEntry {
   description?: string;
@@ -63,6 +64,12 @@ const BACKEND_SECRET_GRANTS = [
     scope: GOOGLE_MEET_TOKENS_SECRET_SCOPE,
     actions: ["get", "put", "del"],
     description: "Read, write, and delete encrypted Google Meet OAuth tokens.",
+  },
+  {
+    name: OTTER_COOKIE_SECRET_NAME,
+    scope: OTTER_COOKIE_SECRET_SCOPE,
+    actions: ["get", "put", "del"],
+    description: "Read, write, and delete the encrypted Otter session cookie.",
   },
 ] as const;
 
