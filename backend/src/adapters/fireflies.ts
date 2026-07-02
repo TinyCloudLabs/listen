@@ -40,6 +40,7 @@ export const normalizeFireflies: NormalizeFn<FullTranscript> = (raw) => {
       summary: summary.overview ?? null,
       metadata: {
         audio_url: raw.audio_url,
+        audio_playback_url: raw.audio_url || null,
         organizer_email: raw.organizer_email,
         keywords: summary.keywords ?? [],
         meeting_type: summary.meeting_type ?? null,

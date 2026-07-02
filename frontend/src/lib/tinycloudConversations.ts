@@ -257,7 +257,12 @@ export function normalizeConversationMetadata(value: unknown): Record<string, un
     "audio_metadata_kv_key",
     "audioMetadataKvKey",
   ]);
-  const audioPlaybackUrl = readStringField(metadata, ["audio_playback_url", "audioPlaybackUrl"]);
+  const audioPlaybackUrl = readStringField(metadata, [
+    "audio_playback_url",
+    "audioPlaybackUrl",
+    "audio_url",
+    "audioUrl",
+  ]);
   const audioStorageEncoding = readStringField(metadata, [
     "audio_storage_encoding",
     "audioStorageEncoding",
