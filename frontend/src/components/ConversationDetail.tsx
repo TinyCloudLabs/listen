@@ -340,7 +340,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
   api,
   conversationId,
   onBack,
-  backLabel = "Inbox",
+  backLabel = "Library",
   onShare,
 }) => {
   const [data, setData] = useState<DetailResponse | null>(null);
@@ -487,7 +487,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
     <section style={s.container}>
       {/* Top action bar */}
       <div style={s.actionBar}>
-        <button style={s.backLink} onClick={onBack} type="button" aria-label="Back to inbox">
+        <button style={s.backLink} onClick={onBack} type="button" aria-label="Back to library">
           <span style={s.chevL}>‹</span> {backLabel}
         </button>
         <span style={s.breadDot}>/</span>

@@ -170,7 +170,7 @@ export const MobileDetail: FC<MobileDetailProps> = ({ conversation, transcript, 
     <div style={s.root}>
       <header style={s.topBar}>
         <button type="button" style={s.backBtn} onClick={onBack}>
-          {"‹ Inbox"}
+          {"‹ Library"}
         </button>
         <span style={s.spacer} />
       </header>

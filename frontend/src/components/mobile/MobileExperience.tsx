@@ -468,7 +468,7 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
         <MobileState
           title="Could not load conversation"
           detail={detailError}
-          action={{ label: "Back to inbox", onClick: () => onSelectConversation(null) }}
+          action={{ label: "Back to library", onClick: () => onSelectConversation(null) }}
         />
       );
     } else if (detail) {

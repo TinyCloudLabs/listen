@@ -588,7 +588,7 @@ function LandingPage({
                 Transform them into insights.
               </h1>
               <p className="landing-hero-lede">
-                One inbox for transcripts, audio, and meeting notes from Fireflies, Google Meet,
+                One library for transcripts, audio, and meeting notes from Fireflies, Google Meet,
                 Granola imports, and the files you already have.
               </p>
               <div className="landing-hero-meta">
@@ -646,7 +646,7 @@ function LandingPage({
               {[
                 [
                   "01",
-                  "One inbox",
+                  "One library",
                   "Fireflies, Google Meet, Granola imports, transcripts, and audio files land in a single chronological feed.",
                 ],
                 [
@@ -1912,7 +1912,7 @@ export function App() {
                       : activePage === "chat"
                         ? "library / chat"
                         : hasUsableInbox || showOptimisticInbox
-                          ? `inbox · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`
+                          ? `library · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`
                           : "onboarding / sources";
   const pageTitle = !isSignedIn
     ? "Capture thoughts. Transform them into insights."
@@ -2426,7 +2426,7 @@ export function App() {
               <span>
                 {authError
                   ? `Backend reconnect failed: ${authError}`
-                  : "Backend offline. Sync and source setup are unavailable; inbox reads directly from TinyCloud."}
+                  : "Backend offline. Sync and source setup are unavailable; the library reads directly from TinyCloud."}
               </span>
               <button
                 type="button"

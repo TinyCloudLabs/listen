@@ -123,7 +123,7 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { key: "inbox", label: "Inbox", icon: "inbox" },
+  { key: "inbox", label: "Library", icon: "inbox" },
   { key: "shared", label: "Shared", icon: "folder" },
   { key: "chat", label: "Chat", icon: "sparkle" },
 ];

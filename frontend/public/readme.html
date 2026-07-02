@@ -611,7 +611,7 @@ sequenceDiagram
     and direct browser checks
       Frontend-&gt;&gt;TinyCloud: secrets.get(FIREFLIES/GRANOLA/transcription)
       Frontend-&gt;&gt;TinyCloud: SQL query newest conversations
-      TinyCloud--&gt;&gt;Frontend: secret existence + inbox rows
+      TinyCloud--&gt;&gt;Frontend: secret existence + library rows
     end
     alt secret exists but backend delegation missing, expired, or stale
       Frontend-&gt;&gt;TinyCloud: createManifestDelegation(backend caps + default network decrypt)
@@ -620,8 +620,8 @@ sequenceDiagram
       Backend--&gt;&gt;Frontend: status active
     end
   end
-  alt direct or cached inbox read
-    Frontend-&gt;&gt;Frontend: render inbox while slower checks finish
+  alt direct or cached library read
+    Frontend-&gt;&gt;Frontend: render library while slower checks finish
   else backend-only manual transcript import
     User-&gt;&gt;Frontend: paste or upload .txt/.md/.srt/.vtt
     Frontend-&gt;&gt;Backend: POST /api/conversations/import
@@ -659,7 +659,7 @@ sequenceDiagram
               <h2>Workspace, source, and secret states.</h2>
             </div>
             <p class="section-note">
-              The UI gates the inbox on source availability, existing conversations, delegation
+              The UI gates the library on source availability, existing conversations, delegation
               status, manual imports, and whether provider credentials can be used by the backend.
               Google Meet appears only when Google OAuth is configured.
             </p>
@@ -705,7 +705,7 @@ stateDiagram-v2
 
   SignedIn --&gt; CheckingWorkspace
   CheckingWorkspace --&gt; WalletOnly: restored session without TinyCloudWeb
-  CheckingWorkspace --&gt; NeedsSource: no usable inbox
+  CheckingWorkspace --&gt; NeedsSource: no usable library
   CheckingWorkspace --&gt; NeedsFirefliesGrant: key exists, delegation missing
   CheckingWorkspace --&gt; InboxReady: source connected or rows exist
 
@@ -863,7 +863,7 @@ flowchart LR
             <article class="data-item">
               <span class="mono">tinycloud.hooks</span>
               <p>
-                When enabled, the app subscribes to conversation row writes so live inbox updates
+                When enabled, the app subscribes to conversation row writes so live library updates
                 can follow TinyCloud SQL changes.
               </p>
             </article>
