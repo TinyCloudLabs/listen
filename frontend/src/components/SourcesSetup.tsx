@@ -1,6 +1,7 @@
 import { useEffect, useState, type FC } from "react";
 import type { ApiClient } from "@listen/client";
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
+import { MAX_TRANSCRIPTION_FILE_BYTES, fileToBase64, formatFileSize } from "../lib/fileEncoding";
 
 type SetupMode = "onboarding" | "sources";
 type SetupStep =
@@ -34,14 +35,6 @@ const TRANSCRIPTION_PROVIDER_LABELS: Record<TranscriptionProvider, string> = {
   assemblyai: "AssemblyAI",
   deepgram: "Deepgram",
 };
-// The backend accepts JSON bodies up to 25 MB and the file travels as base64
-// (~4/3 inflation), so anything above ~18 MB fails after a long upload wait.
-const MAX_TRANSCRIPTION_FILE_BYTES = 18 * 1024 * 1024;
-
-function formatFileSize(bytes: number): string {
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${Math.ceil(bytes / 1024)} KB`;
-}
 const TINYCLOUD_SECRETS_URL = "https://secrets.tinycloud.xyz";
 const VERIFY_RETRY_DELAYS_MS = [250, 750, 1500];
 const SOUNDCORE_ENV_KEYS = [
@@ -1634,13 +1627,6 @@ function isMissingSecretError(err: unknown): boolean {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function fileToBase64(file: File): Promise<string> {
-  const buffer = await file.arrayBuffer();
-  let binary = "";
-  for (const byte of new Uint8Array(buffer)) binary += String.fromCharCode(byte);
-  return btoa(binary);
 }
 
 const FONT = "var(--lst-font)";

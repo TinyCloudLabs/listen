@@ -31,6 +31,7 @@ import { LiveWriteEvents } from "./components/LiveWriteEvents";
 import { ConnectAgentButton } from "./components/ConnectAgentButton";
 import { ConversationShareDialog } from "./components/ConversationShareDialog";
 import { GlobalSyncIndicator } from "./components/GlobalSyncIndicator";
+import { AddTranscriptHub } from "./components/AddTranscriptHub";
 import { SharedWithMe } from "./components/SharedWithMe";
 import { AppShell, type ShellRoute, type ShellSourceConfig } from "./components/AppShell";
 import { MobileExperience } from "./components/mobile";
@@ -927,6 +928,7 @@ export function App() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [shareConversationId, setShareConversationId] = useState<string | null>(null);
+  const [showAddHub, setShowAddHub] = useState(false);
   const [pendingBanner, setPendingBanner] = useState<string | null>(null);
   const [gmLapsedBanner, setGmLapsedBanner] = useState(false);
   const [liveWritePathPrefix, setLiveWritePathPrefix] = useState<string | null>(null);
@@ -2187,6 +2189,7 @@ export function App() {
       userMenu={userMenu}
       sources={sourceItems}
       folders={[]}
+      onAddClick={api && hasBackendDelegation === true ? () => setShowAddHub(true) : undefined}
     >
       {showWorkspaceLoading && !showOptimisticInbox && <WorkspaceStatusPanel mode="checking" />}
 
@@ -2525,6 +2528,37 @@ export function App() {
           tcw={tcw}
           conversationId={shareConversationId}
           onClose={() => setShareConversationId(null)}
+        />
+      )}
+
+      {showAddHub && api && (
+        <AddTranscriptHub
+          api={api}
+          transcriptionReady={{
+            assemblyai:
+              hasTranscriptionKeys.assemblyai === true &&
+              hasTranscriptionBackendAccess.assemblyai === true,
+            deepgram:
+              hasTranscriptionKeys.deepgram === true &&
+              hasTranscriptionBackendAccess.deepgram === true,
+          }}
+          sourcesConnected={{
+            fireflies: firefliesConnected,
+            granola: granolaConnected,
+            soundcore: soundcoreConnected,
+            googleMeet: hasGoogleMeet === true,
+          }}
+          onClose={() => setShowAddHub(false)}
+          onImported={(conversationId) => {
+            setShowAddHub(false);
+            setActivePage("inbox");
+            setSelectedConversationId(conversationId);
+            setRefreshKey((k) => k + 1);
+          }}
+          onOpenSources={() => {
+            setShowAddHub(false);
+            openSourcesSetup();
+          }}
         />
       )}
 
