@@ -217,7 +217,7 @@ test("restores a session and clicks through the app shell", async ({ page }) => 
   await expect(page.getByRole("heading", { name: "TC-1384 Smoke Conversation" })).toBeVisible();
   await expect(page.getByText("The test can click through the primary routes.")).toBeVisible();
 
-  await page.getByRole("button", { name: /back to inbox/i }).click();
+  await page.getByRole("button", { name: /back to library/i }).click();
   await expect(page.getByRole("heading", { name: "Everything you've said." })).toBeVisible();
 
   await page.getByRole("button", { name: "Chat" }).click();

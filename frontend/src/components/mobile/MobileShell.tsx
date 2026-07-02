@@ -9,7 +9,7 @@ interface TabDef {
 }
 
 const TABS: TabDef[] = [
-  { key: "inbox", label: "Inbox", glyph: "\u2709" },
+  { key: "inbox", label: "Library", glyph: "\u2709" },
   { key: "chat", label: "Chat", glyph: "\u2727" },
   { key: "connections", label: "Sources", glyph: "\u2699" },
 ];
