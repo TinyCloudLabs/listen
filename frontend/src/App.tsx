@@ -2430,6 +2430,7 @@ export function App() {
           conversationId={selectedConversationId}
           onBack={() => setSelectedConversationId(null)}
           onShare={setShareConversationId}
+          onUpdated={() => setRefreshKey((k) => k + 1)}
         />
       )}
 

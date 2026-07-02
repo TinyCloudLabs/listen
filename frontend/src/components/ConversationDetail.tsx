@@ -50,6 +50,7 @@ interface ConversationDetailProps {
   onBack: () => void;
   backLabel?: string;
   onShare?: (id: string) => void;
+  onUpdated?: () => void;
 }
 
 const DETAIL_LOAD_TIMEOUT_MS = 45_000;
@@ -342,13 +343,43 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
   onBack,
   backLabel = "Library",
   onShare,
+  onUpdated,
 }) => {
   const [data, setData] = useState<DetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [repairingTranscript, setRepairingTranscript] = useState(false);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [titleSaving, setTitleSaving] = useState(false);
   const [summaryView, setSummaryView] = useState<"formatted" | "markdown">("formatted");
+
+  const saveTitle = async () => {
+    const nextTitle = titleDraft.trim();
+    if (!data || titleSaving) return;
+    if (!nextTitle || nextTitle === data.conversation.title) {
+      setEditingTitle(false);
+      return;
+    }
+    setTitleSaving(true);
+    try {
+      await api.put(`/api/conversations/${conversationId}`, { title: nextTitle });
+      const next = {
+        ...data,
+        conversation: { ...data.conversation, title: nextTitle },
+      };
+      setData(next);
+      writeConversationDetailCache(conversationId, next);
+      setEditingTitle(false);
+      setNotice("Title updated");
+      onUpdated?.();
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTitleSaving(false);
+    }
+  };
 
   useEffect(() => {
     const cached = readConversationDetailCache<DetailResponse>(conversationId);
@@ -521,7 +552,37 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
 
       {/* Title block */}
       <div style={s.titleBlock}>
-        <h1 style={s.title}>{conversation.title}</h1>
+        {editingTitle ? (
+          <input
+            style={s.titleInput}
+            value={titleDraft}
+            autoFocus
+            disabled={titleSaving}
+            aria-label="Conversation title"
+            onChange={(event) => setTitleDraft(event.target.value)}
+            onBlur={() => void saveTitle()}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void saveTitle();
+              if (event.key === "Escape") setEditingTitle(false);
+            }}
+          />
+        ) : (
+          <h1 style={s.title}>
+            {conversation.title}
+            <button
+              type="button"
+              style={s.titleEditBtn}
+              aria-label="Rename conversation"
+              title="Rename"
+              onClick={() => {
+                setTitleDraft(conversation.title);
+                setEditingTitle(true);
+              }}
+            >
+              ✎
+            </button>
+          </h1>
+        )}
         <div style={s.titleMetaRow}>
           {participants.length > 0 && (
             <div style={s.avatarStack}>
@@ -735,6 +796,26 @@ const s: Record<string, React.CSSProperties> = {
   titleBlock: {
     padding: "24px 32px 16px",
     borderBottom: "var(--lst-border)",
+  },
+  titleInput: {
+    fontFamily: "var(--lst-display, var(--lst-font))",
+    fontSize: 26,
+    fontWeight: 600,
+    color: "var(--lst-blue)",
+    background: "transparent",
+    border: "var(--lst-hair)",
+    padding: "2px 8px",
+    width: "100%",
+    maxWidth: 640,
+  },
+  titleEditBtn: {
+    marginLeft: 10,
+    border: "none",
+    background: "transparent",
+    color: "var(--lst-ink-55)",
+    cursor: "pointer",
+    fontSize: 15,
+    verticalAlign: "middle",
   },
   title: {
     fontFamily: "var(--lst-font-display)",

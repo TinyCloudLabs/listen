@@ -1204,3 +1204,93 @@ describe("Conversations Routes — Auth enforcement", () => {
     }
   });
 });
+
+// ── Tests — PUT /api/conversations/:id ──────────────────────────────
+
+describe("Conversations Routes — PUT /api/conversations/:id", () => {
+  let mockKV: ReturnType<typeof createMockKV>;
+  let mockSQL: ReturnType<typeof createMockSQL>;
+  let server: Server;
+  let port: number;
+
+  afterEach(async () => {
+    await closeServer(server);
+  });
+
+  const detailRow = {
+    id: "conv-1",
+    title: "Old title",
+    source: "recorder",
+    source_id: null,
+    source_url: null,
+    started_at: "2026-05-01T10:00:00.000Z",
+    ended_at: null,
+    duration_secs: 60,
+    summary: null,
+    metadata: "{}",
+    created_at: "2026-05-01T10:01:00.000Z",
+    updated_at: "2026-05-01T10:01:00.000Z",
+  };
+
+  it("updates title and summary", async () => {
+    mockKV = createMockKV();
+    mockSQL = createMockSQL({ detailRow });
+    const app = createApp(mockKV, mockSQL);
+    ({ server, port } = await startServer(app));
+
+    const res = await fetch(`http://localhost:${port}/api/conversations/conv-1`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Standup — May 1", summary: "Renamed from the detail view." }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+
+    const update = mockSQL._calls.find(
+      (call) => call.method === "execute" && call.sql.includes("updated_at = ?"),
+    );
+    expect(update).toBeDefined();
+    expect(update!.sql).toContain("title = ?");
+    expect(update!.sql).toContain("summary = ?");
+    expect(update!.sql).toContain("updated_at = ?");
+    expect(update!.params![0]).toBe("Standup — May 1");
+    expect(update!.params![1]).toBe("Renamed from the detail view.");
+    expect(update!.params![update!.params!.length - 1]).toBe("conv-1");
+  });
+
+  it("returns 404 for a missing conversation", async () => {
+    mockKV = createMockKV();
+    mockSQL = createMockSQL({});
+    const app = createApp(mockKV, mockSQL);
+    ({ server, port } = await startServer(app));
+
+    const res = await fetch(`http://localhost:${port}/api/conversations/nope`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "New" }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects an empty title and empty payloads", async () => {
+    mockKV = createMockKV();
+    mockSQL = createMockSQL({ detailRow });
+    const app = createApp(mockKV, mockSQL);
+    ({ server, port } = await startServer(app));
+
+    const emptyTitle = await fetch(`http://localhost:${port}/api/conversations/conv-1`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "   " }),
+    });
+    expect(emptyTitle.status).toBe(400);
+
+    const noFields = await fetch(`http://localhost:${port}/api/conversations/conv-1`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(noFields.status).toBe(400);
+  });
+});
