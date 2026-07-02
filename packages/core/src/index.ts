@@ -179,3 +179,7 @@ export function deriveApiHost(host: string): string {
     return host;
   }
 }
+
+// ── Transcript parsing (shared browser + backend) ───────────────────
+
+export * from "./transcript-parser.js";
