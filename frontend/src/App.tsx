@@ -929,6 +929,7 @@ export function App() {
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [shareConversationId, setShareConversationId] = useState<string | null>(null);
   const [showAddHub, setShowAddHub] = useState(false);
+  const [searchFocusKey, setSearchFocusKey] = useState(0);
   const [pendingBanner, setPendingBanner] = useState<string | null>(null);
   const [gmLapsedBanner, setGmLapsedBanner] = useState(false);
   const [liveWritePathPrefix, setLiveWritePathPrefix] = useState<string | null>(null);
@@ -2202,6 +2203,11 @@ export function App() {
       sources={sourceItems}
       folders={[]}
       onAddClick={api && hasBackendDelegation === true ? () => setShowAddHub(true) : undefined}
+      onSearchClick={() => {
+        setActivePage("inbox");
+        setSelectedConversationId(null);
+        setSearchFocusKey((k) => k + 1);
+      }}
     >
       {showWorkspaceLoading && !showOptimisticInbox && <WorkspaceStatusPanel mode="checking" />}
 
@@ -2477,6 +2483,7 @@ export function App() {
             />
           )}
           <ConversationList
+            focusSearchKey={searchFocusKey}
             api={activeConversationApi}
             onSelectConversation={setSelectedConversationId}
             onShareConversation={setShareConversationId}

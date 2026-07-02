@@ -393,16 +393,33 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
     const limit = Math.max(1, parseInt(req.query.limit as string, 10) || DEFAULT_LIMIT);
     const offset = Math.max(0, parseInt(req.query.offset as string, 10) || DEFAULT_OFFSET);
     const source = req.query.source as string | undefined;
+    const qRaw = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    // Bounded LIKE scan over title/summary/transcript_text. TinyCloud SQL has
+    // no FTS or indexes, so this is a linear scan by design; the cap keeps
+    // pathological queries out.
+    const q = qRaw.slice(0, 200);
 
     try {
       await ensureSchema(access);
       const sqlDb = conversationSql(access);
 
-      // Total count — with optional source filter
-      const countSql = source
-        ? `SELECT COUNT(*) AS total FROM conversation WHERE source = ?`
-        : `SELECT COUNT(*) AS total FROM conversation`;
-      const countParams = source ? [source] : [];
+      const where: string[] = [];
+      const whereParams: (string | number)[] = [];
+      if (source) {
+        where.push("source = ?");
+        whereParams.push(source);
+      }
+      if (q) {
+        const pattern = `%${q.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+        where.push(
+          "(title LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\' OR transcript_text LIKE ? ESCAPE '\\')",
+        );
+        whereParams.push(pattern, pattern, pattern);
+      }
+      const whereSql = where.length > 0 ? ` WHERE ${where.join(" AND ")}` : "";
+
+      const countSql = `SELECT COUNT(*) AS total FROM conversation${whereSql}`;
+      const countParams = whereParams;
       const countResult = await sqlDb.query(countSql, countParams);
       let total = 0;
       if (countResult.ok && countResult.data.rows?.[0]) {
@@ -429,19 +446,12 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
           : [];
 
       // Paginated list with participant_count subquery
-      const listSql = source
-        ? `SELECT c.id, c.title, c.source, c.source_url, c.started_at, c.duration_secs, c.summary, c.created_at,
+      const listSql = `SELECT c.id, c.title, c.source, c.source_url, c.started_at, c.duration_secs, c.summary, c.created_at,
            (SELECT COUNT(*) FROM participant p WHERE p.conversation_id = c.id) AS participant_count
-         FROM conversation c
-         WHERE c.source = ?
-         ORDER BY c.started_at DESC
-         LIMIT ? OFFSET ?`
-        : `SELECT c.id, c.title, c.source, c.source_url, c.started_at, c.duration_secs, c.summary, c.created_at,
-           (SELECT COUNT(*) FROM participant p WHERE p.conversation_id = c.id) AS participant_count
-         FROM conversation c
+         FROM conversation c${whereSql}
          ORDER BY c.started_at DESC
          LIMIT ? OFFSET ?`;
-      const listParams = source ? [source, limit, offset] : [limit, offset];
+      const listParams = [...whereParams, limit, offset];
       const listResult = await sqlDb.query(listSql, listParams);
 
       const conversations = listResult.ok
