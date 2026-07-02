@@ -117,6 +117,7 @@ describe("normalizeFireflies", () => {
 
     expect(result.conversation.metadata).toEqual({
       audio_url: "https://fireflies.ai/audio/ff-abc-123.mp3",
+      audio_playback_url: "https://fireflies.ai/audio/ff-abc-123.mp3",
       organizer_email: "roman@tinycloud.xyz",
       keywords: ["standup", "sprint"],
       meeting_type: "standup",
@@ -242,6 +243,7 @@ describe("normalizeFireflies", () => {
     expect(result.conversation.source_id).toBe("ff-abc-123");
     expect(result.conversation.metadata).toEqual({
       audio_url: "",
+      audio_playback_url: null,
       organizer_email: "roman@tinycloud.xyz",
       keywords: [],
       meeting_type: "",

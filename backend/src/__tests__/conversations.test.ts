@@ -380,6 +380,7 @@ describe("Conversations Routes — GET /api/conversations/:id", () => {
     expect(body.conversation.source_id).toBe("ff-123");
     expect(body.conversation.metadata).toEqual({
       audio_url: "https://audio.example.com/ff-123.mp3",
+      audio_playback_url: "https://audio.example.com/ff-123.mp3",
       organizer_email: "roman@example.com",
     });
     expect(body.participants).toHaveLength(2);
