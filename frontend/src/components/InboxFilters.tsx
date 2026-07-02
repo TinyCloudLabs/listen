@@ -5,6 +5,7 @@ export type SourceFilter =
   | "fireflies"
   | "granola"
   | "google-meet"
+  | "otter"
   | "manual"
   | "recorder"
   | "voice_memos"
@@ -24,6 +25,7 @@ export const SOURCE_CHIPS: Array<{ key: SourceFilter; label: string }> = [
   { key: "fireflies", label: "Fireflies" },
   { key: "granola", label: "Granola" },
   { key: "google-meet", label: "Meet" },
+  { key: "otter", label: "Otter" },
   { key: "manual", label: "Manual" },
   { key: "recorder", label: "Recorder" },
   { key: "voice_memos", label: "Voice Memos" },
@@ -37,6 +39,7 @@ const SOURCE_ACCENT: Record<string, string> = {
   fireflies: "#c2603a",
   granola: "#7a8a2f",
   "google-meet": "#3a72c2",
+  otter: "#4a6b8a",
   manual: "#7d6aa6",
   recorder: "#3a9aa0",
   voice_memos: "#b0853a",
