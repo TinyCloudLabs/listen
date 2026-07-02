@@ -2150,29 +2150,41 @@ export function App() {
     !showBackendOfflineState
   ) {
     return (
-      <MobileExperience
-        api={activeConversationApi}
-        activeRoute={activePage}
-        selectedConversationId={selectedConversationId}
-        refreshKey={refreshKey}
-        hasFireflies={firefliesConnected}
-        hasGranola={granolaConnected}
-        hasSoundcore={soundcoreConnected}
-        hasGoogleMeet={hasGoogleMeet === true}
-        hasFirefliesBackendAccess={hasFirefliesBackendAccess === true}
-        hasGranolaBackendAccess={hasGranolaBackendAccess === true}
-        hasSoundcoreBackendAccess={hasSoundcoreBackendAccess === true}
-        hasAssemblyAIKey={hasTranscriptionKeys.assemblyai}
-        hasAssemblyAIBackendAccess={hasTranscriptionBackendAccess.assemblyai}
-        hasDeepgramKey={hasTranscriptionKeys.deepgram}
-        hasDeepgramBackendAccess={hasTranscriptionBackendAccess.deepgram}
-        googleMeetAvailable={googleMeetAvailable}
-        chatEnabled={chatEnabled}
-        onRouteChange={setActivePage}
-        onSelectConversation={setSelectedConversationId}
-        onAddSource={() => openSourcesSetup()}
-        onRefresh={() => setRefreshKey((k) => k + 1)}
-      />
+      <>
+        <MobileExperience
+          api={activeConversationApi}
+          activeRoute={activePage}
+          selectedConversationId={selectedConversationId}
+          refreshKey={refreshKey}
+          hasFireflies={firefliesConnected}
+          hasGranola={granolaConnected}
+          hasSoundcore={soundcoreConnected}
+          hasGoogleMeet={hasGoogleMeet === true}
+          hasFirefliesBackendAccess={hasFirefliesBackendAccess === true}
+          hasGranolaBackendAccess={hasGranolaBackendAccess === true}
+          hasSoundcoreBackendAccess={hasSoundcoreBackendAccess === true}
+          hasAssemblyAIKey={hasTranscriptionKeys.assemblyai}
+          hasAssemblyAIBackendAccess={hasTranscriptionBackendAccess.assemblyai}
+          hasDeepgramKey={hasTranscriptionKeys.deepgram}
+          hasDeepgramBackendAccess={hasTranscriptionBackendAccess.deepgram}
+          googleMeetAvailable={googleMeetAvailable}
+          chatEnabled={chatEnabled}
+          onRouteChange={setActivePage}
+          onSelectConversation={setSelectedConversationId}
+          onAddSource={() => openSourcesSetup()}
+          onRefresh={() => setRefreshKey((k) => k + 1)}
+        />
+        {api && hasBackendDelegation === true && (
+          <GlobalSyncIndicator
+            api={api}
+            onViewResults={() => {
+              setActivePage("inbox");
+              setSelectedConversationId(null);
+              setRefreshKey((k) => k + 1);
+            }}
+          />
+        )}
+      </>
     );
   }
 
