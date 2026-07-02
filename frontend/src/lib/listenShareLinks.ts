@@ -218,15 +218,14 @@ function activeSessionExpiry(tcw: TinyCloudWeb): Date | null {
   return safeExpiry.getTime() > Date.now() ? safeExpiry : expiry;
 }
 
-function effectiveShareExpiry(requested: Date, sessionExpiry: Date | null): Date {
-  if (!sessionExpiry || sessionExpiry.getTime() <= Date.now()) return requested;
-  return sessionExpiry.getTime() < requested.getTime() ? sessionExpiry : requested;
-}
-
 function updateSharingSessionExpiry(tcw: TinyCloudWeb, expiry: Date | null): void {
   const sharing = tcw.sharing as { updateConfig?: (config: { sessionExpiry: Date }) => void };
   if (!expiry || typeof sharing.updateConfig !== "function") return;
   sharing.updateConfig({ sessionExpiry: expiry });
+}
+
+function needsRootSignature(requested: Date, sessionExpiry: Date | null): boolean {
+  return Boolean(sessionExpiry && requested.getTime() > sessionExpiry.getTime());
 }
 
 function audioDataKey(detail: ShareableConversationDetail): string | null {
@@ -252,6 +251,7 @@ async function delegateKvRead(
   delegateDid: string,
   path: string,
   durationMs: number,
+  forceWalletSign: boolean,
 ): Promise<PortableGrant> {
   const result = await tcw.delegateTo(
     delegateDid,
@@ -263,7 +263,7 @@ async function delegateKvRead(
         skipPrefix: true,
       },
     ],
-    { expiry: durationMs },
+    { expiry: durationMs, ...(forceWalletSign ? { forceWalletSign: true } : {}) },
   );
 
   return {
@@ -359,7 +359,6 @@ export async function createListenShareLink(
   const durationMs = durationDays * 24 * 60 * 60 * 1000;
   const requestedExpiresAt = new Date(Date.now() + durationMs);
   const sessionExpiry = activeSessionExpiry(tcw);
-  const expiresAt = effectiveShareExpiry(requestedExpiresAt, sessionExpiry);
   updateSharingSessionExpiry(tcw, sessionExpiry);
 
   const conversationId = detail.conversation.id;
@@ -370,7 +369,7 @@ export async function createListenShareLink(
   const snapshotShare = await tcw.sharing.generate({
     path,
     actions: ["tinycloud.kv/get"],
-    expiry: expiresAt,
+    expiry: requestedExpiresAt,
     description: `Listen conversation: ${detail.conversation.title}`,
   });
 
@@ -379,12 +378,19 @@ export async function createListenShareLink(
   }
 
   const snapshot = tcw.sharing.decodeLink(snapshotShare.data.token) as EncodedShareData;
-  const snapshotExpiresAt = snapshotShare.data.expiresAt?.toISOString() ?? expiresAt.toISOString();
+  const snapshotExpiresAt =
+    snapshotShare.data.expiresAt?.toISOString() ?? requestedExpiresAt.toISOString();
   const grantDurationMs = Math.max(1, Date.parse(snapshotExpiresAt) - Date.now());
   const delegateDid = snapshot.keyDid.split("#")[0] ?? snapshot.keyDid;
   const audioKey = options.includeAudio ? audioDataKey(detail) : null;
   const audio = audioKey
-    ? await delegateKvRead(tcw, delegateDid, resolveAppKvPath(audioKey), grantDurationMs)
+    ? await delegateKvRead(
+        tcw,
+        delegateDid,
+        resolveAppKvPath(audioKey),
+        grantDurationMs,
+        needsRootSignature(new Date(snapshotExpiresAt), sessionExpiry),
+      )
     : undefined;
 
   const payload: ListenSharePayload = {

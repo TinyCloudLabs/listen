@@ -102,6 +102,7 @@ function detail(overrides: Partial<ShareableConversationDetail["conversation"]> 
 
 afterEach(() => {
   vi.clearAllMocks();
+  vi.useRealTimers();
   sdkMocks.state.kvInstances.length = 0;
   sdkMocks.state.kvBehaviors.length = 0;
 });
@@ -146,6 +147,51 @@ describe("listen share links", () => {
     expect(result.payload.snapshot.path).toBe(path);
     expect(result.payload).not.toHaveProperty("sql");
     expect(tcw.delegateTo).not.toHaveBeenCalled();
+  });
+
+  it("keeps requested share duration beyond the active session and wallet-signs audio grants", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-14T14:00:00.000Z"));
+
+    const requestedExpiry = new Date("2026-05-21T14:00:00.000Z");
+    const put = vi.fn(async () => ({ ok: true, data: {} }));
+    const generate = vi.fn(async (input: { path: string; expiry: Date }) => ({
+      ok: true,
+      data: { token: "snapshot-token", expiresAt: input.expiry },
+    }));
+    const delegateTo = vi.fn(async () => ({
+      delegation: { expiry: requestedExpiry },
+    }));
+    const tcw = {
+      session: () => ({ siwe: "Expiration Time: 2026-05-14T15:00:00.000Z" }),
+      kv: { put },
+      sharing: { updateConfig: vi.fn(), generate, decodeLink: vi.fn(encodedShare) },
+      delegateTo,
+    } as unknown as TinyCloudWeb;
+
+    const result = await createListenShareLink(
+      tcw,
+      detail({ metadata: { audio_data_kv_key: "audio/01ABC/recording" } }),
+      { includeTranscript: true, includeAudio: true, durationDays: 7 },
+    );
+
+    expect(generate.mock.calls[0]?.[0].expiry.toISOString()).toBe(requestedExpiry.toISOString());
+    expect(result.payload.expiresAt).toBe(requestedExpiry.toISOString());
+    expect(tcw.sharing.updateConfig).toHaveBeenCalledWith({
+      sessionExpiry: new Date("2026-05-14T14:59:00.000Z"),
+    });
+    expect(delegateTo).toHaveBeenCalledWith(
+      "did:key:zshare",
+      [
+        {
+          service: "tinycloud.kv",
+          path: "xyz.tinycloud.listen/audio/01ABC/recording",
+          actions: ["get"],
+          skipPrefix: true,
+        },
+      ],
+      { expiry: 7 * 24 * 60 * 60 * 1000, forceWalletSign: true },
+    );
   });
 
   it("only treats KV-backed audio as shareable", () => {
