@@ -16,6 +16,10 @@ mock.module("@openkey/sdk", () => ({
       };
     }
 
+    getSessionToken() {
+      return "session-token-test";
+    }
+
     signMessage = signMessage;
   },
 }));
@@ -30,13 +34,19 @@ function jsonResponse(body: unknown, init?: ResponseInit): Response {
   });
 }
 
+const baseRequest = {
+  address: "0x0000000000000000000000000000000000000001",
+  chainId: 1,
+  type: "siwe" as const,
+};
+
 describe("connectWallet TinyCloud OpenKey sign strategy", () => {
   beforeEach(() => {
     signMessage.mockClear();
     openKeyConfig = undefined;
   });
 
-  test("auto-signs bootstrap requests through /api/delegate/sign", async () => {
+  test("auto-signs bootstrap requests through the API host with a bearer token", async () => {
     const fetchMock = mock(async () =>
       jsonResponse({
         approved: true,
@@ -49,10 +59,9 @@ describe("connectWallet TinyCloud OpenKey sign strategy", () => {
       host: "https://openkey.test/",
     });
     const result = await (tinycloudSignStrategy as any).handler({
-      address: "0x0000000000000000000000000000000000000001",
-      chainId: 1,
+      ...baseRequest,
       message: "bootstrap-siwe",
-      type: "siwe",
+      purpose: "bootstrap-session",
     });
 
     expect(openKeyConfig).toEqual(
@@ -62,16 +71,19 @@ describe("connectWallet TinyCloud OpenKey sign strategy", () => {
     );
     expect(result).toEqual({ approved: true, signature: "0xdelegate" });
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://openkey.test/api/delegate/sign",
+      "https://api.openkey.test/api/delegate/sign",
       expect.objectContaining({
-        credentials: "include",
+        credentials: "omit",
         method: "POST",
+        headers: expect.objectContaining({
+          authorization: "Bearer session-token-test",
+        }),
       }),
     );
     expect(signMessage).not.toHaveBeenCalled();
   });
 
-  test("falls back to one OpenKey widget signature outside the bootstrap allowlist", async () => {
+  test("non-bootstrap requests fall back to the interactive signer on denial", async () => {
     globalThis.fetch = mock(async () =>
       jsonResponse({
         approved: false,
@@ -85,20 +97,18 @@ describe("connectWallet TinyCloud OpenKey sign strategy", () => {
       host: "https://openkey.test",
     });
     const result = await (tinycloudSignStrategy as any).handler({
-      address: "0x0000000000000000000000000000000000000001",
-      chainId: 1,
+      ...baseRequest,
       message: "app-siwe",
-      type: "siwe",
+      purpose: "sign-in",
     });
 
-    expect(result).toEqual({ approved: true, signature: "0xwidget" });
-    expect(signMessage).toHaveBeenCalledWith({
-      message: "app-siwe",
-      keyId: "key_test",
-    });
+    // approved-without-signature → the SDK signs with its own signer
+    // (exactly one widget prompt); the wrapper never calls the widget itself.
+    expect(result).toEqual({ approved: true });
+    expect(signMessage).not.toHaveBeenCalled();
   });
 
-  test("does not fall back to widget signing for bootstrap auto-sign denials", async () => {
+  test("bootstrap denials do not fall back to the widget", async () => {
     globalThis.fetch = mock(async () =>
       jsonResponse({
         approved: false,
@@ -112,10 +122,9 @@ describe("connectWallet TinyCloud OpenKey sign strategy", () => {
       host: "https://openkey.test",
     });
     const result = await (tinycloudSignStrategy as any).handler({
-      address: "0x0000000000000000000000000000000000000001",
-      chainId: 1,
+      ...baseRequest,
       message: "bootstrap-siwe",
-      type: "siwe",
+      purpose: "bootstrap-host",
     });
 
     expect(result).toEqual({
@@ -123,5 +132,76 @@ describe("connectWallet TinyCloud OpenKey sign strategy", () => {
       reason: "Auto-Sign is disabled for this account",
     });
     expect(signMessage).not.toHaveBeenCalled();
+  });
+
+  test("bootstrap requests degrade to denial when the endpoint is unreachable", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new TypeError("Failed to fetch");
+    }) as typeof fetch;
+
+    const { tinycloudSignStrategy } = await connectWallet({
+      host: "https://openkey.test",
+    });
+    const result = await (tinycloudSignStrategy as any).handler({
+      ...baseRequest,
+      message: "bootstrap-siwe",
+      purpose: "bootstrap-session",
+    });
+
+    expect(result.approved).toBe(false);
+    expect(result.reason).toContain("unreachable");
+    expect(signMessage).not.toHaveBeenCalled();
+  });
+
+  test("non-bootstrap requests fall back to the interactive signer when the endpoint is unreachable", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new TypeError("Failed to fetch");
+    }) as typeof fetch;
+
+    const { tinycloudSignStrategy } = await connectWallet({
+      host: "https://openkey.test",
+    });
+    const result = await (tinycloudSignStrategy as any).handler({
+      ...baseRequest,
+      message: "app-siwe",
+      purpose: "sign-in",
+    });
+
+    expect(result).toEqual({ approved: true });
+  });
+
+  test("untagged requests (older SDK) are treated as non-bootstrap", async () => {
+    globalThis.fetch = mock(async () =>
+      jsonResponse({ approved: false, reason: "nope" }, { status: 401 }),
+    ) as typeof fetch;
+
+    const { tinycloudSignStrategy } = await connectWallet({
+      host: "https://openkey.test",
+    });
+    const result = await (tinycloudSignStrategy as any).handler({
+      ...baseRequest,
+      message: "app-siwe",
+    });
+
+    expect(result).toEqual({ approved: true });
+  });
+
+  test("localhost hosts are not rewritten to an api subdomain", async () => {
+    const fetchMock = mock(async () => jsonResponse({ approved: true, signature: "0xdelegate" }));
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    const { tinycloudSignStrategy } = await connectWallet({
+      host: "http://localhost:3001",
+    });
+    await (tinycloudSignStrategy as any).handler({
+      ...baseRequest,
+      message: "bootstrap-siwe",
+      purpose: "bootstrap-session",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:3001/api/delegate/sign",
+      expect.anything(),
+    );
   });
 });

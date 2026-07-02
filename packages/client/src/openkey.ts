@@ -75,46 +75,94 @@ function hexToString(hex: string): string {
   return new TextDecoder().decode(bytes);
 }
 
+/**
+ * OpenKey serves its API from the `api.` subdomain of the widget host
+ * (openkey.so → api.openkey.so). Localhost dev serves both from one origin.
+ */
+function deriveOpenKeyApiHost(host: string): string {
+  try {
+    const url = new URL(host);
+    if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+      return host.replace(/\/+$/, "");
+    }
+    if (!url.hostname.startsWith("api.")) {
+      url.hostname = `api.${url.hostname}`;
+    }
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return "https://api.openkey.so";
+  }
+}
+
 function createTinyCloudOpenKeySignStrategy(input: {
   host: string;
   openkey: OpenKey;
   keyId: string;
 }): SignStrategy {
+  const apiHost = deriveOpenKeyApiHost(input.host);
+
   const strategy: SignStrategy & { openKeyAutoSign: true } = {
     type: "callback",
     openKeyAutoSign: true,
     handler: async (request: SignRequest): Promise<SignResponse> => {
-      const response = await fetch(`${input.host}/api/delegate/sign`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ...request, keyId: input.keyId }),
-      });
+      // Bootstrap signatures must never reach the interactive widget (that
+      // is the TC-86 prompt flood). Anything else falls back to exactly one
+      // widget prompt: approved-without-signature makes the SDK sign with
+      // its own (interactive) signer.
+      // `purpose` ships in @tinycloud/sdk-core > 2.4.0; older SDKs send none.
+      const purpose = (request as SignRequest & { purpose?: string }).purpose;
+      const isBootstrap = purpose === "bootstrap-session" || purpose === "bootstrap-host";
+      const widgetFallback: SignResponse = { approved: true };
 
-      let parsed: OpenKeyDelegateSignResponse | undefined;
+      // Session token relayed during connect(); older @openkey/sdk builds
+      // have no accessor — the request then goes out unauthenticated and
+      // the failure policy below applies.
+      const token = (
+        input.openkey as { getSessionToken?: () => string | null }
+      ).getSessionToken?.();
+
       try {
-        parsed = (await response.json()) as OpenKeyDelegateSignResponse;
-      } catch {
-        parsed = undefined;
-      }
-
-      if (response.ok && parsed?.approved === true && parsed.signature) {
-        return { approved: true, signature: parsed.signature };
-      }
-
-      if (response.ok && parsed?.code === "outside_bootstrap_allowlist") {
-        const result = await input.openkey.signMessage({
-          message: request.message,
-          keyId: input.keyId,
+        const response = await fetch(`${apiHost}/api/delegate/sign`, {
+          method: "POST",
+          credentials: "omit",
+          headers: {
+            "content-type": "application/json",
+            ...(token ? { authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ ...request, keyId: input.keyId }),
         });
-        return { approved: true, signature: result.signature };
-      }
 
-      return {
-        approved: false,
-        reason:
-          parsed?.reason ?? parsed?.error ?? `OpenKey signing failed with HTTP ${response.status}`,
-      };
+        let parsed: OpenKeyDelegateSignResponse | undefined;
+        try {
+          parsed = (await response.json()) as OpenKeyDelegateSignResponse;
+        } catch {
+          parsed = undefined;
+        }
+
+        if (response.ok && parsed?.approved === true && parsed.signature) {
+          return { approved: true, signature: parsed.signature };
+        }
+
+        if (!isBootstrap) {
+          return widgetFallback;
+        }
+
+        return {
+          approved: false,
+          reason:
+            parsed?.reason ??
+            parsed?.error ??
+            `OpenKey signing failed with HTTP ${response.status}`,
+        };
+      } catch (err) {
+        if (!isBootstrap) {
+          return widgetFallback;
+        }
+        return {
+          approved: false,
+          reason: `OpenKey signing unreachable: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
     },
   };
 

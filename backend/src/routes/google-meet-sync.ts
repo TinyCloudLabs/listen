@@ -53,12 +53,7 @@ const DEFAULT_SYNC_DELAY_MS = 200;
 const GOOGLE_MEET_JOB_PREFIX = resolveAppPath("sync/google-meet/jobs");
 
 type GoogleMeetSyncJobStatus =
-  | "queued"
-  | "listing"
-  | "syncing"
-  | "completed"
-  | "failed"
-  | "canceled";
+  "queued" | "listing" | "syncing" | "completed" | "failed" | "canceled";
 
 interface GoogleMeetSyncJob {
   id: string;
