@@ -40,6 +40,8 @@ interface AppShellProps {
   sources: ShellSourceConfig[];
   folders: ShellFolderConfig[];
   navCounts?: Partial<Record<Exclude<ShellRoute, "connections" | "sources">, number | null>>;
+  onAddClick?: () => void;
+  onSearchClick?: () => void;
   children: ReactNode;
 }
 
@@ -123,7 +125,7 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { key: "inbox", label: "Inbox", icon: "inbox" },
+  { key: "inbox", label: "Library", icon: "inbox" },
   { key: "shared", label: "Shared", icon: "folder" },
   { key: "chat", label: "Chat", icon: "sparkle" },
 ];
@@ -156,6 +158,8 @@ export const AppShell: FC<AppShellProps> = ({
   sources,
   folders,
   navCounts,
+  onAddClick,
+  onSearchClick,
   children,
 }) => {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -212,7 +216,7 @@ export const AppShell: FC<AppShellProps> = ({
           <button
             type="button"
             style={shell.searchPill}
-            onClick={() => onRouteChange("chat")}
+            onClick={() => (onSearchClick ? onSearchClick() : onRouteChange("chat"))}
             aria-label="Search transcripts"
           >
             <ShellIcon name="search" size={13} />
@@ -223,7 +227,11 @@ export const AppShell: FC<AppShellProps> = ({
 
         {/* Source management */}
         <div style={shell.ctaWrap}>
-          <button type="button" style={shell.ctaSolid} onClick={() => onRouteChange("connections")}>
+          <button
+            type="button"
+            style={shell.ctaSolid}
+            onClick={() => (onAddClick ? onAddClick() : onRouteChange("connections"))}
+          >
             <ShellIcon name="plus" size={12} />
             <span>Add source or transcript</span>
           </button>

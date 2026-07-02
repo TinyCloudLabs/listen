@@ -33,17 +33,23 @@ interface ConversationListProps {
   onSelectConversation: (id: string) => void;
   onShareConversation?: (id: string) => void;
   refreshKey?: number;
+  focusSearchKey?: number;
 }
 
 const PAGE_SIZE = 20;
 
-function conversationPagePath(page: number, sourceFilter: SourceFilter = "all"): string {
+function conversationPagePath(
+  page: number,
+  sourceFilter: SourceFilter = "all",
+  searchQuery = "",
+): string {
   const offset = (page - 1) * PAGE_SIZE;
   const params = new URLSearchParams({
     limit: String(PAGE_SIZE),
     offset: String(offset),
   });
   if (sourceFilter !== "all") params.set("source", sourceFilter);
+  if (searchQuery) params.set("q", searchQuery);
   return `/api/conversations?${params.toString()}`;
 }
 
@@ -79,11 +85,13 @@ export const ConversationList: FC<ConversationListProps> = ({
   onSelectConversation,
   onShareConversation,
   refreshKey,
+  focusSearchKey,
 }) => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [total, setTotal] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
@@ -91,28 +99,38 @@ export const ConversationList: FC<ConversationListProps> = ({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [searchInput, setSearchInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const requestRef = useRef(0);
   const refreshKeyRef = useRef(refreshKey);
+  const searchQueryRef = useRef(searchQuery);
 
   const fetchConversations = useCallback(
-    async (page: number, source: SourceFilter) => {
-      const path = conversationPagePath(page, source);
-      const cached = readConversationPageCache<Conversation>(path);
+    async (page: number, source: SourceFilter, query: string) => {
+      const path = conversationPagePath(page, source, query);
+      const append = page > 1;
+      // Searches bypass the page cache — cache slots are for the browse path.
+      const cached = append || query ? null : readConversationPageCache<Conversation>(path);
       const requestId = requestRef.current + 1;
       requestRef.current = requestId;
 
-      setSelected(new Set());
       setContextMenu(null);
       setError(null);
 
-      if (cached) {
+      if (append) {
+        // Loading a further page keeps the current rows (and selection) in place.
+        setLoadingMore(true);
+      } else if (cached) {
+        setSelected(new Set());
         setConversations(cached.conversations);
         setTotal(cached.total);
         setSourceCounts(cached.source_counts ?? null);
         setLoading(false);
         setRefreshing(true);
       } else {
+        setSelected(new Set());
         setConversations([]);
         setTotal(0);
         setLoading(true);
@@ -122,14 +140,23 @@ export const ConversationList: FC<ConversationListProps> = ({
       try {
         const data = await api.get<ConversationsResponse>(path);
         if (requestRef.current !== requestId) return;
-        setConversations(data.conversations);
+        if (append) {
+          setConversations((prev) => [
+            ...prev.slice(0, (page - 1) * PAGE_SIZE),
+            ...data.conversations,
+          ]);
+        } else {
+          setConversations(data.conversations);
+        }
         setTotal(data.total);
         setSourceCounts(data.source_counts ?? null);
-        writeConversationPageCache(path, data);
+        if (!query) writeConversationPageCache(path, data);
         setError(null);
       } catch (err) {
         if (requestRef.current !== requestId) return;
-        if (cached) {
+        if (append) {
+          setNotice("Could not load more conversations");
+        } else if (cached) {
           setNotice("Could not refresh cached page");
         } else {
           setError(err instanceof Error ? err.message : String(err));
@@ -137,6 +164,7 @@ export const ConversationList: FC<ConversationListProps> = ({
       } finally {
         if (requestRef.current === requestId) {
           setLoading(false);
+          setLoadingMore(false);
           setRefreshing(false);
         }
       }
@@ -145,15 +173,26 @@ export const ConversationList: FC<ConversationListProps> = ({
   );
 
   useEffect(() => {
-    if (refreshKeyRef.current !== refreshKey) {
+    const timer = window.setTimeout(() => setSearchQuery(searchInput.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
+
+  useEffect(() => {
+    if (!focusSearchKey) return;
+    searchInputRef.current?.focus();
+  }, [focusSearchKey]);
+
+  useEffect(() => {
+    if (refreshKeyRef.current !== refreshKey || searchQueryRef.current !== searchQuery) {
       refreshKeyRef.current = refreshKey;
+      searchQueryRef.current = searchQuery;
       if (currentPage !== 1) {
         setCurrentPage(1);
         return;
       }
     }
-    void fetchConversations(currentPage, sourceFilter);
-  }, [currentPage, fetchConversations, refreshKey, sourceFilter]);
+    void fetchConversations(currentPage, sourceFilter, searchQuery);
+  }, [currentPage, fetchConversations, refreshKey, searchQuery, sourceFilter]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -168,7 +207,8 @@ export const ConversationList: FC<ConversationListProps> = ({
 
   useEffect(() => {
     if (!notice) return;
-    const timer = window.setTimeout(() => setNotice(null), 1800);
+    const dismissMs = notice.startsWith("Could not") ? 5000 : 1800;
+    const timer = window.setTimeout(() => setNotice(null), dismissMs);
     return () => window.clearTimeout(timer);
   }, [notice]);
 
@@ -269,7 +309,7 @@ export const ConversationList: FC<ConversationListProps> = ({
     );
   }
 
-  if (conversations.length === 0) {
+  if (conversations.length === 0 && !searchQuery) {
     return (
       <div style={s.emptyCard}>
         <p style={s.emptyTitle}>No conversations yet</p>
@@ -278,11 +318,8 @@ export const ConversationList: FC<ConversationListProps> = ({
     );
   }
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const pageStart = total === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
-  const pageEnd = Math.min(total, (currentPage - 1) * PAGE_SIZE + conversations.length);
-  const canGoPrev = currentPage > 1;
-  const canGoNext = currentPage < totalPages;
+  const remaining = Math.max(0, total - conversations.length);
+  const canLoadMore = remaining > 0;
   const groupedConversations = visibleConversations.reduce<
     Array<{ date: string; items: Conversation[] }>
   >((groups, conversation) => {
@@ -302,8 +339,17 @@ export const ConversationList: FC<ConversationListProps> = ({
         <span style={s.countLabel}>
           {total} conversation{total !== 1 ? "s" : ""}
         </span>
+        <input
+          ref={searchInputRef}
+          type="search"
+          style={s.searchInput}
+          placeholder="Search titles, summaries, transcripts…"
+          aria-label="Search conversations"
+          value={searchInput}
+          onChange={(event) => setSearchInput(event.target.value)}
+        />
         <span style={s.pageStatus}>
-          Page {currentPage} of {totalPages} · {pageStart}-{pageEnd} of {total}
+          Showing {conversations.length} of {total}
           {refreshing ? " · refreshing" : ""}
         </span>
       </div>
@@ -325,7 +371,27 @@ export const ConversationList: FC<ConversationListProps> = ({
         />
       )}
 
-      {notice && <div style={s.notice}>{notice}</div>}
+      {notice && (
+        <div style={s.notice}>
+          {notice}
+          {notice.startsWith("Could not") && (
+            <button
+              type="button"
+              style={s.noticeRetry}
+              onClick={() => {
+                setNotice(null);
+                if (currentPage !== 1) {
+                  setCurrentPage(1);
+                } else {
+                  void fetchConversations(1, sourceFilter, searchQuery);
+                }
+              }}
+            >
+              Refresh now
+            </button>
+          )}
+        </div>
+      )}
 
       <div style={s.columnHeader}>
         <span />
@@ -367,26 +433,26 @@ export const ConversationList: FC<ConversationListProps> = ({
         )}
       </div>
 
-      <nav style={s.pagination} aria-label="Conversation pages">
-        <button
-          type="button"
-          style={{ ...s.pageButton, ...(!canGoPrev || refreshing ? s.pageButtonDisabled : {}) }}
-          disabled={!canGoPrev || refreshing}
-          onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
-        >
-          Previous
-        </button>
-        <span style={s.pageLabel}>
-          Page {currentPage} of {totalPages}
-        </span>
-        <button
-          type="button"
-          style={{ ...s.pageButton, ...(!canGoNext || refreshing ? s.pageButtonDisabled : {}) }}
-          disabled={!canGoNext || refreshing}
-          onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
-        >
-          Next
-        </button>
+      {searchQuery && visibleConversations.length === 0 && !loading && (
+        <div style={s.emptyCard}>
+          <p style={s.emptyTitle}>No matches</p>
+          <p style={s.emptySub}>Nothing found for “{searchQuery}”.</p>
+        </div>
+      )}
+
+      <nav style={s.pagination} aria-label="Load more conversations">
+        {canLoadMore ? (
+          <button
+            type="button"
+            style={{ ...s.pageButton, ...(loadingMore || refreshing ? s.pageButtonDisabled : {}) }}
+            disabled={loadingMore || refreshing}
+            onClick={() => setCurrentPage((page) => page + 1)}
+          >
+            {loadingMore ? "Loading…" : `Load ${Math.min(PAGE_SIZE, remaining)} more ↓`}
+          </button>
+        ) : (
+          total > PAGE_SIZE && <span style={s.pageLabel}>All {total} loaded</span>
+        )}
       </nav>
 
       {contextMenu && (
@@ -669,5 +735,29 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: 11,
     letterSpacing: "0.06em",
     textTransform: "lowercase",
+  },
+  searchInput: {
+    flex: 1,
+    margin: "0 18px",
+    maxWidth: 360,
+    border: "var(--lst-hair)",
+    background: "transparent",
+    color: "var(--lst-blue)",
+    fontFamily: MONO,
+    fontSize: 11,
+    letterSpacing: "0.03em",
+    padding: "6px 10px",
+  },
+  noticeRetry: {
+    marginLeft: 10,
+    border: "var(--lst-border)",
+    background: "transparent",
+    color: "var(--lst-blue)",
+    fontFamily: MONO,
+    fontSize: 10,
+    letterSpacing: "0.06em",
+    textTransform: "lowercase",
+    padding: "2px 8px",
+    cursor: "pointer",
   },
 };

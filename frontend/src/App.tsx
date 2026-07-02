@@ -30,6 +30,8 @@ import { ConnectionsScreen } from "./components/ConnectionsScreen";
 import { LiveWriteEvents } from "./components/LiveWriteEvents";
 import { ConnectAgentButton } from "./components/ConnectAgentButton";
 import { ConversationShareDialog } from "./components/ConversationShareDialog";
+import { GlobalSyncIndicator } from "./components/GlobalSyncIndicator";
+import { AddTranscriptHub } from "./components/AddTranscriptHub";
 import { SharedWithMe } from "./components/SharedWithMe";
 import { AppShell, type ShellRoute, type ShellSourceConfig } from "./components/AppShell";
 import { MobileExperience } from "./components/mobile";
@@ -588,7 +590,7 @@ function LandingPage({
                 Transform them into insights.
               </h1>
               <p className="landing-hero-lede">
-                One inbox for transcripts, audio, and meeting notes from Fireflies, Google Meet,
+                One library for transcripts, audio, and meeting notes from Fireflies, Google Meet,
                 Granola imports, and the files you already have.
               </p>
               <div className="landing-hero-meta">
@@ -646,7 +648,7 @@ function LandingPage({
               {[
                 [
                   "01",
-                  "One inbox",
+                  "One library",
                   "Fireflies, Google Meet, Granola imports, transcripts, and audio files land in a single chronological feed.",
                 ],
                 [
@@ -926,6 +928,8 @@ export function App() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [shareConversationId, setShareConversationId] = useState<string | null>(null);
+  const [showAddHub, setShowAddHub] = useState(false);
+  const [searchFocusKey, setSearchFocusKey] = useState(0);
   const [pendingBanner, setPendingBanner] = useState<string | null>(null);
   const [gmLapsedBanner, setGmLapsedBanner] = useState(false);
   const [liveWritePathPrefix, setLiveWritePathPrefix] = useState<string | null>(null);
@@ -1921,7 +1925,7 @@ export function App() {
                       : activePage === "chat"
                         ? "library / chat"
                         : hasUsableInbox || showOptimisticInbox
-                          ? `inbox · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`
+                          ? `library · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`
                           : "onboarding / sources";
   const pageTitle = !isSignedIn
     ? "Capture thoughts. Transform them into insights."
@@ -2158,29 +2162,41 @@ export function App() {
     !showBackendOfflineState
   ) {
     return (
-      <MobileExperience
-        api={activeConversationApi}
-        activeRoute={activePage}
-        selectedConversationId={selectedConversationId}
-        refreshKey={refreshKey}
-        hasFireflies={firefliesConnected}
-        hasGranola={granolaConnected}
-        hasSoundcore={soundcoreConnected}
-        hasGoogleMeet={hasGoogleMeet === true}
-        hasFirefliesBackendAccess={hasFirefliesBackendAccess === true}
-        hasGranolaBackendAccess={hasGranolaBackendAccess === true}
-        hasSoundcoreBackendAccess={hasSoundcoreBackendAccess === true}
-        hasAssemblyAIKey={hasTranscriptionKeys.assemblyai}
-        hasAssemblyAIBackendAccess={hasTranscriptionBackendAccess.assemblyai}
-        hasDeepgramKey={hasTranscriptionKeys.deepgram}
-        hasDeepgramBackendAccess={hasTranscriptionBackendAccess.deepgram}
-        googleMeetAvailable={googleMeetAvailable}
-        chatEnabled={chatEnabled}
-        onRouteChange={setActivePage}
-        onSelectConversation={setSelectedConversationId}
-        onAddSource={() => openSourcesSetup()}
-        onRefresh={() => setRefreshKey((k) => k + 1)}
-      />
+      <>
+        <MobileExperience
+          api={activeConversationApi}
+          activeRoute={activePage}
+          selectedConversationId={selectedConversationId}
+          refreshKey={refreshKey}
+          hasFireflies={firefliesConnected}
+          hasGranola={granolaConnected}
+          hasSoundcore={soundcoreConnected}
+          hasGoogleMeet={hasGoogleMeet === true}
+          hasFirefliesBackendAccess={hasFirefliesBackendAccess === true}
+          hasGranolaBackendAccess={hasGranolaBackendAccess === true}
+          hasSoundcoreBackendAccess={hasSoundcoreBackendAccess === true}
+          hasAssemblyAIKey={hasTranscriptionKeys.assemblyai}
+          hasAssemblyAIBackendAccess={hasTranscriptionBackendAccess.assemblyai}
+          hasDeepgramKey={hasTranscriptionKeys.deepgram}
+          hasDeepgramBackendAccess={hasTranscriptionBackendAccess.deepgram}
+          googleMeetAvailable={googleMeetAvailable}
+          chatEnabled={chatEnabled}
+          onRouteChange={setActivePage}
+          onSelectConversation={setSelectedConversationId}
+          onAddSource={() => openSourcesSetup()}
+          onRefresh={() => setRefreshKey((k) => k + 1)}
+        />
+        {api && hasBackendDelegation === true && (
+          <GlobalSyncIndicator
+            api={api}
+            onViewResults={() => {
+              setActivePage("inbox");
+              setSelectedConversationId(null);
+              setRefreshKey((k) => k + 1);
+            }}
+          />
+        )}
+      </>
     );
   }
 
@@ -2195,6 +2211,12 @@ export function App() {
       userMenu={userMenu}
       sources={sourceItems}
       folders={[]}
+      onAddClick={api && hasBackendDelegation === true ? () => setShowAddHub(true) : undefined}
+      onSearchClick={() => {
+        setActivePage("inbox");
+        setSelectedConversationId(null);
+        setSearchFocusKey((k) => k + 1);
+      }}
     >
       {showWorkspaceLoading && !showOptimisticInbox && <WorkspaceStatusPanel mode="checking" />}
 
@@ -2417,6 +2439,7 @@ export function App() {
           conversationId={selectedConversationId}
           onBack={() => setSelectedConversationId(null)}
           onShare={setShareConversationId}
+          onUpdated={() => setRefreshKey((k) => k + 1)}
         />
       )}
 
@@ -2435,7 +2458,7 @@ export function App() {
               <span>
                 {authError
                   ? `Backend reconnect failed: ${authError}`
-                  : "Backend offline. Sync and source setup are unavailable; inbox reads directly from TinyCloud."}
+                  : "Backend offline. Sync and source setup are unavailable; the library reads directly from TinyCloud."}
               </span>
               <button
                 type="button"
@@ -2470,6 +2493,7 @@ export function App() {
             />
           )}
           <ConversationList
+            focusSearchKey={searchFocusKey}
             api={activeConversationApi}
             onSelectConversation={setSelectedConversationId}
             onShareConversation={setShareConversationId}
@@ -2533,6 +2557,48 @@ export function App() {
           tcw={tcw}
           conversationId={shareConversationId}
           onClose={() => setShareConversationId(null)}
+        />
+      )}
+
+      {showAddHub && api && (
+        <AddTranscriptHub
+          api={api}
+          transcriptionReady={{
+            assemblyai:
+              hasTranscriptionKeys.assemblyai === true &&
+              hasTranscriptionBackendAccess.assemblyai === true,
+            deepgram:
+              hasTranscriptionKeys.deepgram === true &&
+              hasTranscriptionBackendAccess.deepgram === true,
+          }}
+          sourcesConnected={{
+            fireflies: firefliesConnected,
+            granola: granolaConnected,
+            soundcore: soundcoreConnected,
+            googleMeet: hasGoogleMeet === true,
+          }}
+          onClose={() => setShowAddHub(false)}
+          onImported={(conversationId) => {
+            setShowAddHub(false);
+            setActivePage("inbox");
+            setSelectedConversationId(conversationId);
+            setRefreshKey((k) => k + 1);
+          }}
+          onOpenSources={() => {
+            setShowAddHub(false);
+            openSourcesSetup();
+          }}
+        />
+      )}
+
+      {api && hasBackendDelegation === true && (
+        <GlobalSyncIndicator
+          api={api}
+          onViewResults={() => {
+            setActivePage("inbox");
+            setSelectedConversationId(null);
+            setRefreshKey((k) => k + 1);
+          }}
         />
       )}
     </AppShell>

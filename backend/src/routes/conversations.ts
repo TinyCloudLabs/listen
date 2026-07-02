@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
 import { Buffer } from "node:buffer";
 import type { NormalizedConversation } from "../adapters/types.js";
+import { estimateDuration, parseTranscriptText } from "@listen/core";
 import { resolveAppPath } from "../manifest.js";
 import { conversationSql, ensureSchema } from "../schema.js";
 import {
@@ -258,108 +259,6 @@ async function resolveAudioPlaybackMetadata(
   return fallback;
 }
 
-function parseTimestamp(value: string): number | null {
-  const parts = value.split(":").map((part) => Number(part.replace(",", ".")));
-  if (parts.some((part) => Number.isNaN(part))) return null;
-  if (parts.length === 2) return parts[0] * 60 + parts[1];
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  return null;
-}
-
-function estimateDuration(text: string): number {
-  const words = text.trim().split(/\s+/).filter(Boolean).length;
-  return Math.max(4, Math.ceil(words / 2.5));
-}
-
-function parseTranscriptText(
-  transcriptText: string,
-  participantNames: string[],
-): {
-  transcript: Array<{
-    index: number;
-    speaker_id: string;
-    speaker_name: string;
-    text: string;
-    start_time: number;
-    end_time: number;
-  }>;
-  speakers: string[];
-} {
-  const transcript: Array<{
-    index: number;
-    speaker_id: string;
-    speaker_name: string;
-    text: string;
-    start_time: number;
-    end_time: number;
-  }> = [];
-  let pendingStart: number | null = null;
-
-  for (const rawLine of transcriptText.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line === "WEBVTT" || /^\d+$/.test(line)) continue;
-
-    const rangeMatch = line.match(
-      /^(\d{1,2}:\d{2}(?::\d{2})?(?:[,.]\d+)?)\s+-->\s+(\d{1,2}:\d{2}(?::\d{2})?(?:[,.]\d+)?)/,
-    );
-    if (rangeMatch) {
-      pendingStart = parseTimestamp(rangeMatch[1]);
-      continue;
-    }
-
-    const voiceMatch = line.match(/^<v\s+([^>]+)>(.+)$/i);
-    const timedSpeakerMatch = line.match(
-      /^\[?(\d{1,2}:\d{2}(?::\d{2})?(?:[,.]\d+)?)\]?\s+([^:]{1,80}):\s+(.+)$/,
-    );
-    const speakerMatch = line.match(/^([^:]{1,80}):\s+(.+)$/);
-
-    let speakerName = participantNames[0] ?? "Speaker";
-    let text = line;
-    let startTime = pendingStart ?? transcript.length * 15;
-
-    if (voiceMatch) {
-      speakerName = voiceMatch[1].trim();
-      text = voiceMatch[2].trim();
-    } else if (timedSpeakerMatch) {
-      startTime = parseTimestamp(timedSpeakerMatch[1]) ?? startTime;
-      speakerName = timedSpeakerMatch[2].trim();
-      text = timedSpeakerMatch[3].trim();
-    } else if (speakerMatch) {
-      speakerName = speakerMatch[1].trim();
-      text = speakerMatch[2].trim();
-    }
-
-    pendingStart = null;
-    if (!text) continue;
-
-    transcript.push({
-      index: transcript.length,
-      speaker_id: speakerName.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "speaker",
-      speaker_name: speakerName,
-      text,
-      start_time: startTime,
-      end_time: startTime + estimateDuration(text),
-    });
-  }
-
-  if (transcript.length === 0) {
-    const text = transcriptText.trim();
-    transcript.push({
-      index: 0,
-      speaker_id: "speaker",
-      speaker_name: participantNames[0] ?? "Speaker",
-      text,
-      start_time: 0,
-      end_time: estimateDuration(text),
-    });
-  }
-
-  const speakers = Array.from(
-    new Set([...participantNames, ...transcript.map((line) => line.speaker_name)]),
-  );
-  return { transcript, speakers };
-}
-
 function normalizeManualTranscript(body: ManualTranscriptImportBody): NormalizedConversation {
   const title = cleanRequiredString(body.title, "title");
   const transcriptText = cleanRequiredString(body.transcriptText, "transcriptText");
@@ -494,16 +393,33 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
     const limit = Math.max(1, parseInt(req.query.limit as string, 10) || DEFAULT_LIMIT);
     const offset = Math.max(0, parseInt(req.query.offset as string, 10) || DEFAULT_OFFSET);
     const source = req.query.source as string | undefined;
+    const qRaw = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    // Bounded LIKE scan over title/summary/transcript_text. TinyCloud SQL has
+    // no FTS or indexes, so this is a linear scan by design; the cap keeps
+    // pathological queries out.
+    const q = qRaw.slice(0, 200);
 
     try {
       await ensureSchema(access);
       const sqlDb = conversationSql(access);
 
-      // Total count — with optional source filter
-      const countSql = source
-        ? `SELECT COUNT(*) AS total FROM conversation WHERE source = ?`
-        : `SELECT COUNT(*) AS total FROM conversation`;
-      const countParams = source ? [source] : [];
+      const where: string[] = [];
+      const whereParams: (string | number)[] = [];
+      if (source) {
+        where.push("source = ?");
+        whereParams.push(source);
+      }
+      if (q) {
+        const pattern = `%${q.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+        where.push(
+          "(title LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\' OR transcript_text LIKE ? ESCAPE '\\')",
+        );
+        whereParams.push(pattern, pattern, pattern);
+      }
+      const whereSql = where.length > 0 ? ` WHERE ${where.join(" AND ")}` : "";
+
+      const countSql = `SELECT COUNT(*) AS total FROM conversation${whereSql}`;
+      const countParams = whereParams;
       const countResult = await sqlDb.query(countSql, countParams);
       let total = 0;
       if (countResult.ok && countResult.data.rows?.[0]) {
@@ -530,19 +446,12 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
           : [];
 
       // Paginated list with participant_count subquery
-      const listSql = source
-        ? `SELECT c.id, c.title, c.source, c.source_url, c.started_at, c.duration_secs, c.summary, c.created_at,
+      const listSql = `SELECT c.id, c.title, c.source, c.source_url, c.started_at, c.duration_secs, c.summary, c.created_at,
            (SELECT COUNT(*) FROM participant p WHERE p.conversation_id = c.id) AS participant_count
-         FROM conversation c
-         WHERE c.source = ?
-         ORDER BY c.started_at DESC
-         LIMIT ? OFFSET ?`
-        : `SELECT c.id, c.title, c.source, c.source_url, c.started_at, c.duration_secs, c.summary, c.created_at,
-           (SELECT COUNT(*) FROM participant p WHERE p.conversation_id = c.id) AS participant_count
-         FROM conversation c
+         FROM conversation c${whereSql}
          ORDER BY c.started_at DESC
          LIMIT ? OFFSET ?`;
-      const listParams = source ? [source, limit, offset] : [limit, offset];
+      const listParams = [...whereParams, limit, offset];
       const listResult = await sqlDb.query(listSql, listParams);
 
       const conversations = listResult.ok
@@ -554,6 +463,72 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
       console.error("[conversations] list failed:", err);
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: "list_failed", message });
+    }
+  });
+
+  // ── PUT /:id — edit title/summary (partial update) ──
+  router.put("/:id", async (req: Request, res: Response) => {
+    const access = req.delegatedAccess!;
+    const id = req.params.id;
+    const body = (req.body ?? {}) as { title?: unknown; summary?: unknown };
+
+    const sets: string[] = [];
+    const params: (string | null)[] = [];
+
+    if (body.title !== undefined) {
+      const title = cleanOptionalString(body.title);
+      if (!title) {
+        res.status(400).json({ error: "invalid_title", message: "title must not be empty" });
+        return;
+      }
+      sets.push("title = ?");
+      params.push(title);
+    }
+    if (body.summary !== undefined) {
+      if (typeof body.summary !== "string") {
+        res.status(400).json({ error: "invalid_summary", message: "summary must be a string" });
+        return;
+      }
+      // An empty summary clears it.
+      sets.push("summary = ?");
+      params.push(body.summary.trim() === "" ? null : body.summary);
+    }
+    if (sets.length === 0) {
+      res.status(400).json({
+        error: "no_fields",
+        message: "Provide title and/or summary to update.",
+      });
+      return;
+    }
+
+    try {
+      await ensureSchema(access);
+      const sqlDb = conversationSql(access);
+
+      const existing = await sqlDb.query(`SELECT id FROM conversation WHERE id = ?`, [id]);
+      const found =
+        existing.ok && Array.isArray(existing.data.rows) && existing.data.rows.length > 0;
+      if (!found) {
+        res.status(404).json({ error: "not_found", message: "Conversation not found." });
+        return;
+      }
+
+      sets.push("updated_at = ?");
+      params.push(new Date().toISOString());
+      const result = await sqlDb.execute(
+        `UPDATE conversation SET ${sets.join(", ")} WHERE id = ?`,
+        [...params, id],
+      );
+      if (!result.ok) {
+        res.status(500).json({ error: "update_failed", message: "Conversation update failed." });
+        return;
+      }
+
+      res.json({ ok: true, id });
+    } catch (err) {
+      console.error("[conversations] update failed:", err);
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: "update_failed", message });
     }
   });
 

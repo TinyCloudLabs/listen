@@ -1,6 +1,7 @@
 import { useEffect, useState, type FC } from "react";
 import type { ApiClient } from "@listen/client";
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
+import { MAX_TRANSCRIPTION_FILE_BYTES, fileToBase64, formatFileSize } from "../lib/fileEncoding";
 
 type SetupMode = "onboarding" | "sources";
 type SetupStep =
@@ -34,14 +35,6 @@ const TRANSCRIPTION_PROVIDER_LABELS: Record<TranscriptionProvider, string> = {
   assemblyai: "AssemblyAI",
   deepgram: "Deepgram",
 };
-// The backend accepts JSON bodies up to 25 MB and the file travels as base64
-// (~4/3 inflation), so anything above ~18 MB fails after a long upload wait.
-const MAX_TRANSCRIPTION_FILE_BYTES = 18 * 1024 * 1024;
-
-function formatFileSize(bytes: number): string {
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${Math.ceil(bytes / 1024)} KB`;
-}
 const TINYCLOUD_SECRETS_URL = "https://secrets.tinycloud.xyz";
 const VERIFY_RETRY_DELAYS_MS = [250, 750, 1500];
 const SOUNDCORE_ENV_KEYS = [
@@ -539,7 +532,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
           <span style={s.fieldLabel}>Transcript import</span>
           <p style={s.detailText}>
             Paste a transcript or upload a text file, then set the fields Listen should use in the
-            inbox.
+            library.
           </p>
           <div style={s.fieldGrid}>
             <label style={s.fieldStack}>
@@ -645,7 +638,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
             <span style={s.checkmark}>✓</span>
             <div>
               <p style={s.successTitle}>Transcript imported</p>
-              <p style={s.successSub}>It is now available in the Listen inbox.</p>
+              <p style={s.successSub}>It is now available in your Listen library.</p>
             </div>
           </div>
           <div style={s.btnRow}>
@@ -659,7 +652,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
                 else onDone?.();
               }}
             >
-              Continue to inbox
+              Continue to library
             </button>
           </div>
         </div>
@@ -874,7 +867,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
                   Configure webhook
                 </button>
                 <button style={s.btnPrimary} onClick={onFirefliesComplete}>
-                  Continue to inbox
+                  Continue to library
                 </button>
               </div>
             </>
@@ -1043,7 +1036,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
               </div>
               <div style={s.btnRow}>
                 <button style={s.btnPrimary} onClick={onGranolaComplete}>
-                  Continue to inbox
+                  Continue to library
                 </button>
               </div>
             </>
@@ -1194,7 +1187,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
                   {soundcoreSyncing ? "Syncing..." : "Sync Soundcore now"}
                 </button>
                 <button style={s.btnPrimary} onClick={onSoundcoreComplete ?? onGranolaComplete}>
-                  Continue to inbox
+                  Continue to library
                 </button>
               </div>
               {soundcoreSyncMessage && <div style={s.successCard}>{soundcoreSyncMessage}</div>}
@@ -1217,7 +1210,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
               <span style={s.checkmark}>✓</span>
               <div>
                 <p style={s.successTitle}>Google account connected</p>
-                <p style={s.successSub}>Google Meet can now sync into your inbox.</p>
+                <p style={s.successSub}>Google Meet can now sync into your library.</p>
               </div>
             </div>
           )}
@@ -1249,7 +1242,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
           <p style={s.copy}>
             Listen brings your meetings and conversations into one calm, searchable place. Sync from
             a provider or import a transcript directly. Your credentials stay private in TinyCloud
-            Secrets; imports go straight to your inbox.
+            Secrets; imports go straight to your library.
           </p>
           <p style={s.secretsNote}>
             Secrets are managed through TinyCloud Secrets at{" "}
@@ -1265,7 +1258,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
           <ol style={s.steps}>
             <li>Choose a provider, paste text, or upload a transcript file</li>
             <li>Set title, speakers, date, source link, and summary</li>
-            <li>Write the transcript into the same TinyCloud inbox</li>
+            <li>Write the transcript into the same TinyCloud library</li>
           </ol>
 
           <div style={s.footerSteps}>
@@ -1277,7 +1270,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
             <span>-</span>
             <span>{connectedCount || "0"} sources</span>
             <span>-</span>
-            <span>inbox</span>
+            <span>library</span>
           </div>
         </div>
       </div>
@@ -1467,7 +1460,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
             disabled={connectedCount === 0}
             onClick={onDone}
           >
-            Continue to inbox &rarr;
+            Continue to library &rarr;
           </button>
         </div>
       </div>
@@ -1634,13 +1627,6 @@ function isMissingSecretError(err: unknown): boolean {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function fileToBase64(file: File): Promise<string> {
-  const buffer = await file.arrayBuffer();
-  let binary = "";
-  for (const byte of new Uint8Array(buffer)) binary += String.fromCharCode(byte);
-  return btoa(binary);
 }
 
 const FONT = "var(--lst-font)";
