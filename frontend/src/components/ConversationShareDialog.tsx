@@ -4,11 +4,11 @@ import type { ApiClient } from "@listen/client";
 
 import {
   createListenShareLink,
+  hasShareableAudio,
   hasSqlTranscript,
   needsLegacyTranscriptKvGrant,
   type ShareableConversationDetail,
 } from "../lib/listenShareLinks";
-import { normalizeConversationMetadata } from "../lib/tinycloudConversations";
 
 interface ConversationShareDialogProps {
   api: ApiClient;
@@ -31,16 +31,6 @@ async function copyText(text: string): Promise<void> {
   textarea.select();
   document.execCommand("copy");
   textarea.remove();
-}
-
-function hasAudio(detail: ShareableConversationDetail | null): boolean {
-  if (!detail) return false;
-  const metadata = normalizeConversationMetadata(detail.conversation.metadata);
-  return (
-    typeof metadata.audio_data_kv_key === "string" ||
-    typeof metadata.audio_kv_key === "string" ||
-    typeof metadata.audio_playback_url === "string"
-  );
 }
 
 export const ConversationShareDialog: FC<ConversationShareDialogProps> = ({
@@ -70,7 +60,7 @@ export const ConversationShareDialog: FC<ConversationShareDialogProps> = ({
         if (cancelled) return;
         setDetail(response);
         setIncludeTranscript(needsLegacyTranscriptKvGrant(response));
-        setIncludeAudio(hasAudio(response));
+        setIncludeAudio(hasShareableAudio(response));
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -86,7 +76,7 @@ export const ConversationShareDialog: FC<ConversationShareDialogProps> = ({
 
   if (!conversationId) return null;
 
-  const audioAvailable = hasAudio(detail);
+  const audioAvailable = hasShareableAudio(detail);
   const transcriptInSql = hasSqlTranscript(detail);
   const needsTranscriptKv = needsLegacyTranscriptKvGrant(detail);
   const canCreate = Boolean(tcw && detail && !loading && !creating);
@@ -149,38 +139,32 @@ export const ConversationShareDialog: FC<ConversationShareDialogProps> = ({
               </small>
             </span>
           </label>
-          <label style={needsTranscriptKv ? s.option : s.optionDisabled}>
-            <input
-              type="checkbox"
-              checked={includeTranscript && needsTranscriptKv}
-              disabled={!needsTranscriptKv}
-              onChange={(event) => setIncludeTranscript(event.currentTarget.checked)}
-            />
-            <span>
-              <strong>Legacy transcript blob</strong>
-              <small>
-                {needsTranscriptKv
-                  ? "Include the legacy transcript KV blob."
-                  : transcriptInSql
-                    ? "Transcript is already included in SQL."
-                    : "No transcript found."}
-              </small>
-            </span>
-          </label>
-          <label style={audioAvailable ? s.option : s.optionDisabled}>
-            <input
-              type="checkbox"
-              checked={includeAudio && audioAvailable}
-              disabled={!audioAvailable}
-              onChange={(event) => setIncludeAudio(event.currentTarget.checked)}
-            />
-            <span>
-              <strong>Audio</strong>
-              <small>
-                {audioAvailable ? "Include recording access when present." : "No audio found."}
-              </small>
-            </span>
-          </label>
+          {needsTranscriptKv && (
+            <label style={s.option}>
+              <input
+                type="checkbox"
+                checked={includeTranscript}
+                onChange={(event) => setIncludeTranscript(event.currentTarget.checked)}
+              />
+              <span>
+                <strong>Legacy transcript blob</strong>
+                <small>Include the legacy transcript KV blob.</small>
+              </span>
+            </label>
+          )}
+          {audioAvailable && (
+            <label style={s.option}>
+              <input
+                type="checkbox"
+                checked={includeAudio}
+                onChange={(event) => setIncludeAudio(event.currentTarget.checked)}
+              />
+              <span>
+                <strong>Audio</strong>
+                <small>Include recording access.</small>
+              </span>
+            </label>
+          )}
         </div>
 
         <label style={s.durationRow}>

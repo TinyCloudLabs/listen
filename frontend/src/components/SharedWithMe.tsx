@@ -128,6 +128,7 @@ export const SharedWithMe: FC<SharedWithMeProps> = ({ initialShareToken, standal
           conversationId={selectedShare.conversationId}
           onBack={() => setSelectedId(null)}
           backLabel="Shared"
+          cacheMode="disabled"
         />
       </div>
     );

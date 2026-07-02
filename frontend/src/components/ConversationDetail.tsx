@@ -50,6 +50,7 @@ interface ConversationDetailProps {
   onBack: () => void;
   backLabel?: string;
   onShare?: (id: string) => void;
+  cacheMode?: "default" | "disabled";
   onUpdated?: () => void;
 }
 
@@ -343,6 +344,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
   onBack,
   backLabel = "Library",
   onShare,
+  cacheMode = "default",
   onUpdated,
 }) => {
   const [data, setData] = useState<DetailResponse | null>(null);
@@ -354,10 +356,12 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
   const [titleDraft, setTitleDraft] = useState("");
   const [titleSaving, setTitleSaving] = useState(false);
   const [summaryView, setSummaryView] = useState<"formatted" | "markdown">("formatted");
+  const useCache = cacheMode !== "disabled";
+  const canEditTitle = cacheMode !== "disabled";
 
   const saveTitle = async () => {
     const nextTitle = titleDraft.trim();
-    if (!data || titleSaving) return;
+    if (!data || titleSaving || !canEditTitle) return;
     if (!nextTitle || nextTitle === data.conversation.title) {
       setEditingTitle(false);
       return;
@@ -370,7 +374,9 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
         conversation: { ...data.conversation, title: nextTitle },
       };
       setData(next);
-      writeConversationDetailCache(conversationId, next);
+      if (useCache) {
+        writeConversationDetailCache(conversationId, next);
+      }
       setEditingTitle(false);
       setNotice("Title updated");
       onUpdated?.();
@@ -382,7 +388,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
   };
 
   useEffect(() => {
-    const cached = readConversationDetailCache<DetailResponse>(conversationId);
+    const cached = useCache ? readConversationDetailCache<DetailResponse>(conversationId) : null;
     let cancelled = false;
     const path = `/api/conversations/${conversationId}`;
     const started = Date.now();
@@ -410,7 +416,9 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
         if (cancelled) return;
         const normalized = normalizeDetailResponse(res);
         setData(normalized);
-        writeConversationDetailCache(conversationId, normalized);
+        if (useCache) {
+          writeConversationDetailCache(conversationId, normalized);
+        }
         console.info("[conversation-detail] loaded", {
           conversationId,
           ms: Date.now() - started,
@@ -440,7 +448,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [api, conversationId]);
+  }, [api, conversationId, useCache]);
 
   useEffect(() => {
     if (!notice) return;
@@ -505,7 +513,9 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
         transcript_status: repaired.transcript_status,
       });
       setData(next);
-      writeConversationDetailCache(conversation.id, next);
+      if (useCache) {
+        writeConversationDetailCache(conversation.id, next);
+      }
       setNotice("Transcript recovered");
     } catch (err) {
       setNotice(err instanceof Error ? err.message : String(err));
@@ -569,18 +579,20 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
         ) : (
           <h1 style={s.title}>
             {conversation.title}
-            <button
-              type="button"
-              style={s.titleEditBtn}
-              aria-label="Rename conversation"
-              title="Rename"
-              onClick={() => {
-                setTitleDraft(conversation.title);
-                setEditingTitle(true);
-              }}
-            >
-              ✎
-            </button>
+            {canEditTitle && (
+              <button
+                type="button"
+                style={s.titleEditBtn}
+                aria-label="Rename conversation"
+                title="Rename"
+                onClick={() => {
+                  setTitleDraft(conversation.title);
+                  setEditingTitle(true);
+                }}
+              >
+                ✎
+              </button>
+            )}
           </h1>
         )}
         <div style={s.titleMetaRow}>
