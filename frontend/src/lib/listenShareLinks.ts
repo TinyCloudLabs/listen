@@ -6,24 +6,23 @@ import {
   type EncodedShareData,
   type TinyCloudWeb,
 } from "@tinycloud/web-sdk";
-import { ServiceContext, SQLService, type ServiceSession } from "@tinycloud/sdk-core";
+import { ServiceContext, type ServiceSession } from "@tinycloud/sdk-core";
 import type { ApiClient } from "@listen/client";
 
 import {
-  DATABASE_NAME,
-  getConversationDetailFromAccess,
+  normalizeTranscript,
   normalizeConversationMetadata,
   type TinyCloudKv,
-  type TinyCloudSql,
 } from "./tinycloudConversations";
 import { resolveAppKvPath } from "./appManifest";
 
 const SHARE_FORMAT = "listen.share";
-const SHARE_VERSION = 1;
+const SHARE_VERSION = 2;
 const SHARE_TOKEN_PREFIX = "ls1:";
 const STORAGE_KEY = "listen:shared-with-me:v1";
 const DEFAULT_SHARE_DURATION_DAYS = 7;
 const SESSION_EXPIRY_SAFETY_MS = 60 * 1000;
+const BASE64_AUDIO_STORAGE_ENCODING = "base64-string-kv";
 
 export interface ShareableConversationDetail {
   conversation: {
@@ -51,6 +50,12 @@ interface PortableGrant {
   expiresAt: string;
 }
 
+interface ListenShareSnapshot {
+  conversation: ShareableConversationDetail["conversation"];
+  participants: unknown[];
+  transcript: unknown;
+}
+
 export interface ListenSharePayload {
   format: typeof SHARE_FORMAT;
   version: typeof SHARE_VERSION;
@@ -59,8 +64,7 @@ export interface ListenSharePayload {
   title: string;
   createdAt: string;
   expiresAt: string;
-  sql: EncodedShareData;
-  transcript?: PortableGrant;
+  snapshot: EncodedShareData;
   audio?: PortableGrant;
 }
 
@@ -109,7 +113,9 @@ export function decodeListenShareToken(token: string): ListenSharePayload {
     (parsed as ListenSharePayload).format !== SHARE_FORMAT ||
     (parsed as ListenSharePayload).version !== SHARE_VERSION ||
     typeof (parsed as ListenSharePayload).conversationId !== "string" ||
-    typeof (parsed as ListenSharePayload).id !== "string"
+    typeof (parsed as ListenSharePayload).id !== "string" ||
+    !(parsed as ListenSharePayload).snapshot ||
+    typeof (parsed as ListenSharePayload).snapshot !== "object"
   ) {
     throw new Error("Unsupported Listen share link");
   }
@@ -152,6 +158,8 @@ export function listStoredListenShares(): StoredListenShare[] {
           item &&
           typeof item === "object" &&
           (item as StoredListenShare).format === SHARE_FORMAT &&
+          (item as StoredListenShare).version === SHARE_VERSION &&
+          Boolean((item as StoredListenShare).snapshot) &&
           typeof (item as StoredListenShare).token === "string",
         ),
       )
@@ -210,6 +218,11 @@ function activeSessionExpiry(tcw: TinyCloudWeb): Date | null {
   return safeExpiry.getTime() > Date.now() ? safeExpiry : expiry;
 }
 
+function effectiveShareExpiry(requested: Date, sessionExpiry: Date | null): Date {
+  if (!sessionExpiry || sessionExpiry.getTime() <= Date.now()) return requested;
+  return sessionExpiry.getTime() < requested.getTime() ? sessionExpiry : requested;
+}
+
 function updateSharingSessionExpiry(tcw: TinyCloudWeb, expiry: Date | null): void {
   const sharing = tcw.sharing as { updateConfig?: (config: { sessionExpiry: Date }) => void };
   if (!expiry || typeof sharing.updateConfig !== "function") return;
@@ -220,6 +233,10 @@ function audioDataKey(detail: ShareableConversationDetail): string | null {
   const metadata = normalizeConversationMetadata(detail.conversation.metadata);
   const raw = metadata.audio_data_kv_key ?? metadata.audio_kv_key;
   return typeof raw === "string" && raw.length > 0 ? raw : null;
+}
+
+export function hasShareableAudio(detail: ShareableConversationDetail | null): boolean {
+  return detail ? audioDataKey(detail) != null : false;
 }
 
 export function hasSqlTranscript(detail: ShareableConversationDetail | null): boolean {
@@ -261,6 +278,78 @@ function minIsoDate(values: string[]): string {
   return new Date(min).toISOString();
 }
 
+function shareId(conversationId: string): string {
+  const random =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return `${conversationId}:${random}`;
+}
+
+function safePathSegment(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]+/g, "-");
+}
+
+function snapshotPath(conversationId: string, id: string): string {
+  return resolveAppKvPath(`shares/${safePathSegment(conversationId)}/${safePathSegment(id)}.json`);
+}
+
+function snapshotForDetail(
+  detail: ShareableConversationDetail,
+  options: CreateListenShareOptions,
+): ListenShareSnapshot {
+  const transcript =
+    needsLegacyTranscriptKvGrant(detail) && !options.includeTranscript ? null : detail.transcript;
+  const metadata = normalizeConversationMetadata(detail.conversation.metadata);
+  delete metadata.audio_playback_url;
+  delete metadata.audio_playback_url_source;
+  delete metadata.audio_signed_url_expires_at;
+
+  return {
+    conversation: {
+      ...detail.conversation,
+      metadata,
+    },
+    participants: detail.participants,
+    transcript,
+  };
+}
+
+function readResultData(result: unknown): unknown {
+  if (result && typeof result === "object" && "ok" in result) {
+    if ((result as { ok?: boolean }).ok === false) {
+      const message = (result as { error?: { message?: unknown } }).error?.message;
+      throw new Error(typeof message === "string" ? message : "TinyCloud request failed");
+    }
+    return (result as { data?: unknown }).data;
+  }
+  return result;
+}
+
+function kvData(result: unknown): unknown {
+  const data = readResultData(result);
+  if (data && typeof data === "object" && "data" in data) {
+    return (data as { data?: unknown }).data ?? null;
+  }
+  return data ?? null;
+}
+
+async function putShareSnapshot(
+  tcw: TinyCloudWeb,
+  path: string,
+  snapshot: ListenShareSnapshot,
+): Promise<void> {
+  const kv = (
+    tcw as TinyCloudWeb & {
+      kv?: TinyCloudKv & { put?: (key: string, value: string) => Promise<unknown> };
+    }
+  ).kv;
+  if (typeof kv?.put !== "function") {
+    throw new Error("TinyCloud KV is not available");
+  }
+  readResultData(await kv.put(path, JSON.stringify(snapshot)));
+}
+
 export async function createListenShareLink(
   tcw: TinyCloudWeb,
   detail: ShareableConversationDetail,
@@ -269,32 +358,30 @@ export async function createListenShareLink(
   const durationDays = normalizeDurationDays(options.durationDays);
   const durationMs = durationDays * 24 * 60 * 60 * 1000;
   const requestedExpiresAt = new Date(Date.now() + durationMs);
-  updateSharingSessionExpiry(tcw, activeSessionExpiry(tcw));
-  const sqlShare = await tcw.sharing.generate({
-    path: DATABASE_NAME,
-    actions: ["tinycloud.sql/read"],
-    expiry: requestedExpiresAt,
+  const sessionExpiry = activeSessionExpiry(tcw);
+  const expiresAt = effectiveShareExpiry(requestedExpiresAt, sessionExpiry);
+  updateSharingSessionExpiry(tcw, sessionExpiry);
+
+  const conversationId = detail.conversation.id;
+  const id = shareId(conversationId);
+  const path = snapshotPath(conversationId, id);
+  await putShareSnapshot(tcw, path, snapshotForDetail(detail, options));
+
+  const snapshotShare = await tcw.sharing.generate({
+    path,
+    actions: ["tinycloud.kv/get"],
+    expiry: expiresAt,
     description: `Listen conversation: ${detail.conversation.title}`,
   });
 
-  if (!sqlShare.ok) {
-    throw new Error(sqlShare.error.message);
+  if (!snapshotShare.ok) {
+    throw new Error(snapshotShare.error.message);
   }
 
-  const sql = tcw.sharing.decodeLink(sqlShare.data.token) as EncodedShareData;
-  const sqlExpiresAt = sqlShare.data.expiresAt?.toISOString() ?? requestedExpiresAt.toISOString();
-  const grantDurationMs = Math.max(1, Date.parse(sqlExpiresAt) - Date.now());
-  const delegateDid = sql.keyDid.split("#")[0] ?? sql.keyDid;
-  const conversationId = detail.conversation.id;
-  const transcript =
-    options.includeTranscript && needsLegacyTranscriptKvGrant(detail)
-      ? await delegateKvRead(
-          tcw,
-          delegateDid,
-          resolveAppKvPath(`transcript/${conversationId}`),
-          grantDurationMs,
-        )
-      : undefined;
+  const snapshot = tcw.sharing.decodeLink(snapshotShare.data.token) as EncodedShareData;
+  const snapshotExpiresAt = snapshotShare.data.expiresAt?.toISOString() ?? expiresAt.toISOString();
+  const grantDurationMs = Math.max(1, Date.parse(snapshotExpiresAt) - Date.now());
+  const delegateDid = snapshot.keyDid.split("#")[0] ?? snapshot.keyDid;
   const audioKey = options.includeAudio ? audioDataKey(detail) : null;
   const audio = audioKey
     ? await delegateKvRead(tcw, delegateDid, resolveAppKvPath(audioKey), grantDurationMs)
@@ -307,13 +394,8 @@ export async function createListenShareLink(
     conversationId,
     title: detail.conversation.title,
     createdAt: new Date().toISOString(),
-    expiresAt: minIsoDate([
-      sqlExpiresAt,
-      ...(transcript ? [transcript.expiresAt] : []),
-      ...(audio ? [audio.expiresAt] : []),
-    ]),
-    sql,
-    ...(transcript ? { transcript } : {}),
+    expiresAt: minIsoDate([snapshotExpiresAt, ...(audio ? [audio.expiresAt] : [])]),
+    snapshot,
     ...(audio ? { audio } : {}),
   };
   const token = encodePayload(payload);
@@ -363,23 +445,9 @@ function sessionFromPortableGrant(share: StoredListenShare, grant: PortableGrant
     delegationHeader: delegation.delegationHeader,
     delegationCid: delegation.cid,
     spaceId: delegation.spaceId,
-    verificationMethod: share.sql.keyDid,
-    jwk: share.sql.key,
+    verificationMethod: share.snapshot.keyDid,
+    jwk: share.snapshot.key,
   } as ServiceSession;
-}
-
-async function createSql(session: ServiceSession, host: string): Promise<TinyCloudSql> {
-  const wasm = await browserWasm();
-  const context = new ServiceContext({
-    invoke: wasm.invoke,
-    fetch: globalThis.fetch.bind(globalThis),
-    hosts: [host],
-  });
-  context.setSession(session);
-  const sql = new SQLService({});
-  sql.initialize(context);
-  const scoped = sql as SQLService & { db?: (name: string) => TinyCloudSql };
-  return typeof scoped.db === "function" ? scoped.db(DATABASE_NAME) : sql;
 }
 
 async function createKv(session: ServiceSession, host: string): Promise<TinyCloudKv> {
@@ -395,46 +463,100 @@ async function createKv(session: ServiceSession, host: string): Promise<TinyClou
   return kv;
 }
 
-async function createSharedAccess(share: StoredListenShare) {
-  const sql = await createSql(sessionFromEncodedShare(share.sql), share.sql.host);
-  const transcriptKv = share.transcript
-    ? await createKv(sessionFromPortableGrant(share, share.transcript), share.sql.host)
-    : null;
-  const audioKv = share.audio
-    ? await createKv(sessionFromPortableGrant(share, share.audio), share.sql.host)
-    : null;
+function parseSnapshot(value: unknown): ListenShareSnapshot {
+  const parsed = typeof value === "string" ? (JSON.parse(value) as unknown) : value;
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    !(parsed as ListenShareSnapshot).conversation ||
+    typeof (parsed as ListenShareSnapshot).conversation !== "object" ||
+    !Array.isArray((parsed as ListenShareSnapshot).participants)
+  ) {
+    throw new Error("Shared conversation data is invalid");
+  }
+  return parsed as ListenShareSnapshot;
+}
 
-  const kv: TinyCloudKv = {
-    async get(key: string) {
-      if (share.transcript && transcriptKv && key === share.transcript.path) {
-        return transcriptKv.get(key);
-      }
-      if (share.audio && audioKv && key === share.audio.path) {
-        return audioKv.get(key);
-      }
-      return { ok: true, data: { data: null } };
-    },
-    async createSignedReadUrl(key: string) {
-      if (share.audio && audioKv?.createSignedReadUrl && key === share.audio.path) {
-        return audioKv.createSignedReadUrl(key);
-      }
-      throw new Error("Audio was not included in this share");
-    },
-  };
+async function loadSnapshot(share: StoredListenShare): Promise<ListenShareSnapshot> {
+  const kv = await createKv(sessionFromEncodedShare(share.snapshot), share.snapshot.host);
+  const value = kvData(await kv.get(share.snapshot.path));
+  return parseSnapshot(value);
+}
 
-  return { sql, kv };
+function scrubAudioPlayback(metadata: Record<string, unknown>): Record<string, unknown> {
+  const next = normalizeConversationMetadata(metadata);
+  delete next.audio_playback_url;
+  delete next.audio_playback_url_source;
+  delete next.audio_signed_url_expires_at;
+  return next;
+}
+
+function audioContentType(metadata: Record<string, unknown>): string {
+  const raw = metadata.audio_content_type ?? metadata.audioContentType;
+  return typeof raw === "string" && raw.trim().length > 0 ? raw : "audio/mpeg";
+}
+
+async function resolveSharedAudioMetadata(
+  share: StoredListenShare,
+  metadata: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const scrubbed = scrubAudioPlayback(metadata);
+  if (!share.audio) return scrubbed;
+
+  const audioKey =
+    typeof scrubbed.audio_data_kv_key === "string"
+      ? resolveAppKvPath(scrubbed.audio_data_kv_key)
+      : null;
+  if (audioKey !== share.audio.path) return scrubbed;
+
+  try {
+    const audioKv = await createKv(
+      sessionFromPortableGrant(share, share.audio),
+      share.snapshot.host,
+    );
+
+    if (scrubbed.audio_storage_encoding === BASE64_AUDIO_STORAGE_ENCODING) {
+      const data = kvData(await audioKv.get(share.audio.path));
+      if (typeof data === "string" && data.length > 0) {
+        return {
+          ...scrubbed,
+          audio_playback_url: `data:${audioContentType(scrubbed)};base64,${data}`,
+          audio_playback_url_source: "tinycloud-shared-kv",
+        };
+      }
+      return scrubbed;
+    }
+
+    if (typeof audioKv.createSignedReadUrl === "function") {
+      const signedResult = await audioKv.createSignedReadUrl(share.audio.path);
+      const signedData = readResultData(signedResult) as { url?: unknown; expiresAt?: unknown };
+      if (typeof signedData?.url === "string" && signedData.url.length > 0) {
+        return {
+          ...scrubbed,
+          audio_playback_url: signedData.url,
+          audio_signed_url_expires_at: signedData.expiresAt,
+          audio_playback_url_source: "tinycloud-shared-signed-kv",
+        };
+      }
+    }
+  } catch {
+    return scrubbed;
+  }
+
+  return scrubbed;
 }
 
 export async function loadSharedConversationDetail(share: StoredListenShare) {
-  const access = await createSharedAccess(share);
-  const detail = await getConversationDetailFromAccess(access, share.conversationId);
-  if (!share.audio) {
-    const metadata = normalizeConversationMetadata(detail.conversation.metadata);
-    delete metadata.audio_playback_url;
-    delete metadata.audio_playback_url_source;
-    detail.conversation.metadata = metadata;
-  }
-  return detail;
+  const snapshot = await loadSnapshot(share);
+  const metadata = await resolveSharedAudioMetadata(share, snapshot.conversation.metadata);
+  return {
+    conversation: {
+      ...snapshot.conversation,
+      metadata,
+    },
+    participants: snapshot.participants,
+    transcript: snapshot.transcript == null ? null : normalizeTranscript(snapshot.transcript),
+  };
 }
 
 export function createSharedConversationApi(share: StoredListenShare): ApiClient {

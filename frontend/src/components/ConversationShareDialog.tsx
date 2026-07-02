@@ -4,11 +4,11 @@ import type { ApiClient } from "@listen/client";
 
 import {
   createListenShareLink,
+  hasShareableAudio,
   hasSqlTranscript,
   needsLegacyTranscriptKvGrant,
   type ShareableConversationDetail,
 } from "../lib/listenShareLinks";
-import { normalizeConversationMetadata } from "../lib/tinycloudConversations";
 
 interface ConversationShareDialogProps {
   api: ApiClient;
@@ -31,16 +31,6 @@ async function copyText(text: string): Promise<void> {
   textarea.select();
   document.execCommand("copy");
   textarea.remove();
-}
-
-function hasAudio(detail: ShareableConversationDetail | null): boolean {
-  if (!detail) return false;
-  const metadata = normalizeConversationMetadata(detail.conversation.metadata);
-  return (
-    typeof metadata.audio_data_kv_key === "string" ||
-    typeof metadata.audio_kv_key === "string" ||
-    typeof metadata.audio_playback_url === "string"
-  );
 }
 
 export const ConversationShareDialog: FC<ConversationShareDialogProps> = ({
@@ -70,7 +60,7 @@ export const ConversationShareDialog: FC<ConversationShareDialogProps> = ({
         if (cancelled) return;
         setDetail(response);
         setIncludeTranscript(needsLegacyTranscriptKvGrant(response));
-        setIncludeAudio(hasAudio(response));
+        setIncludeAudio(hasShareableAudio(response));
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -86,7 +76,7 @@ export const ConversationShareDialog: FC<ConversationShareDialogProps> = ({
 
   if (!conversationId) return null;
 
-  const audioAvailable = hasAudio(detail);
+  const audioAvailable = hasShareableAudio(detail);
   const transcriptInSql = hasSqlTranscript(detail);
   const needsTranscriptKv = needsLegacyTranscriptKvGrant(detail);
   const canCreate = Boolean(tcw && detail && !loading && !creating);
