@@ -42,12 +42,6 @@ vi.mock("@tinycloud/web-sdk", async (importOriginal) => {
     ...original,
     BrowserWasmBindings: sdkMocks.BrowserWasmBindings,
     KVService: sdkMocks.KVService,
-    deserializeDelegation: vi.fn(() => ({
-      delegationHeader: { Authorization: "Bearer delegated" },
-      cid: "delegated-cid",
-      spaceId: "space",
-    })),
-    serializeDelegation: vi.fn(() => "serialized-delegation"),
   };
 });
 
@@ -112,12 +106,9 @@ describe("listen share links", () => {
     const put = vi.fn(async () => ({ ok: true, data: {} }));
     const generate = vi.fn(async (input: { path: string; expiry: Date; actions: string[] }) => ({
       ok: true,
-      data: { token: "snapshot-token", expiresAt: input.expiry },
+      data: { token: input.path, expiresAt: input.expiry },
     }));
-    const decodeLink = vi.fn((token: string) => {
-      expect(token).toBe("snapshot-token");
-      return encodedShare(generate.mock.calls[0]?.[0].path);
-    });
+    const decodeLink = vi.fn(encodedShare);
     const tcw = {
       session: () => ({ siwe: "Expiration Time: 2099-01-01T00:00:00.000Z" }),
       kv: { put },
@@ -157,16 +148,13 @@ describe("listen share links", () => {
     const put = vi.fn(async () => ({ ok: true, data: {} }));
     const generate = vi.fn(async (input: { path: string; expiry: Date }) => ({
       ok: true,
-      data: { token: "snapshot-token", expiresAt: input.expiry },
-    }));
-    const delegateTo = vi.fn(async () => ({
-      delegation: { expiry: requestedExpiry },
+      data: { token: input.path, expiresAt: input.expiry },
     }));
     const tcw = {
       session: () => ({ siwe: "Expiration Time: 2026-05-14T15:00:00.000Z" }),
       kv: { put },
       sharing: { updateConfig: vi.fn(), generate, decodeLink: vi.fn(encodedShare) },
-      delegateTo,
+      delegateTo: vi.fn(),
     } as unknown as TinyCloudWeb;
 
     const result = await createListenShareLink(
@@ -176,22 +164,19 @@ describe("listen share links", () => {
     );
 
     expect(generate.mock.calls[0]?.[0].expiry.toISOString()).toBe(requestedExpiry.toISOString());
+    expect(generate.mock.calls[1]?.[0].expiry.toISOString()).toBe(requestedExpiry.toISOString());
+    expect(generate.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({
+        path: "xyz.tinycloud.listen/audio/01ABC/recording",
+        actions: ["tinycloud.kv/get"],
+      }),
+    );
     expect(result.payload.expiresAt).toBe(requestedExpiry.toISOString());
+    expect(result.payload.audio?.path).toBe("xyz.tinycloud.listen/audio/01ABC/recording");
     expect(tcw.sharing.updateConfig).toHaveBeenCalledWith({
       sessionExpiry: new Date("2026-05-14T14:59:00.000Z"),
     });
-    expect(delegateTo).toHaveBeenCalledWith(
-      "did:key:zshare",
-      [
-        {
-          service: "tinycloud.kv",
-          path: "xyz.tinycloud.listen/audio/01ABC/recording",
-          actions: ["get"],
-          skipPrefix: true,
-        },
-      ],
-      { expiry: 7 * 24 * 60 * 60 * 1000, forceWalletSign: true },
-    );
+    expect(tcw.delegateTo).not.toHaveBeenCalled();
   });
 
   it("only treats KV-backed audio as shareable", () => {
@@ -225,11 +210,7 @@ describe("listen share links", () => {
       createdAt: "2026-05-14T14:00:00.000Z",
       expiresAt: "2099-01-01T00:00:00.000Z",
       snapshot: encodedShare("xyz.tinycloud.listen/shares/01ABC/share.json"),
-      audio: {
-        path: "xyz.tinycloud.listen/audio/01ABC/recording",
-        serialized: "serialized-delegation",
-        expiresAt: "2099-01-01T00:00:00.000Z",
-      },
+      audio: encodedShare("xyz.tinycloud.listen/audio/01ABC/recording"),
       acceptedAt: "2026-05-14T14:00:00.000Z",
       token: "ls1:test",
     } as StoredListenShare;

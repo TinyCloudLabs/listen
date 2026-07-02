@@ -1,8 +1,6 @@
 import {
   BrowserWasmBindings,
   KVService,
-  deserializeDelegation,
-  serializeDelegation,
   type EncodedShareData,
   type TinyCloudWeb,
 } from "@tinycloud/web-sdk";
@@ -44,12 +42,6 @@ export interface ShareableConversationDetail {
   transcript: unknown;
 }
 
-interface PortableGrant {
-  path: string;
-  serialized: string;
-  expiresAt: string;
-}
-
 interface ListenShareSnapshot {
   conversation: ShareableConversationDetail["conversation"];
   participants: unknown[];
@@ -65,7 +57,7 @@ export interface ListenSharePayload {
   createdAt: string;
   expiresAt: string;
   snapshot: EncodedShareData;
-  audio?: PortableGrant;
+  audio?: EncodedShareData;
 }
 
 export interface StoredListenShare extends ListenSharePayload {
@@ -224,10 +216,6 @@ function updateSharingSessionExpiry(tcw: TinyCloudWeb, expiry: Date | null): voi
   sharing.updateConfig({ sessionExpiry: expiry });
 }
 
-function needsRootSignature(requested: Date, sessionExpiry: Date | null): boolean {
-  return Boolean(sessionExpiry && requested.getTime() > sessionExpiry.getTime());
-}
-
 function audioDataKey(detail: ShareableConversationDetail): string | null {
   const metadata = normalizeConversationMetadata(detail.conversation.metadata);
   const raw = metadata.audio_data_kv_key ?? metadata.audio_kv_key;
@@ -244,33 +232,6 @@ export function hasSqlTranscript(detail: ShareableConversationDetail | null): bo
 
 export function needsLegacyTranscriptKvGrant(detail: ShareableConversationDetail | null): boolean {
   return Boolean(detail?.transcript != null && !hasSqlTranscript(detail));
-}
-
-async function delegateKvRead(
-  tcw: TinyCloudWeb,
-  delegateDid: string,
-  path: string,
-  durationMs: number,
-  forceWalletSign: boolean,
-): Promise<PortableGrant> {
-  const result = await tcw.delegateTo(
-    delegateDid,
-    [
-      {
-        service: "tinycloud.kv",
-        path,
-        actions: ["get"],
-        skipPrefix: true,
-      },
-    ],
-    { expiry: durationMs, ...(forceWalletSign ? { forceWalletSign: true } : {}) },
-  );
-
-  return {
-    path,
-    serialized: serializeDelegation(result.delegation),
-    expiresAt: result.delegation.expiry.toISOString(),
-  };
 }
 
 function minIsoDate(values: string[]): string {
@@ -350,6 +311,29 @@ async function putShareSnapshot(
   readResultData(await kv.put(path, JSON.stringify(snapshot)));
 }
 
+async function generateKvShare(
+  tcw: TinyCloudWeb,
+  path: string,
+  expiry: Date,
+  description: string,
+): Promise<{ data: EncodedShareData; expiresAt: string }> {
+  const result = await tcw.sharing.generate({
+    path,
+    actions: ["tinycloud.kv/get"],
+    expiry,
+    description,
+  });
+
+  if (!result.ok) {
+    throw new Error(result.error.message);
+  }
+
+  return {
+    data: tcw.sharing.decodeLink(result.data.token) as EncodedShareData,
+    expiresAt: result.data.expiresAt?.toISOString() ?? expiry.toISOString(),
+  };
+}
+
 export async function createListenShareLink(
   tcw: TinyCloudWeb,
   detail: ShareableConversationDetail,
@@ -366,43 +350,32 @@ export async function createListenShareLink(
   const path = snapshotPath(conversationId, id);
   await putShareSnapshot(tcw, path, snapshotForDetail(detail, options));
 
-  const snapshotShare = await tcw.sharing.generate({
+  const snapshot = await generateKvShare(
+    tcw,
     path,
-    actions: ["tinycloud.kv/get"],
-    expiry: requestedExpiresAt,
-    description: `Listen conversation: ${detail.conversation.title}`,
-  });
-
-  if (!snapshotShare.ok) {
-    throw new Error(snapshotShare.error.message);
-  }
-
-  const snapshot = tcw.sharing.decodeLink(snapshotShare.data.token) as EncodedShareData;
-  const snapshotExpiresAt =
-    snapshotShare.data.expiresAt?.toISOString() ?? requestedExpiresAt.toISOString();
-  const grantDurationMs = Math.max(1, Date.parse(snapshotExpiresAt) - Date.now());
-  const delegateDid = snapshot.keyDid.split("#")[0] ?? snapshot.keyDid;
+    requestedExpiresAt,
+    `Listen conversation: ${detail.conversation.title}`,
+  );
   const audioKey = options.includeAudio ? audioDataKey(detail) : null;
   const audio = audioKey
-    ? await delegateKvRead(
+    ? await generateKvShare(
         tcw,
-        delegateDid,
         resolveAppKvPath(audioKey),
-        grantDurationMs,
-        needsRootSignature(new Date(snapshotExpiresAt), sessionExpiry),
+        requestedExpiresAt,
+        `Listen audio: ${detail.conversation.title}`,
       )
-    : undefined;
+    : null;
 
   const payload: ListenSharePayload = {
     format: SHARE_FORMAT,
     version: SHARE_VERSION,
-    id: `${conversationId}:${Date.now().toString(36)}`,
+    id,
     conversationId,
     title: detail.conversation.title,
     createdAt: new Date().toISOString(),
-    expiresAt: minIsoDate([snapshotExpiresAt, ...(audio ? [audio.expiresAt] : [])]),
-    snapshot,
-    ...(audio ? { audio } : {}),
+    expiresAt: minIsoDate([snapshot.expiresAt, ...(audio ? [audio.expiresAt] : [])]),
+    snapshot: snapshot.data,
+    ...(audio ? { audio: audio.data } : {}),
   };
   const token = encodePayload(payload);
 
@@ -442,17 +415,6 @@ function sessionFromEncodedShare(data: EncodedShareData): ServiceSession {
     spaceId: data.spaceId,
     verificationMethod: data.keyDid,
     jwk: data.key,
-  } as ServiceSession;
-}
-
-function sessionFromPortableGrant(share: StoredListenShare, grant: PortableGrant): ServiceSession {
-  const delegation = deserializeDelegation(grant.serialized);
-  return {
-    delegationHeader: delegation.delegationHeader,
-    delegationCid: delegation.cid,
-    spaceId: delegation.spaceId,
-    verificationMethod: share.snapshot.keyDid,
-    jwk: share.snapshot.key,
   } as ServiceSession;
 }
 
@@ -516,10 +478,7 @@ async function resolveSharedAudioMetadata(
   if (audioKey !== share.audio.path) return scrubbed;
 
   try {
-    const audioKv = await createKv(
-      sessionFromPortableGrant(share, share.audio),
-      share.snapshot.host,
-    );
+    const audioKv = await createKv(sessionFromEncodedShare(share.audio), share.audio.host);
 
     if (scrubbed.audio_storage_encoding === BASE64_AUDIO_STORAGE_ENCODING) {
       const data = kvData(await audioKv.get(share.audio.path));

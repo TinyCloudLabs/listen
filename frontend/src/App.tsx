@@ -939,7 +939,7 @@ export function App() {
   const sessionStoreRef = useRef(new SessionStore());
   const isMobile = useIsMobile();
   const chatEnabled = isChatEnabled();
-  const initialShareToken = useMemo(() => readShareTokenFromLocation(), []);
+  const [shareToken, setShareToken] = useState(() => readShareTokenFromLocation());
   const conversationApi = useMemo(
     () => (api || tcw ? createTinyCloudConversationApi(api, tcw) : null),
     [api, tcw],
@@ -964,8 +964,17 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (initialShareToken) setActivePage("shared");
-  }, [initialShareToken]);
+    const acceptShareFromLocation = () => {
+      const token = readShareTokenFromLocation();
+      if (!token) return;
+      setShareToken(token);
+      setActivePage("shared");
+    };
+
+    acceptShareFromLocation();
+    window.addEventListener("hashchange", acceptShareFromLocation);
+    return () => window.removeEventListener("hashchange", acceptShareFromLocation);
+  }, []);
 
   const applyDirectTinyCloudSession = useCallback((addr: string, tcwInstance: TinyCloudWeb) => {
     clearBackendWorkspaceCache(addr);
@@ -1881,8 +1890,8 @@ export function App() {
     (hasUsableInbox || showOptimisticInbox);
 
   if (!isSignedIn) {
-    if (initialShareToken) {
-      return <SharedWithMe initialShareToken={initialShareToken} standalone />;
+    if (shareToken) {
+      return <SharedWithMe initialShareToken={shareToken} standalone />;
     }
     return <LandingPage loading={authLoading} error={authError} onSignIn={handleSignIn} />;
   }
@@ -2469,7 +2478,7 @@ export function App() {
         </>
       )}
 
-      {activePage === "shared" && <SharedWithMe initialShareToken={initialShareToken} />}
+      {activePage === "shared" && <SharedWithMe initialShareToken={shareToken} />}
 
       {hasUsableInbox &&
         activePage === "chat" &&

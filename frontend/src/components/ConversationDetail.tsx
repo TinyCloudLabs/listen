@@ -50,6 +50,7 @@ interface ConversationDetailProps {
   onBack: () => void;
   backLabel?: string;
   onShare?: (id: string) => void;
+  cacheMode?: "default" | "disabled";
 }
 
 const DETAIL_LOAD_TIMEOUT_MS = 45_000;
@@ -342,6 +343,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
   onBack,
   backLabel = "Inbox",
   onShare,
+  cacheMode = "default",
 }) => {
   const [data, setData] = useState<DetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -351,7 +353,8 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
   const [summaryView, setSummaryView] = useState<"formatted" | "markdown">("formatted");
 
   useEffect(() => {
-    const cached = readConversationDetailCache<DetailResponse>(conversationId);
+    const useCache = cacheMode !== "disabled";
+    const cached = useCache ? readConversationDetailCache<DetailResponse>(conversationId) : null;
     let cancelled = false;
     const path = `/api/conversations/${conversationId}`;
     const started = Date.now();
@@ -379,7 +382,9 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
         if (cancelled) return;
         const normalized = normalizeDetailResponse(res);
         setData(normalized);
-        writeConversationDetailCache(conversationId, normalized);
+        if (useCache) {
+          writeConversationDetailCache(conversationId, normalized);
+        }
         console.info("[conversation-detail] loaded", {
           conversationId,
           ms: Date.now() - started,
@@ -409,7 +414,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [api, conversationId]);
+  }, [api, cacheMode, conversationId]);
 
   useEffect(() => {
     if (!notice) return;

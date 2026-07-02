@@ -165,6 +165,57 @@ describe("ConversationDetail", () => {
     expect(cached.data.conversation.title).toBe("Fresh Planning");
   });
 
+  it("can bypass cached detail for shared views", async () => {
+    localStorage.setItem(
+      conversationDetailCacheKey("01ABC"),
+      JSON.stringify({
+        data: {
+          ...DETAIL_RESPONSE,
+          conversation: {
+            ...DETAIL_RESPONSE.conversation,
+            title: "Cached Planning",
+            metadata: {
+              audio_playback_url: "/api/conversations/01ABC/audio",
+            },
+          },
+        },
+        cachedAt: "2026-03-20T15:00:00Z",
+      }),
+    );
+
+    let resolveGet!: (value: typeof DETAIL_RESPONSE) => void;
+    api = mockApi({
+      get: vi.fn().mockReturnValue(
+        new Promise<typeof DETAIL_RESPONSE>((resolve) => {
+          resolveGet = resolve;
+        }),
+      ),
+    });
+
+    render(
+      <ConversationDetail api={api} conversationId="01ABC" onBack={onBack} cacheMode="disabled" />,
+    );
+
+    expect(screen.getByText("Loading conversation")).toBeInTheDocument();
+    expect(screen.queryByText("Cached Planning")).not.toBeInTheDocument();
+    expect(document.querySelector("audio")).toBeNull();
+
+    resolveGet({
+      ...DETAIL_RESPONSE,
+      conversation: {
+        ...DETAIL_RESPONSE.conversation,
+        metadata: {},
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
+    });
+    expect(document.querySelector("audio")).toBeNull();
+    const cached = JSON.parse(localStorage.getItem(conversationDetailCacheKey("01ABC"))!);
+    expect(cached.data.conversation.title).toBe("Cached Planning");
+  });
+
   it("renders conversation header with title, date, and duration", async () => {
     api = mockApi({ get: vi.fn().mockResolvedValue(DETAIL_RESPONSE) });
 
