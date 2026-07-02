@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import type { ComposedManifestRequest, TinyCloudWeb } from "@tinycloud/web-sdk";
+import type { SignStrategy } from "@tinycloud/sdk-core";
 import type { ServerInfo, ServerInfoPermission, WorkspaceStateResponse } from "@listen/core";
 import {
   connectWallet,
@@ -996,13 +997,18 @@ export function App() {
   }, []);
 
   const signInDirectTinyCloud = useCallback(
-    async (addr: string, web3Provider: Parameters<typeof createAndSignIn>[0]) => {
+    async (
+      addr: string,
+      web3Provider: Parameters<typeof createAndSignIn>[0],
+      signStrategy?: SignStrategy,
+    ) => {
       const step = startDebugStep("auth.direct-tinycloud", { hasAddress: Boolean(addr) });
       try {
         const { tcw: tcwInstance } = await createAndSignIn(web3Provider, {
           autoCreateSpace: true,
           tinycloudHosts: TINYCLOUD_HOSTS,
           manifest: APP_MANIFEST,
+          signStrategy,
         });
         applyDirectTinyCloudSession(addr, tcwInstance);
         step.complete({ did: tcwInstance.did ?? null, spaceId: tcwInstance.spaceId ?? null });
@@ -1390,7 +1396,11 @@ export function App() {
         }
 
         debugLog("auth.sign-in", "wallet-connect-started", { host: OPENKEY_HOST });
-        const { address: addr, web3Provider } = await connectWallet({ host: OPENKEY_HOST });
+        const {
+          address: addr,
+          web3Provider,
+          tinycloudSignStrategy,
+        } = await connectWallet({ host: OPENKEY_HOST });
         debugLog("auth.sign-in", "wallet-connect-completed", { hasAddress: Boolean(addr) });
         if (!options?.forceWallet) {
           debugLog("auth.sign-in", "restore-after-wallet");
@@ -1413,7 +1423,7 @@ export function App() {
           return null;
         });
         if (!bootstrap) {
-          await signInDirectTinyCloud(addr, web3Provider);
+          await signInDirectTinyCloud(addr, web3Provider, tinycloudSignStrategy);
           step.complete({ mode: "direct-tinycloud", reason: "bootstrap-unavailable" });
           return;
         }
@@ -1424,7 +1434,7 @@ export function App() {
               "Backend is reachable, but /api/server-info did not return backend info.",
             );
           }
-          await signInDirectTinyCloud(addr, web3Provider);
+          await signInDirectTinyCloud(addr, web3Provider, tinycloudSignStrategy);
           step.complete({ mode: "direct-tinycloud", reason: "backend-info-unavailable" });
           return;
         }
@@ -1439,7 +1449,7 @@ export function App() {
           return null;
         });
         if (!nonce) {
-          await signInDirectTinyCloud(addr, web3Provider);
+          await signInDirectTinyCloud(addr, web3Provider, tinycloudSignStrategy);
           step.complete({ mode: "direct-tinycloud", reason: "nonce-unavailable" });
           return;
         }
@@ -1452,6 +1462,7 @@ export function App() {
           autoCreateSpace: true,
           tinycloudHosts: TINYCLOUD_HOSTS,
           capabilityRequest: composedRequest,
+          signStrategy: tinycloudSignStrategy,
         });
         debugLog("auth.sign-in", "tinycloud-sign-in-completed", {
           did: tcwInstance.did ?? null,
@@ -1474,7 +1485,7 @@ export function App() {
           } catch {
             // Continue into direct TinyCloud mode when backend verification is unavailable.
           }
-          await signInDirectTinyCloud(addr, web3Provider);
+          await signInDirectTinyCloud(addr, web3Provider, tinycloudSignStrategy);
           step.complete({ mode: "direct-tinycloud", reason: "backend-verification-failed" });
           return;
         }

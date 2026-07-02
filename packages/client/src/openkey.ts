@@ -1,5 +1,6 @@
 import OpenKey from "@openkey/sdk";
 import { providers } from "ethers";
+import type { SignRequest, SignResponse, SignStrategy } from "@tinycloud/sdk-core";
 
 // ── Configuration ────────────────────────────────────────────────────
 
@@ -15,6 +16,16 @@ export interface ConnectWalletResult {
   keyId: string;
   openkey: OpenKey;
   web3Provider: providers.Web3Provider;
+  tinycloudSignStrategy: SignStrategy;
+}
+
+interface OpenKeyDelegateSignResponse {
+  approved?: boolean;
+  signature?: string;
+  reason?: string;
+  error?: string;
+  code?: string;
+  needsApproval?: boolean;
 }
 
 // ── EIP-1193 Provider ────────────────────────────────────────────────
@@ -64,6 +75,52 @@ function hexToString(hex: string): string {
   return new TextDecoder().decode(bytes);
 }
 
+function createTinyCloudOpenKeySignStrategy(input: {
+  host: string;
+  openkey: OpenKey;
+  keyId: string;
+}): SignStrategy {
+  const strategy: SignStrategy & { openKeyAutoSign: true } = {
+    type: "callback",
+    openKeyAutoSign: true,
+    handler: async (request: SignRequest): Promise<SignResponse> => {
+      const response = await fetch(`${input.host}/api/delegate/sign`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...request, keyId: input.keyId }),
+      });
+
+      let parsed: OpenKeyDelegateSignResponse | undefined;
+      try {
+        parsed = (await response.json()) as OpenKeyDelegateSignResponse;
+      } catch {
+        parsed = undefined;
+      }
+
+      if (response.ok && parsed?.approved === true && parsed.signature) {
+        return { approved: true, signature: parsed.signature };
+      }
+
+      if (response.ok && parsed?.code === "outside_bootstrap_allowlist") {
+        const result = await input.openkey.signMessage({
+          message: request.message,
+          keyId: input.keyId,
+        });
+        return { approved: true, signature: result.signature };
+      }
+
+      return {
+        approved: false,
+        reason:
+          parsed?.reason ?? parsed?.error ?? `OpenKey signing failed with HTTP ${response.status}`,
+      };
+    },
+  };
+
+  return strategy;
+}
+
 // ── Connect Wallet ──────────────────────────────────────────────────
 
 /**
@@ -74,8 +131,9 @@ function hexToString(hex: string): string {
  * separately via SIWE.
  */
 export async function connectWallet(config?: ConnectWalletConfig): Promise<ConnectWalletResult> {
+  const host = (config?.host ?? "https://openkey.so").replace(/\/+$/, "");
   const openkey = new OpenKey({
-    host: config?.host ?? "https://openkey.so",
+    host,
     appName: config?.appName ?? "Listen",
   });
 
@@ -94,11 +152,17 @@ export async function connectWallet(config?: ConnectWalletConfig): Promise<Conne
 
   // Wrap in ethers Web3Provider for TinyCloudWeb compatibility
   const web3Provider = new providers.Web3Provider(eip1193);
+  const tinycloudSignStrategy = createTinyCloudOpenKeySignStrategy({
+    host,
+    openkey,
+    keyId: authResult.keyId,
+  });
 
   return {
     address: authResult.address,
     keyId: authResult.keyId,
     openkey,
     web3Provider,
+    tinycloudSignStrategy,
   };
 }
