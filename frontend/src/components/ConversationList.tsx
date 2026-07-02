@@ -84,6 +84,7 @@ export const ConversationList: FC<ConversationListProps> = ({
   const [total, setTotal] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
@@ -98,21 +99,26 @@ export const ConversationList: FC<ConversationListProps> = ({
   const fetchConversations = useCallback(
     async (page: number, source: SourceFilter) => {
       const path = conversationPagePath(page, source);
-      const cached = readConversationPageCache<Conversation>(path);
+      const append = page > 1;
+      const cached = append ? null : readConversationPageCache<Conversation>(path);
       const requestId = requestRef.current + 1;
       requestRef.current = requestId;
 
-      setSelected(new Set());
       setContextMenu(null);
       setError(null);
 
-      if (cached) {
+      if (append) {
+        // Loading a further page keeps the current rows (and selection) in place.
+        setLoadingMore(true);
+      } else if (cached) {
+        setSelected(new Set());
         setConversations(cached.conversations);
         setTotal(cached.total);
         setSourceCounts(cached.source_counts ?? null);
         setLoading(false);
         setRefreshing(true);
       } else {
+        setSelected(new Set());
         setConversations([]);
         setTotal(0);
         setLoading(true);
@@ -122,14 +128,23 @@ export const ConversationList: FC<ConversationListProps> = ({
       try {
         const data = await api.get<ConversationsResponse>(path);
         if (requestRef.current !== requestId) return;
-        setConversations(data.conversations);
+        if (append) {
+          setConversations((prev) => [
+            ...prev.slice(0, (page - 1) * PAGE_SIZE),
+            ...data.conversations,
+          ]);
+        } else {
+          setConversations(data.conversations);
+        }
         setTotal(data.total);
         setSourceCounts(data.source_counts ?? null);
         writeConversationPageCache(path, data);
         setError(null);
       } catch (err) {
         if (requestRef.current !== requestId) return;
-        if (cached) {
+        if (append) {
+          setNotice("Could not load more conversations");
+        } else if (cached) {
           setNotice("Could not refresh cached page");
         } else {
           setError(err instanceof Error ? err.message : String(err));
@@ -137,6 +152,7 @@ export const ConversationList: FC<ConversationListProps> = ({
       } finally {
         if (requestRef.current === requestId) {
           setLoading(false);
+          setLoadingMore(false);
           setRefreshing(false);
         }
       }
@@ -168,7 +184,8 @@ export const ConversationList: FC<ConversationListProps> = ({
 
   useEffect(() => {
     if (!notice) return;
-    const timer = window.setTimeout(() => setNotice(null), 1800);
+    const dismissMs = notice.startsWith("Could not") ? 5000 : 1800;
+    const timer = window.setTimeout(() => setNotice(null), dismissMs);
     return () => window.clearTimeout(timer);
   }, [notice]);
 
@@ -278,11 +295,8 @@ export const ConversationList: FC<ConversationListProps> = ({
     );
   }
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const pageStart = total === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
-  const pageEnd = Math.min(total, (currentPage - 1) * PAGE_SIZE + conversations.length);
-  const canGoPrev = currentPage > 1;
-  const canGoNext = currentPage < totalPages;
+  const remaining = Math.max(0, total - conversations.length);
+  const canLoadMore = remaining > 0;
   const groupedConversations = visibleConversations.reduce<
     Array<{ date: string; items: Conversation[] }>
   >((groups, conversation) => {
@@ -303,7 +317,7 @@ export const ConversationList: FC<ConversationListProps> = ({
           {total} conversation{total !== 1 ? "s" : ""}
         </span>
         <span style={s.pageStatus}>
-          Page {currentPage} of {totalPages} · {pageStart}-{pageEnd} of {total}
+          Showing {conversations.length} of {total}
           {refreshing ? " · refreshing" : ""}
         </span>
       </div>
@@ -325,7 +339,27 @@ export const ConversationList: FC<ConversationListProps> = ({
         />
       )}
 
-      {notice && <div style={s.notice}>{notice}</div>}
+      {notice && (
+        <div style={s.notice}>
+          {notice}
+          {notice.startsWith("Could not") && (
+            <button
+              type="button"
+              style={s.noticeRetry}
+              onClick={() => {
+                setNotice(null);
+                if (currentPage !== 1) {
+                  setCurrentPage(1);
+                } else {
+                  void fetchConversations(1, sourceFilter);
+                }
+              }}
+            >
+              Refresh now
+            </button>
+          )}
+        </div>
+      )}
 
       <div style={s.columnHeader}>
         <span />
@@ -367,26 +401,19 @@ export const ConversationList: FC<ConversationListProps> = ({
         )}
       </div>
 
-      <nav style={s.pagination} aria-label="Conversation pages">
-        <button
-          type="button"
-          style={{ ...s.pageButton, ...(!canGoPrev || refreshing ? s.pageButtonDisabled : {}) }}
-          disabled={!canGoPrev || refreshing}
-          onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
-        >
-          Previous
-        </button>
-        <span style={s.pageLabel}>
-          Page {currentPage} of {totalPages}
-        </span>
-        <button
-          type="button"
-          style={{ ...s.pageButton, ...(!canGoNext || refreshing ? s.pageButtonDisabled : {}) }}
-          disabled={!canGoNext || refreshing}
-          onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
-        >
-          Next
-        </button>
+      <nav style={s.pagination} aria-label="Load more conversations">
+        {canLoadMore ? (
+          <button
+            type="button"
+            style={{ ...s.pageButton, ...(loadingMore || refreshing ? s.pageButtonDisabled : {}) }}
+            disabled={loadingMore || refreshing}
+            onClick={() => setCurrentPage((page) => page + 1)}
+          >
+            {loadingMore ? "Loading…" : `Load ${Math.min(PAGE_SIZE, remaining)} more ↓`}
+          </button>
+        ) : (
+          total > PAGE_SIZE && <span style={s.pageLabel}>All {total} loaded</span>
+        )}
       </nav>
 
       {contextMenu && (
@@ -669,5 +696,17 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: 11,
     letterSpacing: "0.06em",
     textTransform: "lowercase",
+  },
+  noticeRetry: {
+    marginLeft: 10,
+    border: "var(--lst-border)",
+    background: "transparent",
+    color: "var(--lst-blue)",
+    fontFamily: MONO,
+    fontSize: 10,
+    letterSpacing: "0.06em",
+    textTransform: "lowercase",
+    padding: "2px 8px",
+    cursor: "pointer",
   },
 };
