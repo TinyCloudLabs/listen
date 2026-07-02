@@ -265,7 +265,7 @@ describe("ConversationList", () => {
     expect(onSelectConversation).toHaveBeenCalledWith("01ABC");
   });
 
-  it("shows page navigation when there are more conversations", async () => {
+  it("offers to load more when there are more conversations", async () => {
     api = mockApi({
       get: vi.fn().mockResolvedValue({
         conversations: CONVERSATIONS,
@@ -276,13 +276,12 @@ describe("ConversationList", () => {
     render(<ConversationList api={api} onSelectConversation={onSelectConversation} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Page 1 of 3")).toBeInTheDocument();
+      expect(screen.getByText(`Showing ${CONVERSATIONS.length} of 50`)).toBeInTheDocument();
     });
-    expect(screen.getByRole("button", { name: /previous/i })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /next/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /load 20 more/i })).toBeEnabled();
   });
 
-  it("disables next page when all conversations fit on one page", async () => {
+  it("hides load more when all conversations fit on one page", async () => {
     api = mockApi({
       get: vi.fn().mockResolvedValue({
         conversations: CONVERSATIONS,
@@ -296,11 +295,10 @@ describe("ConversationList", () => {
       expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
     });
 
-    expect(screen.getByText(`Page 1 of 1`)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /next/i })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /load .* more/i })).not.toBeInTheDocument();
   });
 
-  it("loads the next fixed-size page when Next is clicked", async () => {
+  it("appends the next fixed-size page when Load more is clicked", async () => {
     const firstPageConversations = Array(PAGE_SIZE)
       .fill(null)
       .map((_, i) => ({
@@ -325,10 +323,9 @@ describe("ConversationList", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Dummy Conversation 1")).toBeInTheDocument();
-      expect(screen.getByText(`Page 1 of 2`)).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    fireEvent.click(screen.getByRole("button", { name: /load 1 more/i }));
 
     await waitFor(() => {
       expect(screen.getByText("Recorder Memo")).toBeInTheDocument();
@@ -336,8 +333,10 @@ describe("ConversationList", () => {
 
     expect(getMock).toHaveBeenCalledWith("/api/conversations?limit=20&offset=20");
 
-    expect(screen.getByText(`Page 2 of 2`)).toBeInTheDocument();
+    // The first page stays on screen — rows append instead of replacing.
+    expect(screen.getByText("Dummy Conversation 1")).toBeInTheDocument();
     expect(screen.getByText("Recorder Memo")).toBeInTheDocument();
+    expect(screen.getByText(`Showing ${PAGE_SIZE + 1} of ${PAGE_SIZE + 1}`)).toBeInTheDocument();
   });
 
   it("renders cached page data immediately and refreshes it from the server", async () => {
