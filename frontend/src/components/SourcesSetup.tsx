@@ -34,6 +34,14 @@ const TRANSCRIPTION_PROVIDER_LABELS: Record<TranscriptionProvider, string> = {
   assemblyai: "AssemblyAI",
   deepgram: "Deepgram",
 };
+// The backend accepts JSON bodies up to 25 MB and the file travels as base64
+// (~4/3 inflation), so anything above ~18 MB fails after a long upload wait.
+const MAX_TRANSCRIPTION_FILE_BYTES = 18 * 1024 * 1024;
+
+function formatFileSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${Math.ceil(bytes / 1024)} KB`;
+}
 const TINYCLOUD_SECRETS_URL = "https://secrets.tinycloud.xyz";
 const VERIFY_RETRY_DELAYS_MS = [250, 750, 1500];
 const SOUNDCORE_ENV_KEYS = [
@@ -495,6 +503,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
 
   const submitTranscription = async () => {
     if (!transcriptionFile) return;
+    if (transcriptionFile.size > MAX_TRANSCRIPTION_FILE_BYTES) return;
     setTranscriptionSaving(true);
     setTranscriptionError(null);
     try {
@@ -661,7 +670,11 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
       const providerReady = transcriptionProviderReady(transcriptionProvider);
       const providerNeedsAccess = transcriptionProviderNeedsAccess(transcriptionProvider);
       const providerLabel = TRANSCRIPTION_PROVIDER_LABELS[transcriptionProvider];
-      const canTranscribe = Boolean(transcriptionFile) && providerReady && !transcriptionSaving;
+      const fileTooLarge = Boolean(
+        transcriptionFile && transcriptionFile.size > MAX_TRANSCRIPTION_FILE_BYTES,
+      );
+      const canTranscribe =
+        Boolean(transcriptionFile) && !fileTooLarge && providerReady && !transcriptionSaving;
       return (
         <div style={s.detailPanel}>
           <span style={s.fieldLabel}>Transcription</span>
@@ -747,7 +760,14 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
           </label>
           {transcriptionFile && (
             <div style={s.successInline}>
-              {transcriptionFile.name} · {Math.ceil(transcriptionFile.size / 1024)} KB
+              {transcriptionFile.name} · {formatFileSize(transcriptionFile.size)}
+            </div>
+          )}
+          {fileTooLarge && transcriptionFile && (
+            <div style={s.errorCard}>
+              {transcriptionFile.name} is {formatFileSize(transcriptionFile.size)} — uploads are
+              limited to {formatFileSize(MAX_TRANSCRIPTION_FILE_BYTES)}. Compress the recording or
+              import larger files with the listen-importer CLI.
             </div>
           )}
           {transcriptionError && <div style={s.errorCard}>{transcriptionError}</div>}
