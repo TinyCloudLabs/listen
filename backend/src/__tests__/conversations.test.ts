@@ -282,6 +282,47 @@ describe("Conversations Routes — GET /api/conversations", () => {
     expect(params[params.length - 1]).toBe(30);
   });
 
+  it("filters with a bounded LIKE scan when q is provided", async () => {
+    mockKV = createMockKV();
+    mockSQL = createMockSQL({ conversationRows: [], totalCount: 0 });
+    const app = createApp(mockKV, mockSQL);
+    ({ server, port } = await startServer(app));
+
+    const res = await fetch(`http://localhost:${port}/api/conversations?q=pricing%20tiers`);
+    expect(res.status).toBe(200);
+
+    const listCall = mockSQL._calls.find(
+      (c) => c.sql.includes("ORDER BY") && c.sql.includes("LIMIT"),
+    );
+    expect(listCall!.sql).toContain("title LIKE ?");
+    expect(listCall!.sql).toContain("summary LIKE ?");
+    expect(listCall!.sql).toContain("transcript_text LIKE ?");
+    expect(listCall!.params!.slice(0, 3)).toEqual([
+      "%pricing tiers%",
+      "%pricing tiers%",
+      "%pricing tiers%",
+    ]);
+
+    const countCall = mockSQL._calls.find((c) => c.sql.startsWith("SELECT COUNT(*) AS total"));
+    expect(countCall!.sql).toContain("LIKE");
+  });
+
+  it("escapes LIKE wildcards in q and combines with the source filter", async () => {
+    mockKV = createMockKV();
+    mockSQL = createMockSQL({ conversationRows: [], totalCount: 0 });
+    const app = createApp(mockKV, mockSQL);
+    ({ server, port } = await startServer(app));
+
+    await fetch(`http://localhost:${port}/api/conversations?source=fireflies&q=100%25_done`);
+
+    const listCall = mockSQL._calls.find(
+      (c) => c.sql.includes("ORDER BY") && c.sql.includes("LIMIT"),
+    );
+    expect(listCall!.sql).toContain("source = ?");
+    expect(listCall!.params![0]).toBe("fireflies");
+    expect(listCall!.params![1]).toBe("%100\\%\\_done%");
+  });
+
   it("returns empty list when no conversations exist", async () => {
     mockKV = createMockKV();
     mockSQL = createMockSQL({ conversationRows: [], totalCount: 0 });

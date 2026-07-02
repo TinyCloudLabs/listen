@@ -41,6 +41,7 @@ interface AppShellProps {
   folders: ShellFolderConfig[];
   navCounts?: Partial<Record<Exclude<ShellRoute, "connections" | "sources">, number | null>>;
   onAddClick?: () => void;
+  onSearchClick?: () => void;
   children: ReactNode;
 }
 
@@ -158,6 +159,7 @@ export const AppShell: FC<AppShellProps> = ({
   folders,
   navCounts,
   onAddClick,
+  onSearchClick,
   children,
 }) => {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -214,7 +216,7 @@ export const AppShell: FC<AppShellProps> = ({
           <button
             type="button"
             style={shell.searchPill}
-            onClick={() => onRouteChange("chat")}
+            onClick={() => (onSearchClick ? onSearchClick() : onRouteChange("chat"))}
             aria-label="Search transcripts"
           >
             <ShellIcon name="search" size={13} />
