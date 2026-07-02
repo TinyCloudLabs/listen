@@ -23,6 +23,7 @@ const SHARE_VERSION = 1;
 const SHARE_TOKEN_PREFIX = "ls1:";
 const STORAGE_KEY = "listen:shared-with-me:v1";
 const DEFAULT_SHARE_DURATION_DAYS = 7;
+const SESSION_EXPIRY_SAFETY_MS = 60 * 1000;
 
 export interface ShareableConversationDetail {
   conversation: {
@@ -192,6 +193,29 @@ function normalizeDurationDays(value?: number): number {
   return Math.min(365, Math.max(1, Math.round(value)));
 }
 
+function sessionExpiryFromSiwe(siwe?: string): Date | null {
+  const match = siwe?.match(/^Expiration Time:\s*(.+)$/im);
+  if (!match?.[1]) return null;
+
+  const expiry = new Date(match[1].trim());
+  return Number.isFinite(expiry.getTime()) ? expiry : null;
+}
+
+function activeSessionExpiry(tcw: TinyCloudWeb): Date | null {
+  const session = tcw.session?.();
+  const expiry = sessionExpiryFromSiwe(session?.siwe);
+  if (!expiry) return null;
+
+  const safeExpiry = new Date(expiry.getTime() - SESSION_EXPIRY_SAFETY_MS);
+  return safeExpiry.getTime() > Date.now() ? safeExpiry : expiry;
+}
+
+function updateSharingSessionExpiry(tcw: TinyCloudWeb, expiry: Date | null): void {
+  const sharing = tcw.sharing as { updateConfig?: (config: { sessionExpiry: Date }) => void };
+  if (!expiry || typeof sharing.updateConfig !== "function") return;
+  sharing.updateConfig({ sessionExpiry: expiry });
+}
+
 function audioDataKey(detail: ShareableConversationDetail): string | null {
   const metadata = normalizeConversationMetadata(detail.conversation.metadata);
   const raw = metadata.audio_data_kv_key ?? metadata.audio_kv_key;
@@ -244,11 +268,12 @@ export async function createListenShareLink(
 ): Promise<{ link: string; payload: ListenSharePayload }> {
   const durationDays = normalizeDurationDays(options.durationDays);
   const durationMs = durationDays * 24 * 60 * 60 * 1000;
-  const expiresAt = new Date(Date.now() + durationMs);
+  const requestedExpiresAt = new Date(Date.now() + durationMs);
+  updateSharingSessionExpiry(tcw, activeSessionExpiry(tcw));
   const sqlShare = await tcw.sharing.generate({
     path: DATABASE_NAME,
     actions: ["tinycloud.sql/read"],
-    expiry: expiresAt,
+    expiry: requestedExpiresAt,
     description: `Listen conversation: ${detail.conversation.title}`,
   });
 
@@ -257,7 +282,8 @@ export async function createListenShareLink(
   }
 
   const sql = tcw.sharing.decodeLink(sqlShare.data.token) as EncodedShareData;
-  const sqlExpiresAt = sqlShare.data.expiresAt?.toISOString() ?? expiresAt.toISOString();
+  const sqlExpiresAt = sqlShare.data.expiresAt?.toISOString() ?? requestedExpiresAt.toISOString();
+  const grantDurationMs = Math.max(1, Date.parse(sqlExpiresAt) - Date.now());
   const delegateDid = sql.keyDid.split("#")[0] ?? sql.keyDid;
   const conversationId = detail.conversation.id;
   const transcript =
@@ -266,12 +292,12 @@ export async function createListenShareLink(
           tcw,
           delegateDid,
           resolveAppKvPath(`transcript/${conversationId}`),
-          durationMs,
+          grantDurationMs,
         )
       : undefined;
   const audioKey = options.includeAudio ? audioDataKey(detail) : null;
   const audio = audioKey
-    ? await delegateKvRead(tcw, delegateDid, resolveAppKvPath(audioKey), durationMs)
+    ? await delegateKvRead(tcw, delegateDid, resolveAppKvPath(audioKey), grantDurationMs)
     : undefined;
 
   const payload: ListenSharePayload = {

@@ -149,38 +149,32 @@ export const ConversationShareDialog: FC<ConversationShareDialogProps> = ({
               </small>
             </span>
           </label>
-          <label style={needsTranscriptKv ? s.option : s.optionDisabled}>
-            <input
-              type="checkbox"
-              checked={includeTranscript && needsTranscriptKv}
-              disabled={!needsTranscriptKv}
-              onChange={(event) => setIncludeTranscript(event.currentTarget.checked)}
-            />
-            <span>
-              <strong>Legacy transcript blob</strong>
-              <small>
-                {needsTranscriptKv
-                  ? "Include the legacy transcript KV blob."
-                  : transcriptInSql
-                    ? "Transcript is already included in SQL."
-                    : "No transcript found."}
-              </small>
-            </span>
-          </label>
-          <label style={audioAvailable ? s.option : s.optionDisabled}>
-            <input
-              type="checkbox"
-              checked={includeAudio && audioAvailable}
-              disabled={!audioAvailable}
-              onChange={(event) => setIncludeAudio(event.currentTarget.checked)}
-            />
-            <span>
-              <strong>Audio</strong>
-              <small>
-                {audioAvailable ? "Include recording access when present." : "No audio found."}
-              </small>
-            </span>
-          </label>
+          {needsTranscriptKv && (
+            <label style={s.option}>
+              <input
+                type="checkbox"
+                checked={includeTranscript}
+                onChange={(event) => setIncludeTranscript(event.currentTarget.checked)}
+              />
+              <span>
+                <strong>Legacy transcript blob</strong>
+                <small>Include the legacy transcript KV blob.</small>
+              </span>
+            </label>
+          )}
+          {audioAvailable && (
+            <label style={s.option}>
+              <input
+                type="checkbox"
+                checked={includeAudio}
+                onChange={(event) => setIncludeAudio(event.currentTarget.checked)}
+              />
+              <span>
+                <strong>Audio</strong>
+                <small>Include recording access.</small>
+              </span>
+            </label>
+          )}
         </div>
 
         <label style={s.durationRow}>
