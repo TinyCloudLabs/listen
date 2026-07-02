@@ -223,7 +223,15 @@ test("restores a session and clicks through the app shell", async ({ page }) => 
   await page.getByRole("button", { name: "Chat" }).click();
   await expect(page.getByRole("heading", { name: "Chat is under development." })).toBeVisible();
 
+  // The shell CTA opens the add-transcript hub once backend delegation is
+  // ready; without it, it falls back to the Connections page.
   await page.getByRole("button", { name: /add source or transcript/i }).click();
+  const addHub = page.getByRole("dialog", { name: /add transcripts/i });
+  if (await addHub.isVisible().catch(() => false)) {
+    await expect(addHub.getByRole("tab", { name: /paste text/i })).toBeVisible();
+    await addHub.getByRole("button", { name: "Close" }).click();
+    await page.getByRole("button", { name: "Settings" }).click();
+  }
   await expect(page.getByRole("heading", { name: "Connections.", exact: true })).toBeVisible();
 
   await page
