@@ -30,6 +30,7 @@ import { ConnectionsScreen } from "./components/ConnectionsScreen";
 import { LiveWriteEvents } from "./components/LiveWriteEvents";
 import { ConnectAgentButton } from "./components/ConnectAgentButton";
 import { ConversationShareDialog } from "./components/ConversationShareDialog";
+import { GlobalSyncIndicator } from "./components/GlobalSyncIndicator";
 import { SharedWithMe } from "./components/SharedWithMe";
 import { AppShell, type ShellRoute, type ShellSourceConfig } from "./components/AppShell";
 import { MobileExperience } from "./components/mobile";
@@ -2524,6 +2525,17 @@ export function App() {
           tcw={tcw}
           conversationId={shareConversationId}
           onClose={() => setShareConversationId(null)}
+        />
+      )}
+
+      {api && hasBackendDelegation === true && (
+        <GlobalSyncIndicator
+          api={api}
+          onViewResults={() => {
+            setActivePage("inbox");
+            setSelectedConversationId(null);
+            setRefreshKey((k) => k + 1);
+          }}
         />
       )}
     </AppShell>
