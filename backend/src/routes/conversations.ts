@@ -456,6 +456,72 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
     }
   });
 
+  // ── PUT /:id — edit title/summary (partial update) ──
+  router.put("/:id", async (req: Request, res: Response) => {
+    const access = req.delegatedAccess!;
+    const id = req.params.id;
+    const body = (req.body ?? {}) as { title?: unknown; summary?: unknown };
+
+    const sets: string[] = [];
+    const params: (string | null)[] = [];
+
+    if (body.title !== undefined) {
+      const title = cleanOptionalString(body.title);
+      if (!title) {
+        res.status(400).json({ error: "invalid_title", message: "title must not be empty" });
+        return;
+      }
+      sets.push("title = ?");
+      params.push(title);
+    }
+    if (body.summary !== undefined) {
+      if (typeof body.summary !== "string") {
+        res.status(400).json({ error: "invalid_summary", message: "summary must be a string" });
+        return;
+      }
+      // An empty summary clears it.
+      sets.push("summary = ?");
+      params.push(body.summary.trim() === "" ? null : body.summary);
+    }
+    if (sets.length === 0) {
+      res.status(400).json({
+        error: "no_fields",
+        message: "Provide title and/or summary to update.",
+      });
+      return;
+    }
+
+    try {
+      await ensureSchema(access);
+      const sqlDb = conversationSql(access);
+
+      const existing = await sqlDb.query(`SELECT id FROM conversation WHERE id = ?`, [id]);
+      const found =
+        existing.ok && Array.isArray(existing.data.rows) && existing.data.rows.length > 0;
+      if (!found) {
+        res.status(404).json({ error: "not_found", message: "Conversation not found." });
+        return;
+      }
+
+      sets.push("updated_at = ?");
+      params.push(new Date().toISOString());
+      const result = await sqlDb.execute(
+        `UPDATE conversation SET ${sets.join(", ")} WHERE id = ?`,
+        [...params, id],
+      );
+      if (!result.ok) {
+        res.status(500).json({ error: "update_failed", message: "Conversation update failed." });
+        return;
+      }
+
+      res.json({ ok: true, id });
+    } catch (err) {
+      console.error("[conversations] update failed:", err);
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: "update_failed", message });
+    }
+  });
+
   // ── POST /import — manually import a pasted/uploaded transcript ──
   router.post("/import", async (req: Request, res: Response) => {
     const access = req.delegatedAccess!;
