@@ -612,15 +612,11 @@ describe("App manual sign-in processing", () => {
     expect(createAndSignIn).toHaveBeenCalled();
   });
 
-  it("passes the OpenKey auto-sign strategy into TinyCloud sign-in", async () => {
+  it("does not pass a sign strategy into TinyCloud sign-in (bootstrap is server-side)", async () => {
     await renderAndSignIn();
 
     const lastCall = vi.mocked(createAndSignIn).mock.calls.at(-1);
-    expect(lastCall?.[1]).toEqual(
-      expect.objectContaining({
-        signStrategy: mockTinyCloudSignStrategy,
-      }),
-    );
+    expect(lastCall?.[1]).not.toHaveProperty("signStrategy");
   });
 
   it("does not post backend delegation after manual sign-in when none is stored", async () => {
