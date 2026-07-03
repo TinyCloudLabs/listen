@@ -31,7 +31,12 @@ interface SyncProgress {
 }
 
 type FirefliesSyncJobStatus =
-  "queued" | "listing" | "syncing" | "completed" | "failed" | "canceled";
+  | "queued"
+  | "listing"
+  | "syncing"
+  | "completed"
+  | "failed"
+  | "canceled";
 
 interface FirefliesSyncJob {
   id: string;
@@ -52,7 +57,12 @@ interface FirefliesSyncJob {
 }
 
 type GoogleMeetSyncJobStatus =
-  "queued" | "listing" | "syncing" | "completed" | "failed" | "canceled";
+  | "queued"
+  | "listing"
+  | "syncing"
+  | "completed"
+  | "failed"
+  | "canceled";
 
 interface GoogleMeetSyncJob {
   id: string;

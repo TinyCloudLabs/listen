@@ -189,7 +189,8 @@ interface SecretReader {
 }
 
 export type SecretSetExistsResult =
-  { ok: true; exists: boolean; missing: string[] } | { ok: false; message: string };
+  | { ok: true; exists: boolean; missing: string[] }
+  | { ok: false; message: string };
 
 export async function checkAnySecretSetExists(
   secrets: SecretReader,

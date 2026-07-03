@@ -60,7 +60,8 @@ interface InlineEncryptedEnvelope {
 }
 
 type DecryptEnvelopeResult =
-  { ok: true; data: Uint8Array } | { ok: false; error: { code: string; message: string } };
+  | { ok: true; data: Uint8Array }
+  | { ok: false; error: { code: string; message: string } };
 
 interface EncryptionCapableNode {
   encryption?: {

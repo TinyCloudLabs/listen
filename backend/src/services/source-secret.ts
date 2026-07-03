@@ -6,7 +6,8 @@ interface SourceSecretError {
 }
 
 export type SourceSecretResult =
-  { ok: true; data: string } | { ok: false; error: SourceSecretError };
+  | { ok: true; data: string }
+  | { ok: false; error: SourceSecretError };
 
 export async function readSourceApiKeyResult(
   access: (DelegatedAccess & { secrets?: { get(name: string): Promise<any> } }) | undefined,

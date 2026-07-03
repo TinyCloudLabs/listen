@@ -648,7 +648,8 @@ sequenceDiagram
     Backend-&gt;&gt;Google: list conferences, participants, transcripts
     Backend-&gt;&gt;TinyCloud: SQL dedup + INSERT conversation/participant
     Backend-&gt;&gt;TinyCloud: KV put transcript/{conversationId}
-  end</pre>
+  end</pre
+            >
           </div>
         </section>
 
@@ -719,7 +720,8 @@ stateDiagram-v2
   GoogleConnect --&gt; InboxReady: OAuth tokens saved
   InboxReady --&gt; Syncing: stream sync or pending webhooks
   Syncing --&gt; InboxReady: refresh conversations
-  InboxReady --&gt; NeedsSource: disconnect sources</pre>
+  InboxReady --&gt; NeedsSource: disconnect sources</pre
+              >
             </div>
           </div>
         </section>
@@ -749,7 +751,8 @@ stateDiagram-v2
   SyncReady --&gt; SyncReady: stream sync and webhooks
   SyncReady --&gt; NoKey: browser secrets.delete(FIREFLIES_API_KEY)
   NeedsGrant --&gt; ReconnectWallet: no TinyCloudWeb instance
-  ReconnectWallet --&gt; Granting: user reconnects wallet</pre>
+  ReconnectWallet --&gt; Granting: user reconnects wallet</pre
+              >
             </div>
             <div class="text-stack">
               <h3>Secret access states</h3>
@@ -832,7 +835,8 @@ flowchart LR
   Backend -- "backend session kv get/put" --&gt; Jobs
   Backend -- "delegated secrets.get via KV + decrypt" --&gt; Vault
   Backend -- "SSE sync + webhooks" --&gt; Browser
-  Agent["TinyCloud agent"] -. "optional delegatee" .-&gt; UserSpace</pre>
+  Agent["TinyCloud agent"] -. "optional delegatee" .-&gt; UserSpace</pre
+            >
           </div>
           <div class="data-map" aria-label="TinyCloud storage map">
             <article class="data-item">

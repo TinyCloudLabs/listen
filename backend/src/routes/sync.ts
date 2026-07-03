@@ -82,7 +82,12 @@ const MAX_BACKFILL_SUMMARY_LIMIT = 25;
 const FIREFLIES_JOB_PREFIX = resolveAppPath("sync/fireflies/jobs");
 
 type FirefliesSyncJobStatus =
-  "queued" | "listing" | "syncing" | "completed" | "failed" | "canceled";
+  | "queued"
+  | "listing"
+  | "syncing"
+  | "completed"
+  | "failed"
+  | "canceled";
 
 interface FirefliesSyncJob {
   id: string;
