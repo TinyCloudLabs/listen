@@ -4,6 +4,7 @@ import type {
   ComposedManifestRequest,
   Manifest,
   SiweConfig,
+  SignStrategy,
 } from "@tinycloud/web-sdk";
 import type { providers } from "ethers";
 
@@ -24,6 +25,8 @@ export interface TinyCloudWebConfig {
   capabilityRequest?: ComposedManifestRequest;
   /** Include implicit account registry permissions when composing `manifest`. Default true in the SDK. */
   includeAccountRegistryPermissions?: boolean;
+  /** Optional non-interactive signing strategy for TinyCloud SIWE requests. */
+  signStrategy?: SignStrategy;
 }
 
 // ── TinyCloudWeb Instance ────────────────────────────────────────────
@@ -46,6 +49,7 @@ export function createTinyCloudWeb(
     siweConfig: config?.siweConfig,
     manifest,
     capabilityRequest: config?.capabilityRequest,
+    signStrategy: config?.signStrategy,
     includeAccountRegistryPermissions: config?.includeAccountRegistryPermissions,
   });
 
@@ -76,6 +80,7 @@ export async function restoreTinyCloudWeb(
     siweConfig: config?.siweConfig,
     manifest,
     capabilityRequest: config?.capabilityRequest,
+    signStrategy: config?.signStrategy,
     includeAccountRegistryPermissions: config?.includeAccountRegistryPermissions,
   });
 

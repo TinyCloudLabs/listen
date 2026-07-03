@@ -35,6 +35,11 @@ const mockTinyCloudQuery = vi.fn();
 const mockTinyCloudKvGet = vi.fn();
 
 const mockApiClient = { get: mockGet, post: mockPost, put: mockPut, del: mockDel };
+const mockTinyCloudSignStrategy = {
+  type: "callback",
+  openKeyAutoSign: true,
+  handler: vi.fn(),
+};
 
 vi.mock("@listen/client", () => {
   class MockSessionStore {
@@ -239,9 +244,12 @@ function mockTinyCloudConversationPage(
 function mockAuthFlow() {
   vi.mocked(connectWallet).mockResolvedValue({
     address: "0xabc123",
+    keyId: "key_test",
+    openkey: {} as never,
     web3Provider: {
       getNetwork: vi.fn().mockResolvedValue({ chainId: 1 }),
     },
+    tinycloudSignStrategy: mockTinyCloudSignStrategy,
   });
   vi.mocked(requestNonce).mockResolvedValue("mock-nonce");
   vi.mocked(createAndSignIn).mockResolvedValue({
@@ -602,6 +610,17 @@ describe("App manual sign-in processing", () => {
     expect(clearPersistedSession).toHaveBeenCalledWith("0xabc123");
     expect(requestNonce).toHaveBeenCalledWith("http://localhost:3001", "0xabc123");
     expect(createAndSignIn).toHaveBeenCalled();
+  });
+
+  it("passes the OpenKey auto-sign strategy into TinyCloud sign-in", async () => {
+    await renderAndSignIn();
+
+    const lastCall = vi.mocked(createAndSignIn).mock.calls.at(-1);
+    expect(lastCall?.[1]).toEqual(
+      expect.objectContaining({
+        signStrategy: mockTinyCloudSignStrategy,
+      }),
+    );
   });
 
   it("does not post backend delegation after manual sign-in when none is stored", async () => {

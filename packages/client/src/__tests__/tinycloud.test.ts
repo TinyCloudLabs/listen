@@ -66,4 +66,16 @@ describe("createTinyCloudWeb", () => {
 
     expect(lastTinyCloudConfig.manifest).toBe(explicitManifest);
   });
+
+  test("passes a signing strategy through to TinyCloudWeb", () => {
+    const signStrategy = {
+      type: "callback",
+      openKeyAutoSign: true,
+      handler: async () => ({ approved: true, signature: "0x1234" }),
+    };
+
+    createTinyCloudWeb({ request: async () => null } as any, { signStrategy });
+
+    expect(lastTinyCloudConfig.signStrategy).toBe(signStrategy);
+  });
 });

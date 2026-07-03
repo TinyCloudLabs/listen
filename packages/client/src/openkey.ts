@@ -1,5 +1,6 @@
 import OpenKey from "@openkey/sdk";
 import { providers } from "ethers";
+import type { SignRequest, SignResponse, SignStrategy } from "@tinycloud/sdk-core";
 
 // ── Configuration ────────────────────────────────────────────────────
 
@@ -15,6 +16,16 @@ export interface ConnectWalletResult {
   keyId: string;
   openkey: OpenKey;
   web3Provider: providers.Web3Provider;
+  tinycloudSignStrategy: SignStrategy;
+}
+
+interface OpenKeyDelegateSignResponse {
+  approved?: boolean;
+  signature?: string;
+  reason?: string;
+  error?: string;
+  code?: string;
+  needsApproval?: boolean;
 }
 
 // ── EIP-1193 Provider ────────────────────────────────────────────────
@@ -64,6 +75,100 @@ function hexToString(hex: string): string {
   return new TextDecoder().decode(bytes);
 }
 
+/**
+ * OpenKey serves its API from the `api.` subdomain of the widget host
+ * (openkey.so → api.openkey.so). Localhost dev serves both from one origin.
+ */
+function deriveOpenKeyApiHost(host: string): string {
+  try {
+    const url = new URL(host);
+    if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+      return host.replace(/\/+$/, "");
+    }
+    if (!url.hostname.startsWith("api.")) {
+      url.hostname = `api.${url.hostname}`;
+    }
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return "https://api.openkey.so";
+  }
+}
+
+function createTinyCloudOpenKeySignStrategy(input: {
+  host: string;
+  openkey: OpenKey;
+  keyId: string;
+}): SignStrategy {
+  const apiHost = deriveOpenKeyApiHost(input.host);
+
+  const strategy: SignStrategy & { openKeyAutoSign: true } = {
+    type: "callback",
+    openKeyAutoSign: true,
+    handler: async (request: SignRequest): Promise<SignResponse> => {
+      // Bootstrap signatures must never reach the interactive widget (that
+      // is the TC-86 prompt flood). Anything else falls back to exactly one
+      // widget prompt: approved-without-signature makes the SDK sign with
+      // its own (interactive) signer.
+      // `purpose` ships in @tinycloud/sdk-core > 2.4.0; older SDKs send none.
+      const purpose = (request as SignRequest & { purpose?: string }).purpose;
+      const isBootstrap = purpose === "bootstrap-session" || purpose === "bootstrap-host";
+      const widgetFallback: SignResponse = { approved: true };
+
+      // Session token relayed during connect(); older @openkey/sdk builds
+      // have no accessor — the request then goes out unauthenticated and
+      // the failure policy below applies.
+      const token = (
+        input.openkey as { getSessionToken?: () => string | null }
+      ).getSessionToken?.();
+
+      try {
+        const response = await fetch(`${apiHost}/api/delegate/sign`, {
+          method: "POST",
+          credentials: "omit",
+          headers: {
+            "content-type": "application/json",
+            ...(token ? { authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ ...request, keyId: input.keyId }),
+        });
+
+        let parsed: OpenKeyDelegateSignResponse | undefined;
+        try {
+          parsed = (await response.json()) as OpenKeyDelegateSignResponse;
+        } catch {
+          parsed = undefined;
+        }
+
+        if (response.ok && parsed?.approved === true && parsed.signature) {
+          return { approved: true, signature: parsed.signature };
+        }
+
+        if (!isBootstrap) {
+          return widgetFallback;
+        }
+
+        return {
+          approved: false,
+          reason:
+            parsed?.reason ??
+            parsed?.error ??
+            `OpenKey signing failed with HTTP ${response.status}`,
+        };
+      } catch (err) {
+        if (!isBootstrap) {
+          return widgetFallback;
+        }
+        return {
+          approved: false,
+          reason: `OpenKey signing unreachable: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    },
+  };
+
+  return strategy;
+}
+
 // ── Connect Wallet ──────────────────────────────────────────────────
 
 /**
@@ -74,8 +179,9 @@ function hexToString(hex: string): string {
  * separately via SIWE.
  */
 export async function connectWallet(config?: ConnectWalletConfig): Promise<ConnectWalletResult> {
+  const host = (config?.host ?? "https://openkey.so").replace(/\/+$/, "");
   const openkey = new OpenKey({
-    host: config?.host ?? "https://openkey.so",
+    host,
     appName: config?.appName ?? "Listen",
   });
 
@@ -94,11 +200,17 @@ export async function connectWallet(config?: ConnectWalletConfig): Promise<Conne
 
   // Wrap in ethers Web3Provider for TinyCloudWeb compatibility
   const web3Provider = new providers.Web3Provider(eip1193);
+  const tinycloudSignStrategy = createTinyCloudOpenKeySignStrategy({
+    host,
+    openkey,
+    keyId: authResult.keyId,
+  });
 
   return {
     address: authResult.address,
     keyId: authResult.keyId,
     openkey,
     web3Provider,
+    tinycloudSignStrategy,
   };
 }
