@@ -38,6 +38,7 @@ import { MobileExperience } from "./components/mobile";
 import { useIsMobile } from "./hooks/useIsMobile";
 import { APP_MANIFEST } from "./lib/appManifest";
 import { debugFetch, debugLog, startDebugStep } from "./lib/debug";
+import { purgeListenLocalData } from "./lib/localData";
 import { createTinyCloudConversationApi } from "./lib/tinycloudConversations";
 import { readShareTokenFromLocation } from "./lib/listenShareLinks";
 import {
@@ -1532,6 +1533,7 @@ export function App() {
     await tcw?.signOut?.();
     if (address) clearBackendWorkspaceCache(address, backendDid ?? undefined);
     if (address) clearPersistedSession(address);
+    purgeListenLocalData();
     sessionStoreRef.current.clear();
     setAddress(null);
     setDid(null);

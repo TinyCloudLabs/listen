@@ -99,7 +99,7 @@ vi.mock("@listen/client", () => {
     clearPersistedSession: vi.fn(),
     loadPersistedSession: vi.fn(() => null),
     sendDelegation: vi.fn(),
-    revokeDelegation: vi.fn(),
+    revokeDelegation: vi.fn(() => Promise.resolve()),
     loadAppManifest: vi.fn().mockResolvedValue({
       app_id: "com.test.listen",
       name: "Listen",
@@ -610,6 +610,48 @@ describe("App manual sign-in processing", () => {
     expect(clearPersistedSession).toHaveBeenCalledWith("0xabc123");
     expect(requestNonce).toHaveBeenCalledWith("http://localhost:3001", "0xabc123");
     expect(createAndSignIn).toHaveBeenCalled();
+  });
+
+  it("purges Listen local data on sign-out", async () => {
+    await renderAndSignIn();
+
+    localStorage.setItem(
+      backendWorkspaceCacheKey("0xabc123", "did:key:backend"),
+      JSON.stringify({ cached: true }),
+    );
+    localStorage.setItem(
+      "listen:conversation-page:v1:/api/conversations?limit=20&offset=0",
+      JSON.stringify({ conversations: [], total: 0 }),
+    );
+    localStorage.setItem("listen:conversation-detail:v1:01ABC", JSON.stringify({ data: {} }));
+    localStorage.setItem("listen:conversation-notes:01ABC", JSON.stringify([{ body: "draft" }]));
+    localStorage.setItem("listen:shared-with-me:v1", JSON.stringify(["share-token"]));
+    localStorage.setItem("listen:theme", "dark");
+    localStorage.setItem("listen:capability-version", "soundcore-secrets-v2");
+    localStorage.setItem("tinycloud:session:0xabc123", JSON.stringify({ address: "0xabc123" }));
+    localStorage.setItem("lastSyncTimestamp", "2026-03-24T15:00:00.000Z");
+    localStorage.setItem("unrelated", "keep");
+
+    await openUserMenu();
+    fireEvent.click(screen.getByRole("button", { name: /sign out/i }));
+
+    await waitFor(() => {
+      expect(localStorage.getItem("listen:session")).toBeNull();
+    });
+    expect(
+      localStorage.getItem(backendWorkspaceCacheKey("0xabc123", "did:key:backend")),
+    ).toBeNull();
+    expect(
+      localStorage.getItem("listen:conversation-page:v1:/api/conversations?limit=20&offset=0"),
+    ).toBeNull();
+    expect(localStorage.getItem("listen:conversation-detail:v1:01ABC")).toBeNull();
+    expect(localStorage.getItem("listen:conversation-notes:01ABC")).toBeNull();
+    expect(localStorage.getItem("listen:shared-with-me:v1")).toBeNull();
+    expect(localStorage.getItem("listen:theme")).toBeNull();
+    expect(localStorage.getItem("listen:capability-version")).toBeNull();
+    expect(localStorage.getItem("tinycloud:session:0xabc123")).toBeNull();
+    expect(localStorage.getItem("lastSyncTimestamp")).toBeNull();
+    expect(localStorage.getItem("unrelated")).toBe("keep");
   });
 
   it("does not pass a sign strategy into TinyCloud sign-in (bootstrap is server-side)", async () => {
