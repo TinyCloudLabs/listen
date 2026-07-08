@@ -262,7 +262,10 @@ function mockAuthFlow() {
         delete: mockSecretDelete,
       },
       sql: {
-        db: vi.fn(() => ({ query: mockTinyCloudQuery })),
+        db: vi.fn(() => ({
+          query: mockTinyCloudQuery,
+          migrations: { apply: vi.fn().mockResolvedValue({ ok: true }) },
+        })),
       },
       kv: {
         get: mockTinyCloudKvGet,

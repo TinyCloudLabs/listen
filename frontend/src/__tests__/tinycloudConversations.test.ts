@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
 import type { ApiClient } from "@listen/client";
-import { createTinyCloudConversationApi } from "../lib/tinycloudConversations";
+import { createTinyCloudConversationApi, ensureSchema } from "../lib/tinycloudConversations";
 
 function mockApi(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
@@ -27,13 +27,15 @@ function mockTinyCloud(
   options: {
     transcript?: unknown;
     signedAudioUrl?: string;
+    apply?: ReturnType<typeof vi.fn>;
   } = {},
 ): TinyCloudWeb {
+  const apply = options.apply ?? vi.fn(async () => ({ ok: true }));
   return {
     sql: {
       db: vi.fn((name: string) => {
         expect(name).toBe("xyz.tinycloud.listen/conversations");
-        return { query };
+        return { query, migrations: { apply } };
       }),
     },
     kv: {
@@ -207,7 +209,7 @@ describe("createTinyCloudConversationApi", () => {
     });
     const client = createTinyCloudConversationApi(api, {
       sql: {
-        db: vi.fn(() => ({ query })),
+        db: vi.fn(() => ({ query, migrations: { apply: vi.fn(async () => ({ ok: true })) } })),
       },
       kv: {
         get: kvGet,
@@ -260,5 +262,72 @@ describe("createTinyCloudConversationApi", () => {
       connected: true,
     });
     expect(backendGet).toHaveBeenCalledWith("/api/config/google-meet/connected");
+  });
+
+  it("applies migrations before running the first direct list query", async () => {
+    const calls: string[] = [];
+    const apply = vi.fn(async () => {
+      calls.push("migrate");
+      return { ok: true };
+    });
+    const query = vi.fn(async (sql: string) => {
+      // The only query allowed before the list runs is the 002 column probe.
+      calls.push(sql.includes("transcript_json, transcript_text") ? "probe" : "list");
+      return { ok: true, data: toArrayRows([]) };
+    });
+    const client = createTinyCloudConversationApi(mockApi(), mockTinyCloud(query, { apply }));
+
+    await client.get("/api/conversations?limit=20&offset=0");
+
+    // Seeding (001 initial, 002 probe, 002 columns) fully precedes list queries.
+    expect(calls.filter((c) => c === "migrate").length).toBe(2);
+    const firstListIdx = calls.indexOf("list");
+    expect(firstListIdx).toBeGreaterThan(-1);
+    expect(calls.lastIndexOf("migrate")).toBeLessThan(firstListIdx);
+    expect(calls.lastIndexOf("probe")).toBeLessThan(firstListIdx);
+  });
+
+  it("seeds the schema once across concurrent first reads", async () => {
+    const apply = vi.fn(async () => ({ ok: true }));
+    const query = vi.fn(async () => ({ ok: true, data: toArrayRows([]) }));
+    const tcw = mockTinyCloud(query, { apply });
+    const client = createTinyCloudConversationApi(mockApi(), tcw);
+
+    // Mirror App.tsx firing the exists-probe and ConversationList concurrently.
+    await Promise.all([
+      client.get("/api/conversations?limit=1&offset=0"),
+      client.get("/api/conversations?limit=20&offset=0"),
+    ]);
+
+    // 001_initial + 002 columns applied exactly once total, not per read.
+    expect(apply).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-runs the idempotent migrations for a fresh TinyCloud instance", async () => {
+    const apply = vi.fn(async () => ({ ok: true }));
+    const query = vi.fn(async () => ({ ok: true, data: toArrayRows([]) }));
+
+    // A cached (already-seeded) instance memoizes and does not re-apply.
+    const seeded = mockTinyCloud(query, { apply });
+    await ensureSchema(seeded);
+    await ensureSchema(seeded);
+    expect(apply).toHaveBeenCalledTimes(2);
+
+    // A different instance seeds independently (migrations.apply is idempotent).
+    apply.mockClear();
+    const fresh = mockTinyCloud(query, { apply });
+    await ensureSchema(fresh);
+    expect(apply).toHaveBeenCalledTimes(2);
+  });
+
+  it("surfaces schema seeding failures instead of the missing-table read error", async () => {
+    const apply = vi.fn(async () => ({ ok: false, error: { message: "not authorized" } }));
+    const query = vi.fn(async () => ({ ok: true, data: toArrayRows([]) }));
+    const client = createTinyCloudConversationApi(mockApi(), mockTinyCloud(query, { apply }));
+
+    await expect(client.get("/api/conversations?limit=20&offset=0")).rejects.toThrow(
+      "Failed to initialize conversations schema: not authorized",
+    );
+    expect(query).not.toHaveBeenCalled();
   });
 });

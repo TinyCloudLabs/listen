@@ -1,9 +1,14 @@
 import type { DelegatedAccess } from "@listen/server";
+import {
+  MIGRATION_NAMESPACE,
+  SCHEMA_STATEMENTS,
+  COLUMN_MIGRATION_STATEMENTS,
+  COLUMN_MIGRATION_ALREADY_APPLIED_STATEMENTS,
+} from "@listen/core";
 import { resolveAppPath } from "./manifest.js";
 
 /** Database name for the conversations SQL store. */
 export const DATABASE_NAME = resolveAppPath("conversations", "tinycloud.sql");
-const MIGRATION_NAMESPACE = "xyz.tinycloud.listen.conversations";
 
 type ConversationSql = Pick<DelegatedAccess["sql"], "query" | "execute"> & {
   migrations: {
@@ -60,41 +65,6 @@ function withMigrationFallback(sqlDb: unknown): ConversationSql {
     },
   };
 }
-
-/**
- * TinyCloud's SQLite authorizer restricts CREATE INDEX, UNIQUE constraints,
- * and REFERENCES. Keep schema simple — PRIMARY KEY only.
- * Dedup is handled at the application level via pre-fetch source_id check.
- */
-const SCHEMA_STATEMENTS = [
-  `CREATE TABLE IF NOT EXISTS conversation (
-    id              TEXT PRIMARY KEY,
-    title           TEXT,
-    source          TEXT NOT NULL,
-    source_id       TEXT,
-    source_url      TEXT,
-    started_at      TEXT,
-    ended_at        TEXT,
-    duration_secs   REAL,
-    summary         TEXT,
-    metadata        TEXT,
-    created_at      TEXT NOT NULL,
-    updated_at      TEXT NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS participant (
-    id              TEXT PRIMARY KEY,
-    conversation_id TEXT NOT NULL,
-    name            TEXT NOT NULL,
-    email           TEXT,
-    speaker_label   TEXT
-  )`,
-];
-
-const COLUMN_MIGRATION_STATEMENTS = [
-  `ALTER TABLE conversation ADD COLUMN transcript_json TEXT`,
-  `ALTER TABLE conversation ADD COLUMN transcript_text TEXT`,
-];
-const COLUMN_MIGRATION_ALREADY_APPLIED_STATEMENTS = ["UPDATE conversation SET id = id WHERE 1 = 0"];
 
 function normalizeSchemaErrorMessage(message: string): string {
   if (

@@ -183,3 +183,7 @@ export function deriveApiHost(host: string): string {
 // ── Transcript parsing (shared browser + backend) ───────────────────
 
 export * from "./transcript-parser.js";
+
+// ── Conversations SQL schema (shared browser + backend) ─────────────
+
+export * from "./conversations-schema.js";
