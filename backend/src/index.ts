@@ -38,6 +38,7 @@ import { createOtterRouter } from "./routes/otter.js";
 import { createOtterSyncRouter } from "./routes/otter-sync.js";
 import { createSoundcoreSyncRouter } from "./routes/soundcore-sync.js";
 import { createConversationsRouter } from "./routes/conversations.js";
+import { createSchemaRouter } from "./routes/schema.js";
 import { createWebhookRouter } from "./routes/webhooks.js";
 import { createGoogleMeetPushRouter } from "./routes/google-meet-webhooks.js";
 import { createGoogleMeetSyncRouter } from "./routes/google-meet-sync.js";
@@ -474,6 +475,15 @@ async function main() {
   app.use(
     "/api/conversations",
     createConversationsRouter({
+      authMiddleware,
+      delegationMiddleware,
+    }),
+  );
+
+  // Schema seeding trigger (backend-primary seeder for first direct browser read)
+  app.use(
+    "/api/schema",
+    createSchemaRouter({
       authMiddleware,
       delegationMiddleware,
     }),

@@ -237,20 +237,53 @@ const schemaSeeded = new WeakMap<object, Promise<void>>();
 
 /**
  * Ensure the conversations schema exists before the first direct-TinyCloud
- * read. Mirrors the backend's `ensureSchema`: same migration ids, order, and
- * column probe. Runs at most once per TinyCloudWeb instance.
+ * read. Hybrid seeding: the backend is the primary seeder (it owns the
+ * canonical `ensureSchema` path), and the browser session seeds directly as a
+ * fallback when the backend is unavailable or its call fails. Runs at most once
+ * per TinyCloudWeb instance; a failed pass is not memoized so a later read can
+ * retry.
  */
-export function ensureSchema(tcw: TinyCloudWeb): Promise<void> {
+export function ensureSchema(api: ApiClient | null, tcw: TinyCloudWeb): Promise<void> {
   const existing = schemaSeeded.get(tcw);
   if (existing) return existing;
 
-  const pending = seedSchema(tcw).catch((error) => {
+  const pending = seedSchemaViaBackendThenFallback(api, tcw).catch((error) => {
     // Allow a later read to retry rather than pinning a permanent failure.
     schemaSeeded.delete(tcw);
     throw error;
   });
   schemaSeeded.set(tcw, pending);
   return pending;
+}
+
+/**
+ * Try the backend seeder first, then fall back to seeding via the browser
+ * session. Only throws if BOTH fail, surfacing both failures.
+ */
+async function seedSchemaViaBackendThenFallback(
+  api: ApiClient | null,
+  tcw: TinyCloudWeb,
+): Promise<void> {
+  let backendError: string | null = null;
+  if (api) {
+    try {
+      await api.post("/api/schema/ensure");
+      return;
+    } catch (error) {
+      backendError = thrownSeedErrorMessage(error);
+    }
+  } else {
+    backendError = "backend unavailable (no api client)";
+  }
+
+  try {
+    await seedSchema(tcw);
+  } catch (fallbackError) {
+    throw new Error(
+      `Failed to seed conversations schema. Backend seeder: ${backendError}. ` +
+        `Browser fallback: ${thrownSeedErrorMessage(fallbackError)}`,
+    );
+  }
 }
 
 async function seedSchema(tcw: TinyCloudWeb): Promise<void> {
@@ -599,7 +632,11 @@ export async function getConversationDetailFromAccess(
   return getConversationDetail(access, { id });
 }
 
-async function getFromTinyCloud(tcw: TinyCloudWeb | null, path: string): Promise<unknown> {
+async function getFromTinyCloud(
+  api: ApiClient | null,
+  tcw: TinyCloudWeb | null,
+  path: string,
+): Promise<unknown> {
   const listPath = parseListPath(path);
   const detailPath = listPath ? null : parseDetailPath(path);
   if (!listPath && !detailPath) throw new Error("No TinyCloud conversation handler for path");
@@ -607,7 +644,7 @@ async function getFromTinyCloud(tcw: TinyCloudWeb | null, path: string): Promise
   const access = tinycloudAccess(tcw);
   if (!access) throw new Error("TinyCloud conversation access is not available");
 
-  await ensureSchema(tcw!);
+  await ensureSchema(api, tcw!);
 
   return listPath
     ? listConversations(access, listPath)
@@ -626,7 +663,7 @@ export function createTinyCloudConversationApi(
   return {
     async get<T>(path: string): Promise<T> {
       if (parseListPath(path) || parseDetailPath(path)) {
-        if (tcw) return (await getFromTinyCloud(tcw, path)) as T;
+        if (tcw) return (await getFromTinyCloud(api, tcw, path)) as T;
         return requireApi().get<T>(path);
       }
 
