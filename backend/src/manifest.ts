@@ -141,8 +141,9 @@ function backendDelegationPermissions(
     {
       service: "tinycloud.sql",
       path: "conversations",
-      actions: ["read", "write"],
-      description: "Read and write normalized conversation records created from transcript sync.",
+      actions: ["read", "write", "schema"],
+      description:
+        "Read and write normalized conversation records, and create/migrate the conversations schema (ensureSchema) so the backend can seed fresh accounts.",
     },
     ...backendSecretPermissions(),
     ...backendEncryptionPermissions(ownerDid),

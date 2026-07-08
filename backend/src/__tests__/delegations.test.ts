@@ -34,7 +34,7 @@ function fullPolicyResources(space = "applications") {
       service: "tinycloud.sql",
       space,
       path: "xyz.tinycloud.listen/conversations",
-      actions: ["tinycloud.sql/read", "tinycloud.sql/write"],
+      actions: ["tinycloud.sql/read", "tinycloud.sql/write", "tinycloud.sql/schema"],
     },
     {
       service: "tinycloud.encryption",
@@ -486,7 +486,7 @@ describe("Delegation Routes", () => {
           service: "tinycloud.sql",
           space: "applications",
           path: "xyz.tinycloud.listen/conversations",
-          actions: ["tinycloud.sql/read", "tinycloud.sql/write"],
+          actions: ["tinycloud.sql/read", "tinycloud.sql/write", "tinycloud.sql/schema"],
         },
         {
           service: "tinycloud.encryption",
