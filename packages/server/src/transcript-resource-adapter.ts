@@ -16,6 +16,7 @@ export const LISTEN_CONTENT_SPACE = "applications";
 export const LISTEN_CONVERSATIONS_SQL_PATH = `${LISTEN_RESOURCE_PREFIX}/conversations`;
 export const LISTEN_TRANSCRIPT_RESOURCE_TYPE = `${LISTEN_RESOURCE_PREFIX}/transcript/v0`;
 export const LISTEN_TRANSCRIPT_PROJECTION_RESOURCE_TYPE = `${LISTEN_RESOURCE_PREFIX}/transcript-projection/v0`;
+export const LISTEN_TRANSCRIPT_PROJECTION_PATH_PREFIX = `${LISTEN_RESOURCE_PREFIX}/projections`;
 
 export const LISTEN_TRANSCRIPT_SCHEMA_DRIFT_VERSION = "listen.transcript-resource-adapter.v0";
 export const LISTEN_TRANSCRIPT_CATALOG_SOURCE_OF_TRUTH =
@@ -205,7 +206,9 @@ export function createListenTranscriptResourceCapabilities(
       options.projectionObjectPathsByConversationId,
       selectedIdSet,
     )) {
-      capabilities.push(createTranscriptProjectionCapability(projectionPath, space));
+      capabilities.push(
+        createTranscriptProjectionCapability(conversationId, projectionPath, space),
+      );
     }
   }
 
@@ -226,10 +229,15 @@ function createTranscriptKvBodyCapability(
 }
 
 function createTranscriptProjectionCapability(
+  conversationId: string,
   path: string,
   space: string,
 ): ListenTranscriptKvCapability {
-  assertExactPath(path, "projectionObjectPathsByConversationId");
+  assertProjectionPathForConversation(
+    path,
+    conversationId,
+    "projectionObjectPathsByConversationId",
+  );
 
   return {
     service: "tinycloud.kv",
@@ -261,7 +269,11 @@ function projectionPathsForConversation(
   const uniqueSortedPaths = [...new Set(paths)];
 
   for (const path of uniqueSortedPaths) {
-    assertExactPath(path, "projectionObjectPathsByConversationId");
+    assertProjectionPathForConversation(
+      path,
+      conversationId,
+      "projectionObjectPathsByConversationId",
+    );
   }
 
   return uniqueSortedPaths.sort(compareUtf8);
@@ -313,6 +325,24 @@ function assertExactPath(path: string, fieldName: string): void {
 
   if (path.endsWith("/") || path.includes("*")) {
     throw new Error(`${fieldName} must contain exact resource paths only`);
+  }
+}
+
+function assertProjectionPathForConversation(
+  path: string,
+  conversationId: string,
+  fieldName: string,
+): void {
+  assertExactPath(path, fieldName);
+
+  const conversationProjectionPrefix = `${LISTEN_TRANSCRIPT_PROJECTION_PATH_PREFIX}/${encodeURIComponent(
+    conversationId,
+  )}/`;
+
+  if (!path.startsWith(conversationProjectionPrefix)) {
+    throw new Error(
+      `${fieldName} for ${conversationId} must be under ${conversationProjectionPrefix}`,
+    );
   }
 }
 

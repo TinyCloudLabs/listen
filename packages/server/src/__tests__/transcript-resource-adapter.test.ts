@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   LISTEN_CONVERSATIONS_SQL_PATH,
   LISTEN_CONTENT_SPACE,
+  LISTEN_TRANSCRIPT_PROJECTION_PATH_PREFIX,
   LISTEN_TRANSCRIPT_RESOURCE_TYPE,
   LISTEN_TRANSCRIPT_SQL_STATEMENT_CATALOG,
   createListenTranscriptCapability,
@@ -102,7 +103,7 @@ describe("Listen transcript resource adapter", () => {
     ).toThrow("transcriptKvBodyConversationIds includes unselected ID: conversation-b");
   });
 
-  test("emits optional projection object capabilities as exact paths", () => {
+  test("emits optional projection object capabilities only under selected conversation path", () => {
     const capabilities = createListenTranscriptResourceCapabilities({
       conversationIds: ["conversation-a"],
       projectionObjectPathsByConversationId: {
@@ -130,5 +131,29 @@ describe("Listen transcript resource adapter", () => {
         resourceType: "xyz.tinycloud.listen/transcript-projection/v0",
       },
     ]);
+  });
+
+  test("rejects projection object capabilities for unselected IDs", () => {
+    expect(() =>
+      createListenTranscriptResourceCapabilities({
+        conversationIds: ["conversation-a"],
+        projectionObjectPathsByConversationId: {
+          "conversation-b": ["xyz.tinycloud.listen/projections/conversation-b/summary"],
+        },
+      }),
+    ).toThrow("projectionObjectPathsByConversationId includes unselected ID: conversation-b");
+  });
+
+  test("rejects projection object paths outside the selected conversation containment path", () => {
+    expect(() =>
+      createListenTranscriptResourceCapabilities({
+        conversationIds: ["conversation-a"],
+        projectionObjectPathsByConversationId: {
+          "conversation-a": ["xyz.tinycloud.listen/projections/conversation-b/summary"],
+        },
+      }),
+    ).toThrow(
+      `projectionObjectPathsByConversationId for conversation-a must be under ${LISTEN_TRANSCRIPT_PROJECTION_PATH_PREFIX}/conversation-a/`,
+    );
   });
 });
