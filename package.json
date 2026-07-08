@@ -10,10 +10,10 @@
     "test"
   ],
   "overrides": {
-    "@tinycloud/sdk-core": "2.6.1",
-    "@tinycloud/sdk-services": "2.6.1",
-    "@tinycloud/web-sdk": "2.6.1",
-    "@tinycloud/node-sdk": "2.6.1",
+    "@tinycloud/sdk-core": "2.6.2",
+    "@tinycloud/sdk-services": "2.6.2",
+    "@tinycloud/web-sdk": "2.6.2",
+    "@tinycloud/node-sdk": "2.6.2",
     "@tinycloud/web-core": "1.7.0",
     "@tinycloud/node-sdk-wasm": "1.7.4",
     "@tinycloud/web-sdk-wasm": "1.7.4",
