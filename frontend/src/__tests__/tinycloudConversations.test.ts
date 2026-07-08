@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
 import type { ApiClient } from "@listen/client";
-import { createTinyCloudConversationApi } from "../lib/tinycloudConversations";
+import { createTinyCloudConversationApi, ensureSchema } from "../lib/tinycloudConversations";
 
 function mockApi(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
@@ -27,13 +27,15 @@ function mockTinyCloud(
   options: {
     transcript?: unknown;
     signedAudioUrl?: string;
+    apply?: ReturnType<typeof vi.fn>;
   } = {},
 ): TinyCloudWeb {
+  const apply = options.apply ?? vi.fn(async () => ({ ok: true }));
   return {
     sql: {
       db: vi.fn((name: string) => {
         expect(name).toBe("xyz.tinycloud.listen/conversations");
-        return { query };
+        return { query, migrations: { apply } };
       }),
     },
     kv: {
@@ -207,7 +209,7 @@ describe("createTinyCloudConversationApi", () => {
     });
     const client = createTinyCloudConversationApi(api, {
       sql: {
-        db: vi.fn(() => ({ query })),
+        db: vi.fn(() => ({ query, migrations: { apply: vi.fn(async () => ({ ok: true })) } })),
       },
       kv: {
         get: kvGet,
@@ -260,5 +262,117 @@ describe("createTinyCloudConversationApi", () => {
       connected: true,
     });
     expect(backendGet).toHaveBeenCalledWith("/api/config/google-meet/connected");
+  });
+
+  it("seeds via the backend first and skips browser seeding when it succeeds", async () => {
+    const calls: string[] = [];
+    const backendPost = vi.fn(async (path: string) => {
+      calls.push(`backend:${path}`);
+      return { ok: true };
+    });
+    const apply = vi.fn(async () => {
+      calls.push("browser-migrate");
+      return { ok: true };
+    });
+    const query = vi.fn(async () => {
+      calls.push("list-query");
+      return { ok: true, data: toArrayRows([]) };
+    });
+    const client = createTinyCloudConversationApi(
+      mockApi({ post: backendPost }),
+      mockTinyCloud(query, { apply }),
+    );
+
+    await client.get("/api/conversations?limit=20&offset=0");
+
+    // Backend seeder runs before any list query, and browser seeding is skipped.
+    expect(backendPost).toHaveBeenCalledWith("/api/schema/ensure");
+    expect(apply).not.toHaveBeenCalled();
+    expect(calls[0]).toBe("backend:/api/schema/ensure");
+    expect(calls.indexOf("list-query")).toBeGreaterThan(0);
+  });
+
+  it("falls back to browser seeding when the backend seeder fails", async () => {
+    const calls: string[] = [];
+    const backendPost = vi.fn(async () => {
+      calls.push("backend-fail");
+      throw new Error("401 requiredAction tinycloud.sql/schema");
+    });
+    const apply = vi.fn(async () => {
+      calls.push("browser-migrate");
+      return { ok: true };
+    });
+    const query = vi.fn(async (sql: string) => {
+      calls.push(sql.includes("transcript_json, transcript_text") ? "probe" : "list");
+      return { ok: true, data: toArrayRows([]) };
+    });
+    const client = createTinyCloudConversationApi(
+      mockApi({ post: backendPost }),
+      mockTinyCloud(query, { apply }),
+    );
+
+    const result = await client.get<{ total: number }>("/api/conversations?limit=20&offset=0");
+
+    // Backend tried first, then browser seeding (2 migrations) precedes list query.
+    expect(backendPost).toHaveBeenCalledWith("/api/schema/ensure");
+    expect(calls.filter((c) => c === "browser-migrate").length).toBe(2);
+    const firstListIdx = calls.indexOf("list");
+    expect(firstListIdx).toBeGreaterThan(-1);
+    expect(calls.lastIndexOf("browser-migrate")).toBeLessThan(firstListIdx);
+    expect(result.total).toBe(0);
+  });
+
+  it("seeds the schema once across concurrent first reads", async () => {
+    const backendPost = vi.fn(async () => ({ ok: true }));
+    const query = vi.fn(async () => ({ ok: true, data: toArrayRows([]) }));
+    const client = createTinyCloudConversationApi(
+      mockApi({ post: backendPost }),
+      mockTinyCloud(query),
+    );
+
+    // Mirror App.tsx firing the exists-probe and ConversationList concurrently.
+    await Promise.all([
+      client.get("/api/conversations?limit=1&offset=0"),
+      client.get("/api/conversations?limit=20&offset=0"),
+    ]);
+
+    // Seeding runs exactly once total, not per read.
+    expect(backendPost).toHaveBeenCalledTimes(1);
+  });
+
+  it("seeds once per TinyCloud instance and again for a fresh instance", async () => {
+    const backendPost = vi.fn(async () => ({ ok: true }));
+    const api = mockApi({ post: backendPost });
+    const query = vi.fn(async () => ({ ok: true, data: toArrayRows([]) }));
+
+    // A cached (already-seeded) instance memoizes and does not re-seed.
+    const seeded = mockTinyCloud(query);
+    await ensureSchema(api, seeded);
+    await ensureSchema(api, seeded);
+    expect(backendPost).toHaveBeenCalledTimes(1);
+
+    // A different instance seeds independently.
+    backendPost.mockClear();
+    const fresh = mockTinyCloud(query);
+    await ensureSchema(api, fresh);
+    expect(backendPost).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces both failures when backend and browser seeding both fail", async () => {
+    const backendPost = vi.fn(async () => {
+      throw new Error("401 requiredAction tinycloud.sql/schema");
+    });
+    const apply = vi.fn(async () => ({ ok: false, error: { message: "not authorized" } }));
+    const query = vi.fn(async () => ({ ok: true, data: toArrayRows([]) }));
+    const client = createTinyCloudConversationApi(
+      mockApi({ post: backendPost }),
+      mockTinyCloud(query, { apply }),
+    );
+
+    await expect(client.get("/api/conversations?limit=20&offset=0")).rejects.toThrow(
+      /Backend seeder: 401 requiredAction tinycloud\.sql\/schema.*Browser fallback:.*not authorized/,
+    );
+    // The read never runs when seeding fails.
+    expect(query).not.toHaveBeenCalled();
   });
 });
