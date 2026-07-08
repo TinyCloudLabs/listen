@@ -87,11 +87,28 @@ export class DelegationStore {
 
   /**
    * Remove the stored delegation for a user identifier.
+   *
+   * Delete failures are logged but not thrown: callers (middleware/status
+   * cleanup) must keep their response semantics even when the node cannot
+   * delete the row. A known node-side kv.delete bug on overwritten keys is
+   * tracked separately; store() overwrites still succeed, so renewal fixes
+   * the state even when deletion fails.
    */
   async remove(identifier: string): Promise<void> {
     const key = this.keyFor(identifier);
 
-    await withSessionRefresh(this.node, () => this.node.kv.delete(key));
+    const result = await withSessionRefresh(this.node, () => this.node.kv.delete(key));
+    if (
+      typeof result === "object" &&
+      result !== null &&
+      "ok" in result &&
+      (result as { ok?: unknown }).ok === false
+    ) {
+      console.error(
+        `[DelegationStore] Failed to delete delegation for ${identifier}:`,
+        (result as { error?: unknown }).error ?? result,
+      );
+    }
   }
 
   /**

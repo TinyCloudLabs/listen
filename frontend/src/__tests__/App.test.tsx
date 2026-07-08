@@ -7,6 +7,7 @@ import {
   createApiClient,
   createManifestDelegation,
   createPermissionDelegation,
+  checkDelegationStatus,
   clearPersistedSession,
   loadPersistedSession,
   requestNonce,
@@ -100,6 +101,7 @@ vi.mock("@listen/client", () => {
     loadPersistedSession: vi.fn(() => null),
     sendDelegation: vi.fn(),
     revokeDelegation: vi.fn(() => Promise.resolve()),
+    checkDelegationStatus: vi.fn(() => Promise.resolve({ status: "none", expiresAt: null })),
     loadAppManifest: vi.fn().mockResolvedValue({
       app_id: "com.test.listen",
       name: "Listen",
@@ -158,6 +160,7 @@ vi.mock("@listen/client", () => {
 
 import { App } from "../App";
 import { backendWorkspaceCacheKey, writeBackendWorkspaceCache } from "../lib/backendWorkspaceCache";
+import { recordBackendDelegationGrant } from "../lib/backendDelegationRenewal";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -287,6 +290,7 @@ function mockAuthFlow() {
     status: "active",
     expiresAt: "2026-05-18T00:00:00.000Z",
   });
+  vi.mocked(checkDelegationStatus).mockResolvedValue({ status: "none", expiresAt: null });
   vi.mocked(composeManifestWithDelegatees).mockImplementation((manifest, delegatees) => ({
     manifests: [manifest],
     resources: [],
@@ -922,6 +926,110 @@ describe("App manual sign-in processing", () => {
     });
 
     await renderAndSignIn();
+
+    await waitFor(() => {
+      expect(mockGet).toHaveBeenCalledWith("/api/workspace-state");
+    });
+    expect(sendDelegation).not.toHaveBeenCalled();
+    expect(createManifestDelegation).not.toHaveBeenCalled();
+  });
+
+  it("silently renews the backend delegation when sign-in finds the stored one expired", async () => {
+    vi.mocked(checkDelegationStatus).mockResolvedValue({
+      status: "expired",
+      expiresAt: "2026-05-01T00:00:00.000Z",
+    });
+
+    await renderAndSignIn();
+
+    await waitFor(() => {
+      expect(sendDelegation).toHaveBeenCalledTimes(1);
+    });
+    expect(sendDelegation).toHaveBeenCalledWith(
+      expect.any(String),
+      "mock-delegation",
+      "mock-token",
+    );
+    expect(createManifestDelegation).toHaveBeenCalledWith(
+      expect.anything(),
+      "did:key:backend",
+      expect.objectContaining({
+        delegationTargets: expect.arrayContaining([
+          expect.objectContaining({ did: "did:key:backend" }),
+        ]),
+      }),
+    );
+    // Core manifest delegation covers the full backend policy; the
+    // secret-scoped variant is reserved for explicit setup actions.
+    expect(createPermissionDelegation).not.toHaveBeenCalled();
+  });
+
+  it("renews at sign-in when the delegation row is gone but a prior grant is recorded", async () => {
+    recordBackendDelegationGrant("0xabc123", "did:key:backend");
+    // Default checkDelegationStatus mock reports status "none" (row deleted).
+
+    await renderAndSignIn();
+
+    await waitFor(() => {
+      expect(sendDelegation).toHaveBeenCalledTimes(1);
+    });
+    expect(createManifestDelegation).toHaveBeenCalledTimes(1);
+  });
+
+  it("silently renews the backend delegation during session restore", async () => {
+    storeBackendSession();
+    vi.mocked(loadPersistedSession).mockReturnValue({
+      address: "0xabc123",
+      chainId: 1,
+      did: "did:pkh:eip155:1:0xabc123",
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      spaceId: "tinycloud:pkh:eip155:1:0xabc123:applications",
+    });
+    vi.mocked(restoreTinyCloudWeb).mockResolvedValue({
+      tcw: {
+        did: "did:pkh:eip155:1:0xabc123",
+        hosts: ["http://localhost:5112"],
+        spaceId: "tinycloud:pkh:eip155:1:0xabc123:applications",
+        signOut: vi.fn(),
+      },
+    } as never);
+    vi.mocked(checkDelegationStatus).mockResolvedValue({
+      status: "expired",
+      expiresAt: "2026-05-01T00:00:00.000Z",
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: /open app/i })[0]);
+
+    await waitFor(() => {
+      expect(sendDelegation).toHaveBeenCalledTimes(1);
+    });
+    expect(createAndSignIn).not.toHaveBeenCalled();
+    expect(connectWallet).not.toHaveBeenCalled();
+  });
+
+  it("does not renew during session restore when the user never granted", async () => {
+    storeBackendSession();
+    vi.mocked(loadPersistedSession).mockReturnValue({
+      address: "0xabc123",
+      chainId: 1,
+      did: "did:pkh:eip155:1:0xabc123",
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      spaceId: "tinycloud:pkh:eip155:1:0xabc123:applications",
+    });
+    vi.mocked(restoreTinyCloudWeb).mockResolvedValue({
+      tcw: {
+        did: "did:pkh:eip155:1:0xabc123",
+        hosts: ["http://localhost:5112"],
+        spaceId: "tinycloud:pkh:eip155:1:0xabc123:applications",
+        signOut: vi.fn(),
+      },
+    } as never);
+    // Default checkDelegationStatus mock reports "none" and no grant record
+    // exists — silent renewal must not turn into an implicit first grant.
+
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: /open app/i })[0]);
 
     await waitFor(() => {
       expect(mockGet).toHaveBeenCalledWith("/api/workspace-state");
