@@ -14,8 +14,8 @@
     "@listen/client": "workspace:*",
     "@listen/core": "workspace:*",
     "@openkey/sdk": "^0.9.0",
-    "@tinycloud/sdk-core": "2.5.1",
-    "@tinycloud/web-sdk": "2.5.1",
+    "@tinycloud/sdk-core": "2.6.2",
+    "@tinycloud/web-sdk": "2.6.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
