@@ -10,14 +10,14 @@
     "test"
   ],
   "overrides": {
-    "@tinycloud/sdk-core": "2.5.1",
-    "@tinycloud/sdk-services": "2.4.2",
-    "@tinycloud/web-sdk": "2.5.1",
-    "@tinycloud/node-sdk": "2.5.1",
+    "@tinycloud/sdk-core": "2.6.1-beta.0",
+    "@tinycloud/sdk-services": "2.6.1-beta.0",
+    "@tinycloud/web-sdk": "2.6.1-beta.0",
+    "@tinycloud/node-sdk": "2.6.1-beta.0",
     "@tinycloud/web-core": "1.7.0",
     "@tinycloud/node-sdk-wasm": "1.7.4",
     "@tinycloud/web-sdk-wasm": "1.7.4",
-    "@tinycloud/bootstrap": "2.4.1"
+    "@tinycloud/bootstrap": "2.5.0"
   },
   "scripts": {
     "build": "bun install --frozen-lockfile && bunx turbo run build",
