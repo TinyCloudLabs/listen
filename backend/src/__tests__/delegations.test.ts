@@ -567,6 +567,67 @@ describe("Delegation Routes", () => {
       expect(body.error).toBe("invalid_body");
     });
 
+    it("rejects an already-expired delegation with 400 and stores nothing", async () => {
+      mockDeserializeDelegation.mockImplementationOnce((serialized: string) => ({
+        expiry: new Date(Date.now() - 1000),
+        resources: fullPolicyResources(),
+        _serialized: serialized,
+      }));
+
+      const res = await fetch(`${baseUrl}/api/delegations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serialized: "expired-at-grant" }),
+      });
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe("delegation_expired_at_grant");
+      expect(body.message).toContain("fresh delegation");
+
+      expect(await store.load(TEST_ADDRESS)).toBeNull();
+      expect(cache.has(TEST_ADDRESS)).toBe(false);
+      expect(mockUseDelegation).not.toHaveBeenCalled();
+    });
+
+    it("rejects a delegation that expires within the acceptance margin", async () => {
+      mockDeserializeDelegation.mockImplementationOnce((serialized: string) => ({
+        expiry: new Date(Date.now() + 10_000),
+        resources: fullPolicyResources(),
+        _serialized: serialized,
+      }));
+
+      const res = await fetch(`${baseUrl}/api/delegations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serialized: "expires-too-soon" }),
+      });
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe("delegation_expired_at_grant");
+      expect(await store.load(TEST_ADDRESS)).toBeNull();
+    });
+
+    it("accepts a delegation that expires beyond the acceptance margin", async () => {
+      mockDeserializeDelegation.mockImplementationOnce((serialized: string) => ({
+        expiry: new Date(Date.now() + 120_000),
+        resources: fullPolicyResources(),
+        _serialized: serialized,
+      }));
+
+      const res = await fetch(`${baseUrl}/api/delegations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serialized: "short-but-valid" }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.status).toBe("active");
+      expect(await store.load(TEST_ADDRESS)).not.toBeNull();
+    });
+
     it("returns 400 when deserializeDelegation throws", async () => {
       mockDeserializeDelegation.mockImplementationOnce(() => {
         throw new Error("Invalid delegation format");

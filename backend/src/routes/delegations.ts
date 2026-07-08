@@ -28,6 +28,15 @@ interface DelegationRoutesConfig {
   writeLimiter?: RequestHandler;
 }
 
+/**
+ * Minimum remaining lifetime a delegation must have at grant time. Freshly
+ * minted delegations carry days of lifetime; anything at or below this margin
+ * is already expired (or useless) and must not be stored. The SDK applies a
+ * ~60s client-side safety margin when deriving delegations, so 30s here only
+ * rejects genuinely stale grants.
+ */
+const GRANT_EXPIRY_MARGIN_MS = 30_000;
+
 // ── Delegation Routes ────────────────────────────────────────────────
 
 export function createDelegationRouter(config: DelegationRoutesConfig) {
@@ -66,6 +75,14 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
 
       // Extract metadata from the delegation itself
       const expiry = portableDelegationExpiry(delegation);
+      if (expiry && expiry.getTime() <= Date.now() + GRANT_EXPIRY_MARGIN_MS) {
+        res.status(400).json({
+          error: "delegation_expired_at_grant",
+          message:
+            "Delegation is already expired or expires too soon to store. Create a fresh delegation and try again.",
+        });
+        return;
+      }
       const expiresAt = expiry
         ? expiry.toISOString()
         : new Date(Date.now() + DEFAULT_DELEGATION_EXPIRY_MS).toISOString();
