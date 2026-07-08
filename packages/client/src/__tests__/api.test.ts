@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { createApiClient } from "../api.js";
+import { createApiClient, ApiRequestError } from "../api.js";
 import type { SessionStore } from "../tokens.js";
 
 // ── Mock SessionStore ──────────────────────────────────────────────────
@@ -194,6 +194,62 @@ describe("createApiClient", () => {
       "Session expired. Please sign in again.",
     );
     expect(clearCalled).toBe(true);
+  });
+
+  // ── 401 delegation_expired keeps session ──────────────────────────
+
+  test("keeps session on 401 delegation_expired and throws a coded error", async () => {
+    let clearCalled = false;
+
+    globalThis.fetch = (async () => {
+      return new Response(
+        JSON.stringify({ error: "delegation_expired", message: "Delegation has expired." }),
+        { status: 401, headers: { "Content-Type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    const sessionStore = createMockSessionStore({
+      clear: () => {
+        clearCalled = true;
+      },
+    });
+
+    const client = createApiClient(backendUrl, { sessionStore });
+
+    try {
+      await client.get("/protected");
+      throw new Error("expected request to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiRequestError);
+      expect((err as ApiRequestError).status).toBe(401);
+      expect((err as ApiRequestError).code).toBe("delegation_expired");
+      expect((err as ApiRequestError).message).toBe("API error (401): Delegation has expired.");
+    }
+    expect(clearCalled).toBe(false);
+  });
+
+  // ── Non-ok errors carry status + code ──────────────────────────────
+
+  test("non-ok responses throw ApiRequestError with status and code", async () => {
+    globalThis.fetch = (async () => {
+      return new Response(
+        JSON.stringify({ error: "no_delegation", message: "No delegation found." }),
+        { status: 403, headers: { "Content-Type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    const sessionStore = createMockSessionStore();
+    const client = createApiClient(backendUrl, { sessionStore });
+
+    try {
+      await client.get("/gated");
+      throw new Error("expected request to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiRequestError);
+      expect((err as ApiRequestError).status).toBe(403);
+      expect((err as ApiRequestError).code).toBe("no_delegation");
+      expect((err as ApiRequestError).message).toBe("API error (403): No delegation found.");
+    }
   });
 
   // ── 204 No Content ────────────────────────────────────────────────

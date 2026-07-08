@@ -16,6 +16,23 @@ export interface ApiClient {
   del<T>(path: string): Promise<T>;
 }
 
+/**
+ * Error thrown for non-ok API responses, carrying the HTTP status and the
+ * backend's machine-readable error code (e.g. "no_delegation",
+ * "delegation_expired") so callers can react without parsing messages.
+ */
+export class ApiRequestError extends Error {
+  readonly status: number;
+  readonly code: string;
+
+  constructor(status: number, code: string, message: string) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
 // ── API Client ───────────────────────────────────────────────────────
 
 /**
@@ -50,8 +67,18 @@ export function createApiClient(backendUrl: string, config: ApiClientConfig): Ap
       { client: "api", method, path },
     );
 
-    // On 401, clear session — no auto-refresh with SIWE
+    // On 401, clear session — no auto-refresh with SIWE. Exception:
+    // `delegation_expired` means the backend session is still valid and only
+    // the stored delegation aged out, so the session must survive for a
+    // silent re-delegation.
     if (res.status === 401) {
+      const err: ApiError = await res.json().catch(() => ({
+        error: "unauthorized",
+        message: res.statusText,
+      }));
+      if (err.error === "delegation_expired") {
+        throw new ApiRequestError(res.status, err.error, `API error (401): ${err.message}`);
+      }
       sessionStore.clear();
       throw new Error("Session expired. Please sign in again.");
     }
@@ -61,7 +88,7 @@ export function createApiClient(backendUrl: string, config: ApiClientConfig): Ap
         error: `HTTP ${res.status}`,
         message: res.statusText,
       }));
-      throw new Error(`API error (${res.status}): ${err.message}`);
+      throw new ApiRequestError(res.status, err.error, `API error (${res.status}): ${err.message}`);
     }
 
     if (res.status === 204) {
