@@ -11,9 +11,9 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "bun run --cwd ../core build && tsc",
     "dev": "tsc --watch",
-    "test": "bun test",
+    "test": "bun run --cwd ../core build && bun run --cwd ../client build && bun test",
     "generate-key": "bun run scripts/generate-key.ts",
     "postinstall": "node scripts/fix-wasm-esm.mjs"
   },
@@ -24,6 +24,7 @@
     "siwe": "^2.3.2"
   },
   "devDependencies": {
+    "@listen/client": "workspace:*",
     "@types/express": "^4.17.0",
     "express": "^4.21.0",
     "typescript": "^5.7.0"
