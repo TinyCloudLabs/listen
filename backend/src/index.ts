@@ -45,6 +45,7 @@ import { createGoogleMeetPushRouter } from "./routes/google-meet-webhooks.js";
 import { createGoogleMeetSyncRouter } from "./routes/google-meet-sync.js";
 import { createGoogleMeetStatusRouter } from "./routes/google-meet-status.js";
 import { createGoogleAuthRouter } from "./routes/google-auth.js";
+import rateLimitHandler from "./rate-limit-handler.js";
 import {
   initGoogleMeetWebhooks,
   isGoogleMeetWebhooksEnabled,
@@ -201,6 +202,10 @@ async function main() {
 
   // 5. Set up Express
   const app = express();
+  // trust proxy "loopback" + IP-keyed limiters means behind a non-loopback reverse proxy
+  // (e.g. a CVM ingress on another host) req.ip is the proxy address and all users share
+  // one rate-limit bucket; revisit trust proxy and/or key limiters by authenticated address
+  // if the deploy topology changes.
   app.set("trust proxy", "loopback");
   app.use(
     cors({
@@ -288,6 +293,7 @@ async function main() {
     limit: 100,
     standardHeaders: "draft-7",
     legacyHeaders: false,
+    handler: rateLimitHandler("Too many requests"),
   });
 
   const authLimiter = rateLimit({
@@ -295,7 +301,7 @@ async function main() {
     limit: 30,
     standardHeaders: "draft-7",
     legacyHeaders: false,
-    message: { error: "rate_limited", message: "Too many auth requests" },
+    handler: rateLimitHandler("Too many auth requests"),
   });
 
   const delegationLimiter = rateLimit({
@@ -303,7 +309,7 @@ async function main() {
     limit: 10,
     standardHeaders: "draft-7",
     legacyHeaders: false,
-    message: { error: "rate_limited", message: "Too many delegation requests" },
+    handler: rateLimitHandler("Too many delegation requests"),
   });
 
   const syncJobsLimiter = rateLimit({
@@ -311,7 +317,7 @@ async function main() {
     limit: 240,
     standardHeaders: "draft-7",
     legacyHeaders: false,
-    message: { error: "rate_limited", message: "Too many sync status requests" },
+    handler: rateLimitHandler("Too many sync status requests"),
   });
 
   // Dedicated limiter: active-sync polling (1 req/5s = 180/15min) cannot fit the
