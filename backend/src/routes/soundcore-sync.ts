@@ -7,17 +7,19 @@ import {
 } from "../services/soundcore-client.js";
 import { readSoundcoreCredentials } from "../services/soundcore-secret.js";
 import { syncSoundcoreNotes } from "../services/soundcore-sync.js";
+import { type BackendKV, recordLastSuccessfulSync } from "../services/sync-freshness.js";
 
 interface SoundcoreSyncRoutesConfig {
   authMiddleware: RequestHandler;
   delegationMiddleware: RequestHandler;
+  backendKV?: BackendKV;
   createClient?: (
     credentials: SoundcoreCredentials,
   ) => Pick<SoundcoreClient, "listNotes" | "getNote">;
 }
 
 export function createSoundcoreSyncRouter(config: SoundcoreSyncRoutesConfig) {
-  const { authMiddleware, delegationMiddleware } = config;
+  const { authMiddleware, delegationMiddleware, backendKV } = config;
   const makeClient =
     config.createClient ??
     ((credentials: SoundcoreCredentials) => new SoundcoreClient(credentials));
@@ -42,10 +44,12 @@ export function createSoundcoreSyncRouter(config: SoundcoreSyncRoutesConfig) {
 
     try {
       const includeEmpty = req.body?.includeEmpty === true;
+      const mode = req.body?.mode === "full" ? "full" : "incremental";
       const result = await syncSoundcoreNotes({
         access: req.delegatedAccess!,
         client: makeClient(credentials),
         includeEmpty,
+        mode,
         onProgress: (progress) => {
           if (progress.phase === "schema") {
             console.info(`[soundcore-sync:${requestId}] ensuring Listen schema`);
@@ -70,6 +74,9 @@ export function createSoundcoreSyncRouter(config: SoundcoreSyncRoutesConfig) {
           }
         },
       });
+      if (req.user?.address) {
+        await recordLastSuccessfulSync(backendKV, req.user.address, "soundcore");
+      }
       res.json(result);
     } catch (err) {
       if (err instanceof SoundcoreAuthError) {

@@ -8,6 +8,7 @@ import type { GranolaNoteSummary } from "../services/granola-client.js";
 import { readGranolaApiKey } from "../services/granola-secret.js";
 import { persistGranolaNote } from "../services/granola-sync.js";
 import { resolveAppPath } from "../manifest.js";
+import { recordLastSuccessfulSync } from "../services/sync-freshness.js";
 
 interface GranolaSyncRoutesConfig {
   authMiddleware: RequestHandler;
@@ -150,14 +151,15 @@ async function readCurrentJob(backendKV: BackendKV, ownerAddress: string) {
 }
 
 async function loadKnownGranolaSourceIds(sqlDb: Pick<ReturnType<typeof conversationSql>, "query">) {
-  const knownIds = new Set<string>();
+  const knownIds = new Map<string, string>();
   const existingResult = await sqlDb.query(
-    "SELECT source_id FROM conversation WHERE source = 'granola'",
+    "SELECT id, source_id FROM conversation WHERE source = 'granola'",
   );
   if (existingResult.ok && existingResult.data.rows) {
     for (const row of existingResult.data.rows) {
-      const val = Array.isArray(row) ? row[0] : (row as any).source_id;
-      if (val) knownIds.add(String(val));
+      const id = Array.isArray(row) ? row[0] : (row as any).id;
+      const val = Array.isArray(row) ? row[1] : (row as any).source_id;
+      if (id && val) knownIds.set(String(val), String(id));
     }
   }
   return knownIds;
@@ -167,6 +169,7 @@ async function syncGranolaNotes({
   access,
   client,
   notes,
+  existingBySourceId,
   skipped,
   shouldContinue,
   onProgress,
@@ -174,6 +177,7 @@ async function syncGranolaNotes({
   access: DelegatedAccess;
   client: Pick<GranolaClient, "getNote">;
   notes: GranolaNoteSummary[];
+  existingBySourceId: Map<string, string>;
   skipped: number;
   shouldContinue?: () => boolean;
   onProgress?: (patch: Partial<GranolaSyncJob>) => void | Promise<void>;
@@ -189,8 +193,8 @@ async function syncGranolaNotes({
     const summary = notes[i]!;
     try {
       const note = await client.getNote(summary.id);
-      const result = await persistGranolaNote(note, access);
-      if (result.status === "created") {
+      const result = await persistGranolaNote(note, access, existingBySourceId.get(summary.id));
+      if (result.status === "created" || result.status === "updated") {
         synced++;
         conversations.push({
           id: result.conversationId!,
@@ -228,12 +232,14 @@ function runGranolaJob({
   job,
   access,
   client,
+  backendKV,
   persistJob,
 }: {
   runningJobs: Map<string, RunningGranolaJob>;
   job: GranolaSyncJob;
   access: DelegatedAccess;
   client: Pick<GranolaClient, "listAllNotes" | "getNote">;
+  backendKV?: BackendKV;
   persistJob: PersistGranolaJob;
 }): void {
   if (runningJobs.has(job.ownerAddress)) return;
@@ -256,13 +262,12 @@ function runGranolaJob({
 
       await ensureSchema(access);
       const sqlDb = conversationSql(access);
-      const knownIds =
-        job.mode === "incremental" ? await loadKnownGranolaSourceIds(sqlDb) : new Set<string>();
+      const knownIds = await loadKnownGranolaSourceIds(sqlDb);
 
       const listed = await client.listAllNotes({
         pageSize: 30,
         mode: job.mode,
-        knownIds: job.mode === "incremental" ? knownIds : undefined,
+        knownIds: job.mode === "incremental" ? new Set(knownIds.keys()) : undefined,
         onProgress: async (info) => {
           await updateJob({
             status: "listing",
@@ -284,21 +289,26 @@ function runGranolaJob({
         }
       }
 
-      const newNotes = listed.notes.filter((note) => !knownIds.has(note.id));
-      const skipped = listed.notes.length - newNotes.length;
+      const notesToSync =
+        job.mode === "full" ? listed.notes : listed.notes.filter((note) => !knownIds.has(note.id));
+      const skipped = listed.notes.length - notesToSync.length;
 
       await updateJob({
         status: "syncing",
         current: 0,
-        total: newNotes.length,
+        total: notesToSync.length,
         skipped,
-        message: `Found ${newNotes.length} new Granola notes to sync`,
+        message:
+          job.mode === "full"
+            ? `Refreshing ${notesToSync.length} Granola notes`
+            : `Found ${notesToSync.length} new Granola notes to sync`,
       });
 
       const result = await syncGranolaNotes({
         access,
         client,
-        notes: newNotes,
+        notes: notesToSync,
+        existingBySourceId: knownIds,
         skipped,
         shouldContinue: () => !runtime.cancelRequested,
         onProgress: updateJob,
@@ -317,11 +327,12 @@ function runGranolaJob({
       await updateJob({
         status: "completed",
         completedAt: new Date().toISOString(),
-        current: newNotes.length,
-        total: newNotes.length,
+        current: notesToSync.length,
+        total: notesToSync.length,
         ...result,
         message: "Sync complete.",
       });
+      await recordLastSuccessfulSync(backendKV, job.ownerAddress, "granola");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       await updateJob({
@@ -432,6 +443,7 @@ export function createGranolaSyncRouter(config: GranolaSyncRoutesConfig) {
             job: current,
             access: req.delegatedAccess!,
             client: makeClient(apiKey),
+            backendKV,
             persistJob: persistGranolaJob,
           });
         }
@@ -456,6 +468,7 @@ export function createGranolaSyncRouter(config: GranolaSyncRoutesConfig) {
         job,
         access: req.delegatedAccess!,
         client: makeClient(apiKey),
+        backendKV,
         persistJob: persistGranolaJob,
       });
 
@@ -486,6 +499,7 @@ export function createGranolaSyncRouter(config: GranolaSyncRoutesConfig) {
             job,
             access: req.delegatedAccess!,
             client: makeClient(apiKey),
+            backendKV,
             persistJob: persistGranolaJob,
           });
         } else {
@@ -616,25 +630,13 @@ export function createGranolaSyncRouter(config: GranolaSyncRoutesConfig) {
       const sqlDb = conversationSql(access);
       const client = makeClient(apiKey);
       const mode = req.query.mode === "full" ? "full" : "incremental";
-      const knownIds = new Set<string>();
-
-      if (mode === "incremental") {
-        const existingResult = await sqlDb.query(
-          "SELECT source_id FROM conversation WHERE source = 'granola'",
-        );
-        if (existingResult.ok && existingResult.data.rows) {
-          for (const row of existingResult.data.rows) {
-            const val = Array.isArray(row) ? row[0] : (row as any).source_id;
-            if (val) knownIds.add(String(val));
-          }
-        }
-      }
+      const knownIds = await loadKnownGranolaSourceIds(sqlDb);
 
       sendEvent("status", { phase: "listing", message: "Fetching Granola notes..." });
       const listed = await client.listAllNotes({
         pageSize: 30,
         mode,
-        knownIds: mode === "incremental" ? knownIds : undefined,
+        knownIds: mode === "incremental" ? new Set(knownIds.keys()) : undefined,
         onProgress: (info) => {
           sendEvent("progress", {
             phase: "listing",
@@ -644,13 +646,17 @@ export function createGranolaSyncRouter(config: GranolaSyncRoutesConfig) {
         },
       });
 
-      const newNotes = listed.notes.filter((note) => !knownIds.has(note.id));
-      const skipped = listed.notes.length - newNotes.length;
+      const notesToSync =
+        mode === "full" ? listed.notes : listed.notes.filter((note) => !knownIds.has(note.id));
+      const skipped = listed.notes.length - notesToSync.length;
 
       sendEvent("status", {
         phase: "syncing",
-        message: `Found ${newNotes.length} new Granola notes to sync`,
-        total: newNotes.length,
+        message:
+          mode === "full"
+            ? `Refreshing ${notesToSync.length} Granola notes`
+            : `Found ${notesToSync.length} new Granola notes to sync`,
+        total: notesToSync.length,
         skipped,
       });
 
@@ -659,14 +665,14 @@ export function createGranolaSyncRouter(config: GranolaSyncRoutesConfig) {
       const errors: string[] = [];
       const conversations: Array<{ id: string; title: string; started_at: string | null }> = [];
 
-      for (let i = 0; i < newNotes.length; i++) {
+      for (let i = 0; i < notesToSync.length; i++) {
         if (aborted) break;
 
-        const summary = newNotes[i];
+        const summary = notesToSync[i];
         try {
           const note = await client.getNote(summary.id);
-          const result = await persistGranolaNote(note, access);
-          if (result.status === "created") {
+          const result = await persistGranolaNote(note, access, knownIds.get(summary.id));
+          if (result.status === "created" || result.status === "updated") {
             synced++;
             conversations.push({
               id: result.conversationId!,
@@ -686,13 +692,14 @@ export function createGranolaSyncRouter(config: GranolaSyncRoutesConfig) {
         sendEvent("progress", {
           phase: "syncing",
           current: i + 1,
-          total: newNotes.length,
+          total: notesToSync.length,
           synced,
           failed,
           lastTitle: summary.title ?? summary.id,
         });
       }
 
+      await recordLastSuccessfulSync(backendKV, normalizeOwnerAddress(req), "granola");
       sendEvent("complete", { synced, skipped, failed, errors, conversations });
     } catch (err) {
       console.error("[sync] Granola sync failed:", err);

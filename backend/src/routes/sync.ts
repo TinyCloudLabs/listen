@@ -11,10 +11,13 @@ import { conversationSql, ensureSchema } from "../schema.js";
 import { persistFullTranscript } from "../services/sync-pipeline.js";
 import {
   persistTranscriptBlob,
+  updateConversationFromNormalized,
   updateConversationTranscriptFields,
 } from "../services/persist-conversation.js";
 import { readFirefliesApiKey } from "../services/fireflies-secret.js";
 import { resolveAppPath } from "../manifest.js";
+import { normalizeFireflies } from "../adapters/fireflies.js";
+import { recordLastSuccessfulSync } from "../services/sync-freshness.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -52,7 +55,8 @@ interface ExistingFirefliesConversation {
 
 type FirefliesSyncWorkItem =
   | { type: "create"; summary: FullTranscript }
-  | { type: "repair"; summary: FullTranscript; conversationId: string };
+  | { type: "repair"; summary: FullTranscript; conversationId: string }
+  | { type: "refresh"; summary: FullTranscript; conversationId: string };
 
 interface FirefliesSyncProgress {
   current: number;
@@ -267,9 +271,9 @@ function transcriptNeedsRepair(transcriptJson: unknown): boolean {
 }
 
 async function prepareFirefliesSyncWork(
-  access: DelegatedAccess,
   summaries: FullTranscript[],
   existingBySourceId: Map<string, ExistingFirefliesConversation>,
+  mode: "incremental" | "full",
 ): Promise<{ items: FirefliesSyncWorkItem[]; skipped: number }> {
   const items: FirefliesSyncWorkItem[] = [];
   let skipped = 0;
@@ -281,7 +285,9 @@ async function prepareFirefliesSyncWork(
       continue;
     }
 
-    if (transcriptNeedsRepair(existing.transcriptJson)) {
+    if (mode === "full") {
+      items.push({ type: "refresh", summary, conversationId: existing.id });
+    } else if (transcriptNeedsRepair(existing.transcriptJson)) {
       items.push({ type: "repair", summary, conversationId: existing.id });
     } else {
       skipped++;
@@ -329,6 +335,13 @@ async function processFirefliesSyncWork({
         );
         await persistTranscriptBlob(access, item.conversationId, transcript.sentences ?? []);
         repaired++;
+      } else if (item.type === "refresh") {
+        await updateConversationFromNormalized(
+          access,
+          item.conversationId,
+          normalizeFireflies(transcript),
+        );
+        repaired++;
       } else {
         const result = await persistFullTranscript(transcript, access);
 
@@ -373,6 +386,7 @@ function runFirefliesJob({
   client,
   limit,
   delayMs,
+  backendKV,
   persistJob,
 }: {
   runningJobs: Map<string, RunningFirefliesJob>;
@@ -381,6 +395,7 @@ function runFirefliesJob({
   client: FirefliesSyncClient;
   limit: number;
   delayMs: number;
+  backendKV?: BackendKV;
   persistJob: PersistFirefliesJob;
 }): void {
   if (runningJobs.has(job.ownerAddress)) return;
@@ -432,9 +447,9 @@ function runFirefliesJob({
       }
 
       const work = await prepareFirefliesSyncWork(
-        access,
         paginationResult.transcripts,
         existingBySourceId,
+        job.mode,
       );
       const createCount = work.items.filter((item) => item.type === "create").length;
       const repairCount = work.items.length - createCount;
@@ -496,6 +511,7 @@ function runFirefliesJob({
         errors: result.errors,
         message: "Sync complete.",
       });
+      await recordLastSuccessfulSync(backendKV, job.ownerAddress, "fireflies");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       await updateJob({
@@ -616,6 +632,7 @@ export function createSyncRouter(config: SyncRoutesConfig) {
               client: makeClient(apiKey),
               limit,
               delayMs,
+              backendKV,
               persistJob: persistFirefliesJob,
             });
           }
@@ -644,6 +661,7 @@ export function createSyncRouter(config: SyncRoutesConfig) {
         client: makeClient(apiKey),
         limit,
         delayMs,
+        backendKV,
         persistJob: persistFirefliesJob,
       });
 
@@ -677,6 +695,7 @@ export function createSyncRouter(config: SyncRoutesConfig) {
             client: makeClient(apiKey),
             limit: DEFAULT_LIMIT,
             delayMs,
+            backendKV,
             persistJob: persistFirefliesJob,
           });
         } else {
@@ -824,6 +843,7 @@ export function createSyncRouter(config: SyncRoutesConfig) {
       );
 
       if (summaries.length === 0) {
+        await recordLastSuccessfulSync(backendKV, normalizeOwnerAddress(req), "fireflies");
         res.json({
           synced: 0,
           repaired: 0,
@@ -837,7 +857,7 @@ export function createSyncRouter(config: SyncRoutesConfig) {
 
       // 5. Dedup by source_id, but repair existing rows missing transcript KV.
       const existingBySourceId = await loadExistingFirefliesConversations(sqlDb);
-      const work = await prepareFirefliesSyncWork(access, summaries, existingBySourceId);
+      const work = await prepareFirefliesSyncWork(summaries, existingBySourceId, mode);
       const result = await processFirefliesSyncWork({
         access,
         client,
@@ -845,6 +865,7 @@ export function createSyncRouter(config: SyncRoutesConfig) {
         skipped: work.skipped,
       });
 
+      await recordLastSuccessfulSync(backendKV, normalizeOwnerAddress(req), "fireflies");
       res.json(result);
     } catch (err) {
       console.error("[sync] fireflies sync failed:", err);
@@ -930,9 +951,9 @@ export function createSyncRouter(config: SyncRoutesConfig) {
 
       // 5. Filter to new work and existing rows that need transcript repair.
       const work = await prepareFirefliesSyncWork(
-        access,
         paginationResult.transcripts,
         existingBySourceId,
+        mode,
       );
       const createCount = work.items.filter((item) => item.type === "create").length;
       const repairCount = work.items.length - createCount;
@@ -965,6 +986,7 @@ export function createSyncRouter(config: SyncRoutesConfig) {
       });
 
       // 7. Done
+      await recordLastSuccessfulSync(backendKV, normalizeOwnerAddress(req), "fireflies");
       sendEvent("complete", result);
     } catch (err) {
       console.error("[sync] SSE fireflies sync failed:", err);

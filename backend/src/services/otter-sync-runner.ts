@@ -30,18 +30,59 @@ interface RunOptions {
 
 type OtterApi = Pick<OtterClient, "listAllSpeeches" | "exportTxt">;
 
+interface KnownOtterConversation {
+  id: string;
+  updatedAt: string | null;
+}
+
 async function loadKnownOtterSourceIds(
   sqlDb: Pick<ReturnType<typeof conversationSql>, "query">,
-): Promise<Set<string>> {
-  const known = new Set<string>();
-  const result = await sqlDb.query("SELECT source_id FROM conversation WHERE source = 'otter'");
+): Promise<Map<string, KnownOtterConversation>> {
+  const known = new Map<string, KnownOtterConversation>();
+  const result = await sqlDb.query(
+    "SELECT id, source_id, updated_at FROM conversation WHERE source = 'otter'",
+  );
   if (result.ok && result.data.rows) {
     for (const row of result.data.rows) {
-      const val = Array.isArray(row) ? row[0] : (row as any).source_id;
-      if (val) known.add(String(val));
+      const id = Array.isArray(row) ? row[0] : (row as any).id;
+      const val = Array.isArray(row) ? row[1] : (row as any).source_id;
+      const updatedAt = Array.isArray(row) ? row[2] : (row as any).updated_at;
+      if (id && val) {
+        known.set(String(val), {
+          id: String(id),
+          updatedAt: updatedAt == null ? null : String(updatedAt),
+        });
+      }
     }
   }
   return known;
+}
+
+function remoteSpeechUpdatedAt(sp: OtterSpeech): number | null {
+  const raw = sp.transcript_updated_at ?? sp.modified_time;
+  if (raw == null || raw === "") return null;
+  if (typeof raw === "number") {
+    const ms = raw > 1e12 ? raw : raw * 1000;
+    return Number.isFinite(ms) ? ms : null;
+  }
+
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric)) return numeric > 1e12 ? numeric : numeric * 1000;
+
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function localUpdatedAt(value: string | null): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function shouldSyncKnownOtterSpeech(sp: OtterSpeech, known: KnownOtterConversation): boolean {
+  const remote = remoteSpeechUpdatedAt(sp);
+  const local = localUpdatedAt(known.updatedAt);
+  return remote != null && (local == null || remote > local);
 }
 
 /**
@@ -57,11 +98,15 @@ export async function runOtterSync(
   const { mode = "incremental", shouldContinue, onProgress } = options;
   await ensureSchema(access);
   const sqlDb = conversationSql(access);
-  const known = mode === "incremental" ? await loadKnownOtterSourceIds(sqlDb) : new Set<string>();
+  const known = await loadKnownOtterSourceIds(sqlDb);
 
   await onProgress?.({ phase: "listing" });
   const speeches = await client.listAllSpeeches();
-  const fresh = speeches.filter((sp: OtterSpeech) => !known.has(`otter:${sp.otid}`));
+  const fresh = speeches.filter((sp: OtterSpeech) => {
+    if (mode === "full") return true;
+    const existing = known.get(`otter:${sp.otid}`);
+    return !existing || shouldSyncKnownOtterSpeech(sp, existing);
+  });
   const skipped = speeches.length - fresh.length;
 
   const summary: OtterSyncSummary = {
@@ -78,8 +123,8 @@ export async function runOtterSync(
     const sp = fresh[i]!;
     try {
       const txt = await client.exportTxt(sp.otid);
-      const result = await persistOtterSpeech(sp, txt, access);
-      if (result.status === "created") {
+      const result = await persistOtterSpeech(sp, txt, access, known.get(`otter:${sp.otid}`)?.id);
+      if (result.status === "created" || result.status === "updated") {
         summary.synced += 1;
         summary.conversations.push({
           id: result.conversationId!,

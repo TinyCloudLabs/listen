@@ -333,6 +333,7 @@ async function main() {
       store: delegationStore,
       cache: delegationCache,
       authMiddleware,
+      backendKV,
     }),
   );
 
@@ -440,6 +441,7 @@ async function main() {
     createSoundcoreSyncRouter({
       authMiddleware,
       delegationMiddleware,
+      backendKV,
     }),
   );
 
@@ -449,6 +451,7 @@ async function main() {
     createOtterSyncRouter({
       authMiddleware,
       delegationMiddleware,
+      backendKV,
     }),
   );
 

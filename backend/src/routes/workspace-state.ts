@@ -11,6 +11,11 @@ import {
 import { withTimeout } from "../middleware/timeout.js";
 import { conversationSql } from "../schema.js";
 import { googleTokensExist } from "../services/google-tokens.js";
+import {
+  type BackendKV,
+  type LastSyncState,
+  readLastSuccessfulSyncs,
+} from "../services/sync-freshness.js";
 
 interface WorkspaceStateRoutesConfig {
   node: TinyCloudNode;
@@ -18,6 +23,7 @@ interface WorkspaceStateRoutesConfig {
   store: DelegationStore;
   cache: DelegationCache;
   authMiddleware: RequestHandler;
+  backendKV?: BackendKV;
 }
 
 const ACTIVATION_TIMEOUT_MS = 5_000;
@@ -33,6 +39,9 @@ const WORKSPACE_SECRET_NAMES: Record<WorkspaceSecretKey, string> = {
 };
 
 type DelegatedAccess = NonNullable<Request["delegatedAccess"]>;
+type BackendWorkspaceStateResponse = WorkspaceStateResponse & {
+  lastSync: LastSyncState;
+};
 
 export function createWorkspaceStateRouter(config: WorkspaceStateRoutesConfig) {
   const { node, store, cache, authMiddleware } = config;
@@ -48,7 +57,7 @@ export function createWorkspaceStateRouter(config: WorkspaceStateRoutesConfig) {
 
     const { address } = req.user;
     const ownerDid = ownerDidFromAddress(address);
-    const base: WorkspaceStateResponse = {
+    const base: BackendWorkspaceStateResponse = {
       delegation: {
         status: "none",
         stored: false,
@@ -74,6 +83,7 @@ export function createWorkspaceStateRouter(config: WorkspaceStateRoutesConfig) {
         hasAny: null,
         total: null,
       },
+      lastSync: await readLastSuccessfulSyncs(config.backendKV, address),
     };
 
     try {
@@ -95,7 +105,7 @@ export function createWorkspaceStateRouter(config: WorkspaceStateRoutesConfig) {
             expiresAt: stored.expiresAt,
             activation: "unknown",
           },
-        } satisfies WorkspaceStateResponse);
+        } satisfies BackendWorkspaceStateResponse);
         return;
       }
 
@@ -112,7 +122,7 @@ export function createWorkspaceStateRouter(config: WorkspaceStateRoutesConfig) {
             expiresAt: stored.expiresAt,
             activation: "unknown",
           },
-        } satisfies WorkspaceStateResponse);
+        } satisfies BackendWorkspaceStateResponse);
         return;
       }
 
@@ -137,7 +147,7 @@ export function createWorkspaceStateRouter(config: WorkspaceStateRoutesConfig) {
         }
       }
 
-      const response: WorkspaceStateResponse = {
+      const response: BackendWorkspaceStateResponse = {
         ...base,
         delegation: {
           status: "active",
@@ -154,10 +164,11 @@ export function createWorkspaceStateRouter(config: WorkspaceStateRoutesConfig) {
         return;
       }
 
-      const [secrets, googleMeet, conversations] = await Promise.all([
+      const [secrets, googleMeet, conversations, lastSync] = await Promise.all([
         readBackendSecrets(access),
         readGoogleMeetState(access),
         readConversationState(access),
+        readLastSuccessfulSyncs(config.backendKV, address),
       ]);
 
       res.json({
@@ -168,7 +179,8 @@ export function createWorkspaceStateRouter(config: WorkspaceStateRoutesConfig) {
           ...googleMeet,
         },
         conversations,
-      } satisfies WorkspaceStateResponse);
+        lastSync,
+      } satisfies BackendWorkspaceStateResponse);
     } catch (err) {
       console.error("[workspace-state] failed to load workspace state:", err);
       res.status(500).json({

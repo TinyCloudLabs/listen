@@ -31,13 +31,16 @@ function createMockKV() {
 
 function createMockSQL() {
   const calls: Array<{ method: string; sql: string; params?: any[] }> = [];
-  let dedupRows: string[] = [];
+  let dedupRows: Array<{ id: string; source_id: string }> = [];
   let shouldFailExecute = false;
 
   return {
     _calls: calls,
     _setDedupSourceIds(ids: string[]) {
-      dedupRows = ids;
+      dedupRows = ids.map((id) => ({ id: `conv-${id.split("/").pop()}`, source_id: id }));
+    },
+    _setDedupRows(rows: Array<{ id: string; source_id: string }>) {
+      dedupRows = rows;
     },
     _setExecuteFail(fail: boolean) {
       shouldFailExecute = fail;
@@ -45,12 +48,14 @@ function createMockSQL() {
     query: async (sql: string, params?: any[]) => {
       calls.push({ method: "query", sql, params });
 
-      if (sql.includes("SELECT source_id FROM conversation")) {
+      if (sql.includes("FROM conversation") && sql.includes("source_id")) {
         return {
           ok: true,
           data: {
-            rows: dedupRows.map((id) => [id]),
-            columns: ["source_id"],
+            rows: dedupRows.map((row) =>
+              sql.includes("SELECT id") ? [row.id, row.source_id] : [row.source_id],
+            ),
+            columns: sql.includes("SELECT id") ? ["id", "source_id"] : ["source_id"],
           },
         };
       }
@@ -181,6 +186,29 @@ describe("syncSingleConference", () => {
     expect(result.status).toBe("skipped");
     expect(result.conferenceRecordName).toBe("conferenceRecords/abc-123");
     expect(mockGetFullConference).not.toHaveBeenCalled();
+  });
+
+  it("refreshes an existing conference without inserting a duplicate", async () => {
+    mockSQL._setDedupRows([{ id: "existing-conv", source_id: "conferenceRecords/abc-123" }]);
+
+    const record = createMockConferenceRecord();
+    const result = await syncSingleConference(record, mockAccess as any, mockClient, {
+      refreshExisting: true,
+    });
+
+    expect(result.status).toBe("updated");
+    expect(result.conversationId).toBe("existing-conv");
+    expect(mockGetFullConference).toHaveBeenCalled();
+
+    const conversationInserts = mockSQL._calls.filter(
+      (c) => c.method === "execute" && c.sql.includes("INSERT INTO conversation"),
+    );
+    const conversationUpdates = mockSQL._calls.filter(
+      (c) => c.method === "execute" && c.sql.trim().startsWith("UPDATE conversation SET title"),
+    );
+    expect(conversationInserts).toHaveLength(0);
+    expect(conversationUpdates).toHaveLength(1);
+    expect(conversationUpdates[0].params?.at(-1)).toBe("existing-conv");
   });
 
   // ── Test 3: returns 'skipped' when no transcript entries ──────────

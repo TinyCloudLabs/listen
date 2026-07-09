@@ -80,6 +80,58 @@ export async function updateConversationTranscriptFields(
   );
 }
 
+export async function updateConversationFromNormalized(
+  access: DelegatedAccess,
+  conversationId: string,
+  normalized: NormalizedConversation,
+): Promise<void> {
+  const sqlDb = conversationSql(access);
+  const now = new Date().toISOString();
+  const metadataJson = JSON.stringify(
+    normalizeConversationMetadata(normalized.conversation.metadata),
+  );
+  const { transcriptJson, transcriptText } = transcriptFieldsForStorage(normalized.transcript);
+
+  await sqlDb.execute(
+    `UPDATE conversation SET title = ?, source = ?, source_id = ?, source_url = ?, started_at = ?, ended_at = ?, duration_secs = ?, summary = ?, metadata = ?, transcript_json = ?, transcript_text = ?, updated_at = ? WHERE id = ?`,
+    [
+      normalized.conversation.title,
+      normalized.conversation.source,
+      normalized.conversation.source_id,
+      normalized.conversation.source_url,
+      normalized.conversation.started_at,
+      normalized.conversation.ended_at,
+      normalized.conversation.duration_secs,
+      normalized.conversation.summary,
+      metadataJson,
+      transcriptJson,
+      transcriptText,
+      now,
+      conversationId,
+    ],
+  );
+
+  await sqlDb.execute(`DELETE FROM participant WHERE conversation_id = ?`, [conversationId]);
+
+  if (normalized.participants.length > 0) {
+    const placeholders = normalized.participants.map(() => "(?, ?, ?, ?, ?)").join(", ");
+    const params = normalized.participants.flatMap((participant) => [
+      participant.id,
+      conversationId,
+      participant.name,
+      participant.email,
+      participant.speaker_label,
+    ]);
+
+    await sqlDb.execute(
+      `INSERT INTO participant (id, conversation_id, name, email, speaker_label) VALUES ${placeholders}`,
+      params,
+    );
+  }
+
+  await persistTranscriptBlob(access, conversationId, normalized.transcript);
+}
+
 /**
  * Persist a normalized conversation to SQL + KV.
  * Inserts conversation row, participant rows, and writes transcript blob.

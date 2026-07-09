@@ -4,15 +4,17 @@ import { OtterApiError, OtterClient } from "../services/otter-client.js";
 import type { OtterCookie } from "../services/otter-secret.js";
 import { readOtterCookie } from "../services/otter-secret.js";
 import { runOtterSync } from "../services/otter-sync-runner.js";
+import { type BackendKV, recordLastSuccessfulSync } from "../services/sync-freshness.js";
 
 interface OtterSyncRoutesConfig {
   authMiddleware: RequestHandler;
   delegationMiddleware: RequestHandler;
+  backendKV?: BackendKV;
   createClient?: (cookie: OtterCookie) => OtterClient;
 }
 
 export function createOtterSyncRouter(config: OtterSyncRoutesConfig) {
-  const { authMiddleware, delegationMiddleware } = config;
+  const { authMiddleware, delegationMiddleware, backendKV } = config;
   const makeClient = config.createClient ?? ((cookie: OtterCookie) => new OtterClient(cookie));
   const router = Router();
 
@@ -50,6 +52,8 @@ export function createOtterSyncRouter(config: OtterSyncRoutesConfig) {
         shouldContinue: () => !aborted,
         onProgress: (p) => send(p.phase === "listing" ? "status" : "progress", p),
       });
+      const ownerAddress = req.user?.address;
+      if (ownerAddress) await recordLastSuccessfulSync(backendKV, ownerAddress, "otter");
       send("complete", summary);
     } catch (err) {
       if (err instanceof OtterApiError && err.status === 429) {

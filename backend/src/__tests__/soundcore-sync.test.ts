@@ -21,12 +21,22 @@ function createMockKV() {
 
 function createMockSQL() {
   const calls: Array<{ method: string; sql: string; params?: any[] }> = [];
+  let rows: Array<{ id: string; source_id: string; updated_at: string | null }> = [];
   return {
     _calls: calls,
+    _setRows(nextRows: Array<{ id: string; source_id: string; updated_at: string | null }>) {
+      rows = nextRows;
+    },
     query: async (sql: string, params?: any[]) => {
       calls.push({ method: "query", sql, params });
-      if (sql.includes("SELECT source_id FROM conversation")) {
-        return { ok: true, data: { rows: [], columns: ["source_id"] } };
+      if (sql.includes("FROM conversation") && sql.includes("source_id")) {
+        return {
+          ok: true,
+          data: {
+            rows: rows.map((row) => [row.id, row.source_id, row.updated_at]),
+            columns: ["id", "source_id", "updated_at"],
+          },
+        };
       }
       if (sql.includes("SELECT 1 FROM conversation")) {
         return { ok: true, data: { rows: [[1]], columns: ["1"] } };
@@ -127,6 +137,41 @@ describe("Soundcore sync", () => {
     expect(result).toMatchObject({ synced: 1, failed: 1 });
     expect(result.errors[0]).toContain("slow");
     expect(result.conversations[0]?.title).toBe("Good note");
+  });
+
+  it("refreshes an existing note when Soundcore updated_at is newer than local updated_at", async () => {
+    const kv = createMockKV();
+    const sql = createMockSQL();
+    sql._setRows([
+      {
+        id: "existing-soundcore-conv",
+        source_id: "sc-1",
+        updated_at: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+    const note = createNote({ updated_at: "2026-01-02T00:00:00.000Z" });
+
+    const result = await syncSoundcoreNotes({
+      access: { kv, sql } as any,
+      client: {
+        listNotes: async (): Promise<SoundcoreNoteSummary[]> => [note],
+        getNote: async () => note,
+      },
+    });
+
+    expect(result).toMatchObject({ synced: 1, skipped: 0, failed: 0 });
+    expect(result.conversations[0]?.id).toBe("existing-soundcore-conv");
+
+    const conversationInserts = sql._calls.filter(
+      (call) => call.method === "execute" && call.sql.includes("INSERT INTO conversation"),
+    );
+    const conversationUpdates = sql._calls.filter(
+      (call) =>
+        call.method === "execute" && call.sql.trim().startsWith("UPDATE conversation SET title"),
+    );
+    expect(conversationInserts).toHaveLength(0);
+    expect(conversationUpdates).toHaveLength(1);
+    expect(conversationUpdates[0].params?.at(-1)).toBe("existing-soundcore-conv");
   });
 
   it("aggregates required Soundcore secrets", async () => {

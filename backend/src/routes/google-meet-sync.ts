@@ -8,6 +8,7 @@ import { GoogleAuthRevokedError } from "../services/google-auth.js";
 import { conversationSql, ensureSchema } from "../schema.js";
 import { syncSingleConference } from "../services/google-meet-sync.js";
 import { resolveAppPath } from "../manifest.js";
+import { recordLastSuccessfulSync } from "../services/sync-freshness.js";
 import {
   deleteGoogleTokens,
   LEGACY_GOOGLE_TOKENS_PATH,
@@ -50,6 +51,8 @@ interface BackendKV {
 // ── Constants ────────────────────────────────────────────────────────
 
 const DEFAULT_SYNC_DELAY_MS = 200;
+const INCREMENTAL_CONFERENCE_WINDOW_DAYS = 30;
+const FULL_CONFERENCE_WINDOW_DAYS = 365;
 const GOOGLE_MEET_JOB_PREFIX = resolveAppPath("sync/google-meet/jobs");
 
 type GoogleMeetSyncJobStatus =
@@ -213,17 +216,29 @@ function createClientWithTokenRefresh(
 async function loadKnownGoogleMeetSourceIds(
   sqlDb: Pick<ReturnType<typeof conversationSql>, "query">,
 ) {
-  const knownIds = new Set<string>();
+  const knownIds = new Map<string, string>();
   const existingResult = await sqlDb.query(
-    "SELECT source_id FROM conversation WHERE source = 'google-meet'",
+    "SELECT id, source_id FROM conversation WHERE source = 'google-meet'",
   );
   if (existingResult.ok && existingResult.data.rows) {
     for (const row of existingResult.data.rows) {
-      const val = Array.isArray(row) ? row[0] : (row as any).source_id;
-      if (val) knownIds.add(String(val));
+      const id = Array.isArray(row) ? row[0] : (row as any).id;
+      const val = Array.isArray(row) ? row[1] : (row as any).source_id;
+      if (id && val) knownIds.set(String(val), String(id));
     }
   }
   return knownIds;
+}
+
+function conferenceWindowDays(mode: "incremental" | "full") {
+  return mode === "full" ? FULL_CONFERENCE_WINDOW_DAYS : INCREMENTAL_CONFERENCE_WINDOW_DAYS;
+}
+
+function conferenceCapWarning(conferences: ConferenceRecord[]): string | null {
+  const capped = conferences as ConferenceRecord[] & { truncated?: boolean; cap?: number };
+  if (!capped.truncated) return null;
+  const cap = capped.cap ?? conferences.length;
+  return `Google Meet conference listing reached the ${cap} conference cap; older conferences may not have been scanned.`;
 }
 
 async function syncGoogleMeetConferences({
@@ -231,6 +246,7 @@ async function syncGoogleMeetConferences({
   client,
   conferences,
   knownIds,
+  mode,
   delayMs,
   shouldContinue,
   onProgress,
@@ -238,7 +254,8 @@ async function syncGoogleMeetConferences({
   access: DelegatedAccess;
   client: Pick<GoogleMeetClient, "getFullConference">;
   conferences: ConferenceRecord[];
-  knownIds: Set<string>;
+  knownIds: Map<string, string>;
+  mode: "incremental" | "full";
   delayMs: number;
   shouldContinue?: () => boolean;
   onProgress?: (patch: Partial<GoogleMeetSyncJob>) => void | Promise<void>;
@@ -249,6 +266,8 @@ async function syncGoogleMeetConferences({
   let skippedNoTranscript = 0;
   let failed = 0;
   const errors: string[] = [];
+  const capWarning = conferenceCapWarning(conferences);
+  if (capWarning) errors.push(capWarning);
   const conversations: Array<{ id: string; title: string; started_at: string }> = [];
 
   for (let i = 0; i < conferences.length; i++) {
@@ -257,12 +276,16 @@ async function syncGoogleMeetConferences({
     const conference = conferences[i]!;
     checked = i + 1;
 
-    if (knownIds.has(conference.name)) {
+    const existingConversationId = knownIds.get(conference.name);
+    if (existingConversationId && mode !== "full") {
       skippedExisting++;
     } else {
-      const result = await syncSingleConference(conference, access, client);
+      const result = await syncSingleConference(conference, access, client, {
+        refreshExisting: mode === "full",
+        existingConversationId,
+      });
 
-      if (result.status === "created") {
+      if (result.status === "created" || result.status === "updated") {
         synced++;
         conversations.push({
           id: result.conversationId!,
@@ -315,6 +338,7 @@ function runGoogleMeetJob({
   job,
   access,
   client,
+  backendKV,
   delayMs,
   persistJob,
 }: {
@@ -322,6 +346,7 @@ function runGoogleMeetJob({
   job: GoogleMeetSyncJob;
   access: DelegatedAccess;
   client: Pick<GoogleMeetClient, "listConferenceRecords" | "getFullConference">;
+  backendKV?: BackendKV;
   delayMs: number;
   persistJob: PersistGoogleMeetJob;
 }): void {
@@ -345,7 +370,7 @@ function runGoogleMeetJob({
 
       await ensureSchema(access);
       const sqlDb = conversationSql(access);
-      const conferences = await client.listConferenceRecords();
+      const conferences = await client.listConferenceRecords(conferenceWindowDays(job.mode));
       const knownIds = await loadKnownGoogleMeetSourceIds(sqlDb);
 
       if (runtime.cancelRequested) {
@@ -373,6 +398,7 @@ function runGoogleMeetJob({
         client,
         conferences,
         knownIds,
+        mode: job.mode,
         delayMs,
         shouldContinue: () => !runtime.cancelRequested,
         onProgress: updateJob,
@@ -397,6 +423,7 @@ function runGoogleMeetJob({
         ...result,
         message: "Sync complete.",
       });
+      await recordLastSuccessfulSync(backendKV, job.ownerAddress, "google-meet");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (err instanceof GoogleAuthRevokedError) {
@@ -528,6 +555,7 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
             job: current,
             access: req.delegatedAccess!,
             client: createClientWithTokenRefresh(tokens, req.delegatedAccess!, makeClient),
+            backendKV,
             delayMs,
             persistJob: persistGoogleMeetJob,
           });
@@ -553,6 +581,7 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
         job,
         access: req.delegatedAccess!,
         client: createClientWithTokenRefresh(tokens, req.delegatedAccess!, makeClient),
+        backendKV,
         delayMs,
         persistJob: persistGoogleMeetJob,
       });
@@ -586,6 +615,7 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
             job,
             access: req.delegatedAccess!,
             client: createClientWithTokenRefresh(tokens, req.delegatedAccess!, makeClient),
+            backendKV,
             delayMs,
             persistJob: persistGoogleMeetJob,
           });
@@ -712,10 +742,13 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
 
       const client = createClientWithTokenRefresh(tokens, access, makeClient);
 
-      // 2. List conferences from last 30 days
-      const conferences = await client.listConferenceRecords();
+      const mode = req.body?.mode === "full" ? "full" : "incremental";
+
+      // 2. List conferences from the mode-appropriate window
+      const conferences = await client.listConferenceRecords(conferenceWindowDays(mode));
 
       if (conferences.length === 0) {
+        await recordLastSuccessfulSync(backendKV, normalizeOwnerAddress(req), "google-meet");
         res.json({ synced: 0, skipped: 0, failed: 0, errors: [], conversations: [] });
         return;
       }
@@ -723,14 +756,15 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
       // 3. Pre-fetch dedup: batch query existing source_ids
       const sourceIds = conferences.map((c) => c.name);
       const placeholders = sourceIds.map(() => "?").join(", ");
-      const dedupQuery = `SELECT source_id FROM conversation WHERE source = 'google-meet' AND source_id IN (${placeholders})`;
+      const dedupQuery = `SELECT id, source_id FROM conversation WHERE source = 'google-meet' AND source_id IN (${placeholders})`;
       const dedupResult = await sqlDb.query(dedupQuery, sourceIds);
 
-      const existingIds = new Set<string>();
+      const existingIds = new Map<string, string>();
       if (dedupResult.ok && dedupResult.data.rows) {
         for (const row of dedupResult.data.rows) {
-          const val = Array.isArray(row) ? row[0] : (row as any).source_id;
-          if (val) existingIds.add(String(val));
+          const id = Array.isArray(row) ? row[0] : (row as any).id;
+          const val = Array.isArray(row) ? row[1] : (row as any).source_id;
+          if (id && val) existingIds.set(String(val), String(id));
         }
       }
 
@@ -739,9 +773,11 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
         client,
         conferences,
         knownIds: existingIds,
+        mode,
         delayMs,
       });
 
+      await recordLastSuccessfulSync(backendKV, normalizeOwnerAddress(req), "google-meet");
       res.json(result);
     } catch (err) {
       if (err instanceof GoogleAuthRevokedError) {
@@ -817,6 +853,7 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
       await ensureSchema(access);
       const sqlDb = conversationSql(access);
       const client = createClientWithTokenRefresh(tokens, access, makeClient);
+      const mode = req.query.mode === "full" ? "full" : "incremental";
 
       sendEvent("status", { phase: "listing", message: "Fetching conference list..." });
 
@@ -825,7 +862,7 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
         closeStream();
         return;
       }
-      const conferences = await client.listConferenceRecords();
+      const conferences = await client.listConferenceRecords(conferenceWindowDays(mode));
 
       sendEvent("progress", {
         phase: "listing",
@@ -848,6 +885,7 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
         client,
         conferences,
         knownIds,
+        mode,
         delayMs,
         shouldContinue: () => !aborted,
         onProgress: (progress) => {
@@ -859,6 +897,7 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
       });
 
       // 5. Done
+      await recordLastSuccessfulSync(backendKV, normalizeOwnerAddress(req), "google-meet");
       sendEvent("complete", result);
     } catch (err) {
       if (err instanceof GoogleAuthRevokedError) {

@@ -19,6 +19,11 @@ export interface ConferenceRecord {
   space: string;
 }
 
+export type ConferenceRecordList = ConferenceRecord[] & {
+  truncated?: boolean;
+  cap?: number;
+};
+
 export interface Participant {
   name: string;
   earliestStartTime: string;
@@ -72,7 +77,7 @@ export class GoogleMeetClient {
     this.refreshToken = refreshToken;
   }
 
-  async listConferenceRecords(sinceDays = 30): Promise<ConferenceRecord[]> {
+  async listConferenceRecords(sinceDays = 30): Promise<ConferenceRecordList> {
     const since = new Date();
     since.setDate(since.getDate() - sinceDays);
     const filter = `start_time>="${since.toISOString()}"`;
@@ -142,8 +147,8 @@ export class GoogleMeetClient {
     resultKey: string,
     params: Record<string, string>,
     cap?: number,
-  ): Promise<T[]> {
-    const results: T[] = [];
+  ): Promise<T[] & { truncated?: boolean; cap?: number }> {
+    const results = [] as T[] & { truncated?: boolean; cap?: number };
     let pageToken: string | undefined;
 
     do {
@@ -160,7 +165,10 @@ export class GoogleMeetClient {
       results.push(...items);
 
       if (cap && results.length >= cap) {
-        return results.slice(0, cap);
+        const capped = results.slice(0, cap) as T[] & { truncated?: boolean; cap?: number };
+        capped.truncated = true;
+        capped.cap = cap;
+        return capped;
       }
 
       pageToken = data.nextPageToken;

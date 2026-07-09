@@ -30,37 +30,55 @@ function createMockKV() {
 
 function createMockSQL() {
   const calls: Array<{ method: string; sql: string; params?: any[] }> = [];
-  let dedupRows: string[] = [];
+  let dedupRows: Array<{ id: string; source_id: string }> = [];
 
   return {
     _calls: calls,
     _setDedupSourceIds(ids: string[]) {
-      dedupRows = ids;
+      dedupRows = ids.map((id) => ({ id: `conv-${id.split("/").pop()}`, source_id: id }));
+    },
+    _setDedupRows(rows: Array<{ id: string; source_id: string }>) {
+      dedupRows = rows;
     },
     query: async (sql: string, params?: any[]) => {
       calls.push({ method: "query", sql, params });
 
-      if (sql.includes("SELECT source_id FROM conversation")) {
+      if (sql.includes("FROM conversation") && sql.includes("source_id")) {
         // Batch dedup: filter to only matching source_ids from the params
         if (sql.includes("IN (")) {
-          const matching = dedupRows.filter((id) => params?.includes(id));
+          const matching = dedupRows.filter((row) => params?.includes(row.source_id));
           return {
             ok: true,
-            data: { rows: matching.map((id) => [id]), columns: ["source_id"] },
+            data: {
+              rows: matching.map((row) =>
+                sql.includes("SELECT id") ? [row.id, row.source_id] : [row.source_id],
+              ),
+              columns: sql.includes("SELECT id") ? ["id", "source_id"] : ["source_id"],
+            },
           };
         }
         // "Get all" query (no params) — return all dedup rows
         if (!params || params.length === 0) {
           return {
             ok: true,
-            data: { rows: dedupRows.map((id) => [id]), columns: ["source_id"] },
+            data: {
+              rows: dedupRows.map((row) =>
+                sql.includes("SELECT id") ? [row.id, row.source_id] : [row.source_id],
+              ),
+              columns: sql.includes("SELECT id") ? ["id", "source_id"] : ["source_id"],
+            },
           };
         }
         // Single dedup
-        const matching = dedupRows.filter((id) => id === params?.[0]);
+        const matching = dedupRows.filter((row) => row.source_id === params?.[0]);
         return {
           ok: true,
-          data: { rows: matching.map((id) => [id]), columns: ["source_id"] },
+          data: {
+            rows: matching.map((row) =>
+              sql.includes("SELECT id") ? [row.id, row.source_id] : [row.source_id],
+            ),
+            columns: sql.includes("SELECT id") ? ["id", "source_id"] : ["source_id"],
+          },
         };
       }
 
@@ -141,6 +159,7 @@ function createMockGoogleMeetClientFactory() {
   const fullConferenceOverrides = new Map<string, FullConference | Error>();
   let lastTokens: { accessToken: string; refreshToken?: string } | null = null;
   let fullConferenceDelayMs = 0;
+  const listSinceDaysCalls: Array<number | undefined> = [];
 
   return {
     setConferences(records: ConferenceRecord[]) {
@@ -155,10 +174,16 @@ function createMockGoogleMeetClientFactory() {
     getLastTokens() {
       return lastTokens;
     },
+    getListSinceDaysCalls() {
+      return listSinceDaysCalls;
+    },
     factory(accessToken: string, _onTokenRefresh?: any, refreshToken?: string) {
       lastTokens = { accessToken, refreshToken };
       return {
-        listConferenceRecords: async () => conferences,
+        listConferenceRecords: async (sinceDays?: number) => {
+          listSinceDaysCalls.push(sinceDays);
+          return conferences;
+        },
         getFullConference: async (record: ConferenceRecord) => {
           if (fullConferenceDelayMs > 0) {
             await new Promise((resolve) => setTimeout(resolve, fullConferenceDelayMs));
@@ -350,6 +375,62 @@ describe("Google Meet Sync Routes — POST /api/sync/google-meet", () => {
     const body = await res.json();
     expect(body.synced).toBe(1);
     expect(body.skipped).toBe(1);
+    expect(clientFactory.getListSinceDaysCalls()).toEqual([30]);
+  });
+
+  it("full mode uses a 365-day window and refreshes existing conferences", async () => {
+    mockKV._data.set(GOOGLE_TOKENS_PATH, TEST_TOKENS);
+    mockSQL._setDedupRows([{ id: "existing-google-meet-conv", source_id: "conferenceRecords/c1" }]);
+
+    const records = [createMockConferenceRecord({ name: "conferenceRecords/c1" })];
+    clientFactory.setConferences(records);
+
+    const res = await fetch(`http://localhost:${port}/api/sync/google-meet`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "full" }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.synced).toBe(1);
+    expect(body.skipped).toBe(0);
+    expect(clientFactory.getListSinceDaysCalls()).toEqual([365]);
+
+    const conversationInserts = mockSQL._calls.filter(
+      (call) => call.method === "execute" && call.sql.includes("INSERT INTO conversation"),
+    );
+    const conversationUpdates = mockSQL._calls.filter(
+      (call) =>
+        call.method === "execute" && call.sql.trim().startsWith("UPDATE conversation SET title"),
+    );
+    expect(conversationInserts).toHaveLength(0);
+    expect(conversationUpdates).toHaveLength(1);
+    expect(conversationUpdates[0].params?.at(-1)).toBe("existing-google-meet-conv");
+  });
+
+  it("includes a warning when Google Meet conference listing hits the cap", async () => {
+    mockKV._data.set(GOOGLE_TOKENS_PATH, TEST_TOKENS);
+    mockSQL._setDedupSourceIds([]);
+
+    const records = [
+      createMockConferenceRecord({ name: "conferenceRecords/capped" }),
+    ] as Array<ConferenceRecord> & { truncated?: boolean; cap?: number };
+    records.truncated = true;
+    records.cap = 500;
+    clientFactory.setConferences(records);
+
+    const res = await fetch(`http://localhost:${port}/api/sync/google-meet`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "full" }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.errors).toContain(
+      "Google Meet conference listing reached the 500 conference cap; older conferences may not have been scanned.",
+    );
   });
 
   it("returns 404 when no tokens configured", async () => {

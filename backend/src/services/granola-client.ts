@@ -109,14 +109,26 @@ export class GranolaClient {
       const page = await this.listNotes({ pageSize, cursor });
       pageCount++;
 
-      if (mode === "incremental" && knownIds && page.notes.some((note) => knownIds.has(note.id))) {
-        notes.push(...page.notes.filter((note) => !knownIds.has(note.id)));
+      const pageKnownCount = knownIds
+        ? page.notes.filter((note) => knownIds.has(note.id)).length
+        : 0;
+      if (
+        mode === "incremental" &&
+        knownIds &&
+        page.notes.length > 0 &&
+        pageKnownCount === page.notes.length
+      ) {
+        // Granola returns notes newest-first; a whole known page means older pages were seen too.
         earlyExit = true;
         options.onProgress?.({ page: pageCount, totalSoFar: notes.length });
         break;
       }
 
-      notes.push(...page.notes);
+      notes.push(
+        ...(mode === "incremental" && knownIds
+          ? page.notes.filter((note) => !knownIds.has(note.id))
+          : page.notes),
+      );
       options.onProgress?.({ page: pageCount, totalSoFar: notes.length });
       cursor = page.cursor ?? undefined;
       if (!page.hasMore) break;

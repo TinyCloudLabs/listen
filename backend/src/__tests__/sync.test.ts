@@ -506,6 +506,68 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
     expect(clientFactory.getGetCalls()).toEqual(["ff-2", "ff-3"]);
   });
 
+  it("full mode refreshes an existing transcript without inserting a duplicate", async () => {
+    mockKV._data.set(KV_KEY, "test-api-key");
+
+    const transcript = createMockFullTranscript({
+      id: "ff-1",
+      title: "Updated Meeting",
+      sentences: [
+        {
+          index: 0,
+          speaker_id: "s1",
+          speaker_name: "Alice",
+          text: "Updated transcript text",
+          raw_text: "Updated transcript text",
+          start_time: 0,
+          end_time: 2,
+          ai_filters: {
+            task: false,
+            pricing: false,
+            metric: false,
+            question: false,
+            date_and_time: false,
+            sentiment: "neutral",
+          },
+        },
+      ],
+    });
+    clientFactory.setListResult([transcript]);
+    clientFactory.setGetResult("ff-1", transcript);
+
+    mockSQL._setDedupRows([{ id: "existing-fireflies-conv", source_id: "ff-1" }]);
+    mockSQL._seedTranscriptRow("existing-fireflies-conv");
+
+    const res = await fetch(`http://localhost:${port}/api/sync/fireflies`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "full" }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.synced).toBe(0);
+    expect(body.repaired).toBe(1);
+    expect(body.skipped).toBe(0);
+    expect(clientFactory.getGetCalls()).toEqual(["ff-1"]);
+
+    const conversationInserts = mockSQL._calls.filter(
+      (call) => call.method === "execute" && call.sql.includes("INSERT INTO conversation"),
+    );
+    const conversationUpdates = mockSQL._calls.filter(
+      (call) =>
+        call.method === "execute" && call.sql.trim().startsWith("UPDATE conversation SET title"),
+    );
+    expect(conversationInserts).toHaveLength(0);
+    expect(conversationUpdates).toHaveLength(1);
+    expect(conversationUpdates[0].params?.at(-1)).toBe("existing-fireflies-conv");
+
+    const storedTranscript = mockKV._data.get(
+      "xyz.tinycloud.listen/transcript/existing-fireflies-conv",
+    );
+    expect(JSON.parse(storedTranscript!)[0].text).toBe("Updated transcript text");
+  });
+
   // ── All skipped ─────────────────────────────────────────────────
 
   it("returns all skipped when every transcript already exists", async () => {

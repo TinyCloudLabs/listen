@@ -23,19 +23,27 @@ function createMockKV() {
 
 function createMockSQL() {
   const calls: Array<{ method: string; sql: string; params?: any[] }> = [];
-  let dedupRows: Array<{ source_id: string }> = [];
+  let dedupRows: Array<{ id: string; source_id: string }> = [];
 
   return {
     _calls: calls,
     _setDedupRows(rows: Array<{ source_id: string }>) {
-      dedupRows = rows;
+      dedupRows = rows.map((row) => ({
+        id: "id" in row ? String((row as any).id) : `conv-${row.source_id}`,
+        source_id: row.source_id,
+      }));
     },
     query: async (sql: string, params?: any[]) => {
       calls.push({ method: "query", sql, params });
-      if (sql.includes("SELECT source_id FROM conversation")) {
+      if (sql.includes("FROM conversation") && sql.includes("source_id")) {
         return {
           ok: true,
-          data: { rows: dedupRows.map((row) => [row.source_id]), columns: ["source_id"] },
+          data: {
+            rows: dedupRows.map((row) =>
+              sql.includes("SELECT id") ? [row.id, row.source_id] : [row.source_id],
+            ),
+            columns: sql.includes("SELECT id") ? ["id", "source_id"] : ["source_id"],
+          },
         };
       }
       if (sql.includes("SELECT 1 FROM conversation")) {
@@ -261,6 +269,36 @@ describe("Granola sync routes", () => {
       speaker_name: "Speaker A",
       text: "Hello from Granola",
     });
+  });
+
+  it("full mode refreshes known Granola notes without inserting duplicates", async () => {
+    mockKV._data.set(KV_KEY, "granola-api-key");
+    mockSQL._setDedupRows([{ id: "existing-granola-conv", source_id: "not_1d3tmYTlCICgjy" }]);
+    clientFactory.setNotes([
+      createMockNote({
+        title: "Updated Granola Meeting",
+        summary_markdown: "## Updated summary",
+      }),
+    ]);
+
+    const res = await fetch(`http://localhost:${port}/api/sync/granola/stream?mode=full`);
+    expect(res.status).toBe(200);
+
+    const events = parseSSEText(await res.text());
+    const complete = events.find((event) => event.type === "complete")?.data;
+    expect(complete).toMatchObject({ synced: 1, skipped: 0, failed: 0 });
+    expect(complete.conversations[0].id).toBe("existing-granola-conv");
+
+    const conversationInserts = mockSQL._calls.filter(
+      (call) => call.method === "execute" && call.sql.includes("INSERT INTO conversation"),
+    );
+    const conversationUpdates = mockSQL._calls.filter(
+      (call) =>
+        call.method === "execute" && call.sql.trim().startsWith("UPDATE conversation SET title"),
+    );
+    expect(conversationInserts).toHaveLength(0);
+    expect(conversationUpdates).toHaveLength(1);
+    expect(conversationUpdates[0].params?.at(-1)).toBe("existing-granola-conv");
   });
 
   it("returns the active job instead of starting a duplicate", async () => {

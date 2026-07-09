@@ -181,6 +181,8 @@ describe("GoogleMeetClient", () => {
       const records = await client.listConferenceRecords();
 
       expect(records.length).toBeLessThanOrEqual(500);
+      expect(records.truncated).toBe(true);
+      expect(records.cap).toBe(500);
     });
 
     it("uses pageSize=100", async () => {

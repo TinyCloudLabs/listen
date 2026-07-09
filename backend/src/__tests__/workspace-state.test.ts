@@ -70,6 +70,22 @@ function createMockCache() {
   };
 }
 
+function createMockBackendKV() {
+  const data = new Map<string, string>();
+  return {
+    _data: data,
+    get: async (key: string) => {
+      const val = data.get(key);
+      if (val === undefined) return { ok: true, data: { data: null } };
+      return { ok: true, data: { data: val } };
+    },
+    put: async (key: string, value: string) => {
+      data.set(key, value);
+      return { ok: true };
+    },
+  };
+}
+
 function mockAuthMiddleware(req: Request, _res: Response, next: NextFunction) {
   req.user = { sub: "test-sub", address: TEST_ADDRESS };
   next();
@@ -104,6 +120,7 @@ function createApp({
   store = createMockStore(),
   cache = createMockCache(),
   node = { useDelegation: mock(async () => createAccess()) },
+  backendKV,
 } = {}) {
   const app = express();
   app.use(express.json());
@@ -115,6 +132,7 @@ function createApp({
       store: store as any,
       cache: cache as any,
       authMiddleware: mockAuthMiddleware,
+      backendKV: backendKV as any,
     }),
   );
   return { app, store, cache, node };
@@ -193,6 +211,35 @@ describe("Workspace State Routes", () => {
     expect(body.googleMeet.connected).toBe(true);
     expect(body.conversations).toEqual({ hasAny: true, total: 3 });
     expect(node.useDelegation).not.toHaveBeenCalled();
+  });
+
+  it("includes per-source last successful sync timestamps", async () => {
+    const store = createMockStore();
+    const cache = createMockCache();
+    const backendKV = createMockBackendKV();
+    backendKV._data.set(
+      "xyz.tinycloud.listen/sync/last-successful/0xtest/granola",
+      "2026-07-09T10:00:00.000Z",
+    );
+    await store.store(TEST_ADDRESS, "stored-delegation", {
+      expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      policyHash: currentPolicyHash(),
+    });
+    cache.set(TEST_ADDRESS, createAccess());
+    const { app } = createApp({ store, cache, backendKV });
+    ({ server, port } = await startServer(app));
+
+    const res = await fetch(`http://localhost:${port}/api/workspace-state`);
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.lastSync).toEqual({
+      fireflies: null,
+      granola: "2026-07-09T10:00:00.000Z",
+      "google-meet": null,
+      soundcore: null,
+      otter: null,
+    });
   });
 
   it("reports stored delegation when activation fails", async () => {
