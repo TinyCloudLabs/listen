@@ -973,7 +973,7 @@ export function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [hasKey, setHasKey] = useState<boolean | null>(null);
   const [hasGranolaKey, setHasGranolaKey] = useState<boolean | null>(null);
-  const [hasSoundcoreKey, setHasSoundcoreKey] = useState<boolean | null>(false);
+  const [hasSoundcoreKey, setHasSoundcoreKey] = useState<boolean | null>(null);
   const [hasTranscriptionKeys, setHasTranscriptionKeys] = useState<TranscriptionProviderStatus>(
     EMPTY_TRANSCRIPTION_STATUS,
   );
@@ -1003,6 +1003,7 @@ export function App() {
   const [sessionExpired, setSessionExpired] = useState(false);
   const [backendAccessExpired, setBackendAccessExpired] = useState(false);
   const [gmLapsedBanner, setGmLapsedBanner] = useState(false);
+  const [gmLapsedError, setGmLapsedError] = useState<string | null>(null);
   const [liveWritePathPrefix, setLiveWritePathPrefix] = useState<string | null>(null);
   const [liveWriteHost, setLiveWriteHost] = useState<string | null>(null);
   const [liveWriteSpaceId, setLiveWriteSpaceId] = useState<string | null>(null);
@@ -1036,6 +1037,7 @@ export function App() {
       setHasBackendDelegation(false);
       setHasFirefliesBackendAccess(null);
       setHasGranolaBackendAccess(null);
+      setHasSoundcoreBackendAccess(null);
       setHasTranscriptionBackendAccess(EMPTY_TRANSCRIPTION_STATUS);
       setHasGoogleMeet(false);
     });
@@ -2670,21 +2672,32 @@ export function App() {
             <button
               style={s.lapsedSyncBtn}
               onClick={() => {
+                setGmLapsedError(null);
                 api
                   ?.post("/api/sync/google-meet")
                   .then(() => {
+                    setGmLapsedError(null);
                     setRefreshKey((k) => k + 1);
                     setGmLapsedBanner(false);
                   })
-                  .catch(() => {});
+                  .catch((err) =>
+                    setGmLapsedError(err instanceof Error ? err.message : String(err)),
+                  );
               }}
             >
               Sync Now
             </button>
-            <button style={s.bannerDismiss} onClick={() => setGmLapsedBanner(false)}>
+            <button
+              style={s.bannerDismiss}
+              onClick={() => {
+                setGmLapsedBanner(false);
+                setGmLapsedError(null);
+              }}
+            >
               &times;
             </button>
           </div>
+          {gmLapsedError && <span style={{ color: "#c00" }}>{gmLapsedError}</span>}
         </div>
       )}
 

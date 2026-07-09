@@ -1919,6 +1919,27 @@ describe("Google Meet webhook check", () => {
     });
   });
 
+  it("shows an error when lapsed sync fails", async () => {
+    mockGet.mockImplementation(gmMockGet({ "google-meet/check": { status: "lapsed" } }));
+    mockPost.mockImplementation((url: string) => {
+      if (url === "/api/sync/google-meet") {
+        return Promise.reject(new Error("sync failed"));
+      }
+      return Promise.resolve({ updated: 0, still_missing: 0 });
+    });
+
+    await renderAndSignIn();
+
+    await waitFor(() => {
+      expect(screen.getByText(/real-time sync was inactive/i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /sync now/i }));
+
+    expect(await screen.findByText("sync failed")).toBeInTheDocument();
+    expect(screen.getByText(/real-time sync was inactive/i)).toBeInTheDocument();
+  });
+
   it("dismiss button hides lapsed banner", async () => {
     mockGet.mockImplementation(gmMockGet({ "google-meet/check": { status: "lapsed" } }));
 
