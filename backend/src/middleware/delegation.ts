@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import type { TinyCloudNode } from "@tinycloud/node-sdk";
 import type { DelegationStore, DelegationCache } from "@listen/server";
+import { DELEGATION_STORE_REVALIDATE_MS } from "@listen/core";
 import { withTimeout } from "./timeout.js";
 import { backendDelegationPolicyHash, ownerDidFromAddress } from "../manifest.js";
 import {
@@ -26,7 +27,7 @@ interface DelegationValidationError {
 }
 
 type DelegationValidationResult =
-  | { ok: true }
+  | { ok: true; stored: NonNullable<Awaited<ReturnType<DelegationStore["load"]>>> }
   | {
       ok: false;
       error: DelegationValidationError;
@@ -44,6 +45,10 @@ type DelegationValidationResult =
  */
 export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
   const { node, store, cache, backendDid } = config;
+  const parsedRevalidate = parseInt(process.env.DELEGATION_STORE_REVALIDATE_MS ?? "", 10);
+  const revalidateMs = Number.isNaN(parsedRevalidate)
+    ? DELEGATION_STORE_REVALIDATE_MS
+    : parsedRevalidate;
 
   return async (req: Request, res: Response, next: NextFunction) => {
     const user = req.user;
@@ -61,9 +66,24 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
 
     try {
       // Check cache first
-      let access = cache.get(address);
+      const entry = cache.getEntry(address);
 
-      if (access) {
+      if (entry) {
+        const meta = entry.meta;
+        // Policy content changes only via deploy -> process restart -> cache is empty post-restart,
+        // so a cached pass can never straddle a policy rotation; this recompute is explicit and cheap.
+        const currentPolicyHash = backendDelegationPolicyHash(backendDid, ownerDid);
+        const fresh =
+          meta !== undefined &&
+          new Date(meta.expiresAt).getTime() > Date.now() &&
+          meta.policyHash === currentPolicyHash &&
+          Date.now() - entry.lastStoreCheckAt < revalidateMs;
+        if (fresh) {
+          req.delegatedAccess = entry.delegatedAccess;
+          next();
+          return;
+        }
+
         const validation = await validateStoredDelegation(
           address,
           store,
@@ -76,7 +96,11 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
           return;
         }
 
-        req.delegatedAccess = access;
+        cache.markStoreChecked(address, {
+          expiresAt: validation.stored.expiresAt,
+          policyHash: validation.stored.policyHash,
+        });
+        req.delegatedAccess = entry.delegatedAccess;
         next();
         return;
       }
@@ -113,7 +137,12 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
       }
 
       // Deserialize and activate the delegation
-      access = await withTimeout(activateDelegation(node, cache, address, stored.serialized));
+      const access = await withTimeout(
+        activateDelegation(node, cache, address, stored.serialized, {
+          expiresAt: stored.expiresAt,
+          policyHash: stored.policyHash,
+        }),
+      );
       req.delegatedAccess = access;
       next();
     } catch (err) {
@@ -167,7 +196,10 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
           }
 
           const retryAccess = await withTimeout(
-            activateDelegation(node, cache, address, stored.serialized),
+            activateDelegation(node, cache, address, stored.serialized, {
+              expiresAt: stored.expiresAt,
+              policyHash: stored.policyHash,
+            }),
           );
           req.delegatedAccess = retryAccess;
           next();
@@ -248,7 +280,7 @@ async function validateStoredDelegation(
     };
   }
 
-  return { ok: true };
+  return { ok: true, stored };
 }
 
 async function activateDelegation(
@@ -256,12 +288,13 @@ async function activateDelegation(
   cache: DelegationCache,
   address: string,
   serialized: string,
+  meta?: { expiresAt: string; policyHash?: string },
 ) {
   const delegation = deserializePortableDelegationSet(serialized);
   const access = await activatePortableDelegation(node, delegation);
   console.log(
     `[delegation] activated: address=${address} spaceId=${access.spaceId} path=${JSON.stringify(access.path)}`,
   );
-  cache.set(address, access);
+  cache.set(address, access, meta);
   return access;
 }

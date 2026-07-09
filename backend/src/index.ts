@@ -185,7 +185,10 @@ async function main() {
     try {
       const delegation = deserializeDelegation(stored.serialized);
       access = await activatePortableDelegation(node, delegation);
-      delegationCache.set(address, access);
+      delegationCache.set(address, access, {
+        expiresAt: stored.expiresAt,
+        policyHash: stored.policyHash,
+      });
       console.log("[webhook] delegation activated from store");
       return access;
     } catch (err) {
@@ -252,7 +255,10 @@ async function main() {
       try {
         const delegation = deserializeDelegation(stored.serialized);
         access = await activatePortableDelegation(node, delegation);
-        delegationCache.set(address, access);
+        delegationCache.set(address, access, {
+          expiresAt: stored.expiresAt,
+          policyHash: stored.policyHash,
+        });
         return access;
       } catch {
         return null;
@@ -365,7 +371,10 @@ async function main() {
         try {
           const delegation = deserializeDelegation(stored.serialized);
           access = await activatePortableDelegation(node, delegation);
-          delegationCache.set(address, access);
+          delegationCache.set(address, access, {
+            expiresAt: stored.expiresAt,
+            policyHash: stored.policyHash,
+          });
           return access;
         } catch {
           return null;

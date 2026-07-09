@@ -99,7 +99,10 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
       try {
         // Cache the active DelegatedAccess keyed by address when activation is available now.
         const access = await activatePortableDelegation(node, delegation);
-        cache.set(address, access);
+        cache.set(address, access, {
+          expiresAt,
+          policyHash: backendDelegationPolicyHash(config.did, ownerDid),
+        });
 
         res.json({
           status: "active",

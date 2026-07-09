@@ -129,7 +129,10 @@ export function createWorkspaceStateRouter(config: WorkspaceStateRoutesConfig) {
             activatePortableDelegation(node, delegation) as Promise<DelegatedAccess>,
             ACTIVATION_TIMEOUT_MS,
           );
-          cache.set(address, access);
+          cache.set(address, access, {
+            expiresAt: stored.expiresAt,
+            policyHash: stored.policyHash,
+          });
           activation = "active";
         } catch (err) {
           activation = "failed";
