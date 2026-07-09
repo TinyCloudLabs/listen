@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   createBackendDelegationRenewer,
   delegationRenewalErrorCode,
@@ -35,6 +35,10 @@ class FakeApiError extends Error {
 
 beforeEach(() => {
   localStorage.clear();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 // ── Renewer trigger logic ────────────────────────────────────────────
@@ -178,6 +182,125 @@ describe("createBackendDelegationRenewer — renewForApiError", () => {
     expect(await Promise.all([first, second, third])).toEqual([true, true, true]);
     expect(renew).toHaveBeenCalledTimes(1);
     expect(deps.onRenewed).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("renewal failure latch", () => {
+  it("transient network failure does not latch; renewal retries after the cooldown", async () => {
+    vi.useFakeTimers();
+    const renew = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValue(undefined);
+    const onRenewalFailed = vi.fn();
+    const deps = createDeps({ renew, onRenewalFailed });
+    const renewer = createBackendDelegationRenewer(deps);
+
+    expect(await renewer.renewForApiError("delegation_expired")).toBe(false);
+    vi.advanceTimersByTime(30_001);
+    expect(await renewer.renewForApiError("delegation_expired")).toBe(true);
+
+    expect(renew).toHaveBeenCalledTimes(2);
+    expect(onRenewalFailed).toHaveBeenCalledTimes(1);
+    expect(onRenewalFailed).toHaveBeenCalledWith(
+      expect.objectContaining({ permanent: false, error: expect.any(TypeError) }),
+    );
+  });
+
+  it("transient failure within the cooldown does not re-attempt renew", async () => {
+    vi.useFakeTimers();
+    const renew = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValue(undefined);
+    const onRenewalFailed = vi.fn();
+    const deps = createDeps({ renew, onRenewalFailed });
+    const renewer = createBackendDelegationRenewer(deps);
+
+    expect(await renewer.renewForApiError("delegation_expired")).toBe(false);
+    expect(await renewer.renewForApiError("delegation_expired")).toBe(false);
+
+    expect(renew).toHaveBeenCalledTimes(1);
+    expect(onRenewalFailed).toHaveBeenCalledTimes(1);
+    expect(onRenewalFailed).toHaveBeenCalledWith(
+      expect.objectContaining({ permanent: false, error: expect.any(TypeError) }),
+    );
+  });
+
+  it("permanent failure latches and reports onRenewalFailed({permanent:true})", async () => {
+    const renew = vi
+      .fn()
+      .mockRejectedValue(
+        Object.assign(new Error("session expired"), { name: "SessionExpiredError" }),
+      );
+    const onRenewalFailed = vi.fn();
+    const deps = createDeps({ renew, onRenewalFailed });
+    const renewer = createBackendDelegationRenewer(deps);
+
+    expect(await renewer.renewForApiError("delegation_expired")).toBe(false);
+    expect(onRenewalFailed).toHaveBeenCalledTimes(1);
+    expect(onRenewalFailed).toHaveBeenCalledWith(
+      expect.objectContaining({ permanent: true, error: expect.any(Error) }),
+    );
+
+    expect(await renewer.renewForApiError("delegation_expired")).toBe(false);
+    expect(renew).toHaveBeenCalledTimes(1);
+  });
+
+  it("a backend 4xx rejection is permanent", async () => {
+    const renew = vi
+      .fn()
+      .mockRejectedValue(new FakeApiError(400, "delegation_policy_mismatch", "bad"));
+    const onRenewalFailed = vi.fn();
+    const deps = createDeps({ renew, onRenewalFailed });
+    const renewer = createBackendDelegationRenewer(deps);
+
+    expect(await renewer.renewForApiError("delegation_expired")).toBe(false);
+    expect(await renewer.renewForApiError("delegation_expired")).toBe(false);
+
+    expect(renew).toHaveBeenCalledTimes(1);
+    expect(onRenewalFailed).toHaveBeenCalledTimes(1);
+    expect(onRenewalFailed).toHaveBeenCalledWith(
+      expect.objectContaining({ permanent: true, error: expect.any(FakeApiError) }),
+    );
+  });
+
+  it("a backend 429 rate limit is transient, not permanent", async () => {
+    vi.useFakeTimers();
+    const renew = vi
+      .fn()
+      .mockRejectedValueOnce(new FakeApiError(429, "rate_limited", "slow down"))
+      .mockResolvedValue(undefined);
+    const onRenewalFailed = vi.fn();
+    const deps = createDeps({ renew, onRenewalFailed });
+    const renewer = createBackendDelegationRenewer(deps);
+
+    expect(await renewer.renewForApiError("delegation_expired")).toBe(false);
+    expect(onRenewalFailed).toHaveBeenCalledTimes(1);
+    expect(onRenewalFailed).toHaveBeenCalledWith(
+      expect.objectContaining({ permanent: false, error: expect.any(FakeApiError) }),
+    );
+
+    vi.advanceTimersByTime(30_001);
+    expect(await renewer.renewForApiError("delegation_expired")).toBe(true);
+    expect(renew).toHaveBeenCalledTimes(2);
+  });
+
+  it("reset() clears the permanent latch so a later trigger renews again", async () => {
+    const renew = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new Error("session expired"), { name: "SessionExpiredError" }),
+      )
+      .mockResolvedValue(undefined);
+    const deps = createDeps({ renew });
+    const renewer = createBackendDelegationRenewer(deps);
+
+    expect(await renewer.renewForApiError("delegation_expired")).toBe(false);
+    renewer.reset();
+    expect(await renewer.renewForApiError("delegation_expired")).toBe(true);
+
+    expect(renew).toHaveBeenCalledTimes(2);
   });
 });
 

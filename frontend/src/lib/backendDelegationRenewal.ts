@@ -10,6 +10,7 @@ import type { ApiClient } from "@listen/client";
 // removes it.
 
 const GRANT_RECORD_PREFIX = "listen:backend-delegation-grant:v1:";
+const RENEWAL_RETRY_COOLDOWN_MS = 30_000;
 
 function storage(): Storage | null {
   try {
@@ -67,6 +68,8 @@ export interface BackendDelegationRenewerDeps {
   renew: () => Promise<void>;
   /** Called exactly once after a successful renewal. */
   onRenewed?: () => void;
+  /** Called when a renewal attempt fails, including whether the failure latched renewal off. */
+  onRenewalFailed?: (info: { permanent: boolean; error: unknown }) => void;
   /** Optional debug hook. */
   log?: (event: string, detail?: Record<string, unknown>) => void;
 }
@@ -87,6 +90,20 @@ export interface BackendDelegationRenewer {
    * original request once).
    */
   renewForApiError(code: DelegationRenewalErrorCode): Promise<boolean>;
+  /** Clear the permanent latch and transient cooldown (call after a successful manual re-grant). */
+  reset(): void;
+}
+
+function isPermanentRenewalFailure(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const name = (err as { name?: unknown }).name;
+  const message = err instanceof Error ? err.message : "";
+  if (name === "SessionExpiredError" || name === "PermissionNotInManifestError") return true;
+  if (/SessionExpiredError|PermissionNotInManifestError/.test(message)) return true;
+  if (message.includes("Missing backend session token")) return true;
+  const status = (err as { status?: unknown }).status;
+  // Backend rejected the delegation itself (4xx) — but 429 is a rate limit, retry-able.
+  return typeof status === "number" && status >= 400 && status < 500 && status !== 429;
 }
 
 export function createBackendDelegationRenewer(
@@ -94,28 +111,43 @@ export function createBackendDelegationRenewer(
 ): BackendDelegationRenewer {
   let inFlight: Promise<boolean> | null = null;
   let disabled = false;
+  let lastTransientFailureAt: number | null = null;
 
   const log = deps.log ?? (() => {});
 
   const renewOnce = (): Promise<boolean> => {
     if (disabled) return Promise.resolve(false);
+    if (
+      lastTransientFailureAt !== null &&
+      Date.now() - lastTransientFailureAt < RENEWAL_RETRY_COOLDOWN_MS
+    ) {
+      return Promise.resolve(false);
+    }
     if (!inFlight) {
       inFlight = deps
         .renew()
         .then(() => {
+          lastTransientFailureAt = null;
           log("renewed");
           deps.onRenewed?.();
           return true;
         })
         .catch((err) => {
-          // Silent path only: a failed renewal (expired TinyCloud session,
-          // permissions outside the signed manifest, backend rejection)
-          // degrades to the existing re-grant UI. Latch off so API errors
-          // don't hammer the delegation endpoint.
-          disabled = true;
-          log("renewal-failed", {
-            error: err instanceof Error ? err.message : String(err),
-          });
+          if (isPermanentRenewalFailure(err)) {
+            disabled = true;
+            log("renewal-failed", {
+              permanent: true,
+              error: err instanceof Error ? err.message : String(err),
+            });
+            deps.onRenewalFailed?.({ permanent: true, error: err });
+          } else {
+            lastTransientFailureAt = Date.now();
+            log("renewal-failed", {
+              permanent: false,
+              error: err instanceof Error ? err.message : String(err),
+            });
+            deps.onRenewalFailed?.({ permanent: false, error: err });
+          }
           return false;
         })
         .finally(() => {
@@ -148,6 +180,11 @@ export function createBackendDelegationRenewer(
       if (code === "delegation_expired" || code === "delegation_stale") return renewOnce();
       if (code === "no_delegation" && deps.hasPriorGrant()) return renewOnce();
       return false;
+    },
+
+    reset(): void {
+      disabled = false;
+      lastTransientFailureAt = null;
     },
   };
 }
