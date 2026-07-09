@@ -577,7 +577,12 @@ describe("App manual sign-in processing", () => {
         delegation: { expiresAt: new Date(Date.now() + 3600_000).toISOString() },
       }),
     );
-    mockPost.mockRejectedValueOnce(new Error("API error (500): Unauthorized Action"));
+    mockPost.mockRejectedValueOnce(
+      Object.assign(new Error("API error (403): No delegation found."), {
+        status: 403,
+        code: "no_delegation",
+      }),
+    );
 
     render(<App />);
     fireEvent.click(screen.getAllByRole("button", { name: /open app/i })[0]);
@@ -1474,6 +1479,122 @@ describe("App onboarding readiness", () => {
     await waitFor(() => {
       expect(screen.queryByText("Checking workspace state.")).not.toBeInTheDocument();
       expect(screen.getByText("Transcript import")).toBeInTheDocument();
+    });
+  });
+});
+
+describe("App session expiry", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal("localStorage", createMockStorage());
+    vi.stubGlobal(
+      "confirm",
+      vi.fn(() => true),
+    );
+    mockAuthFlow();
+    vi.mocked(loadPersistedSession).mockReturnValue(null);
+    mockSecretGet.mockResolvedValue({
+      ok: false,
+      error: { code: "key_not_found", message: "Secret not found" },
+    });
+    mockSecretDelete.mockResolvedValue({ ok: true });
+    mockTinyCloudConversationPage([]);
+    mockTinyCloudKvGet.mockResolvedValue({ ok: true, data: { data: null } });
+    mockPost.mockResolvedValue({ updated: 0, still_missing: 0 });
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(workspaceState());
+      }
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({ conversations: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  function seedRestoredBackendSessionWithCachedWorkspace() {
+    storeBackendSession();
+    vi.mocked(loadPersistedSession).mockReturnValue({
+      address: "0xabc123",
+      chainId: 1,
+      did: "did:pkh:eip155:1:0xabc123",
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      spaceId: "tinycloud:pkh:eip155:1:0xabc123:applications",
+    });
+    vi.mocked(restoreTinyCloudWeb).mockResolvedValue(null);
+    writeBackendWorkspaceCache(
+      "0xabc123",
+      "did:key:backend",
+      workspaceState({
+        delegation: { expiresAt: new Date(Date.now() + 3600_000).toISOString() },
+      }),
+    );
+  }
+
+  function openApp() {
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: /open app/i })[0]);
+  }
+
+  it("expired backend session shows one global sign-in banner instead of source-access panels", async () => {
+    seedRestoredBackendSessionWithCachedWorkspace();
+    mockPost.mockRejectedValue(
+      Object.assign(new Error("API error (401): Invalid or expired token"), {
+        status: 401,
+        code: "invalid_token",
+        name: "ApiRequestError",
+      }),
+    );
+
+    openApp();
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/session expired/i)).toHaveLength(1);
+      expect(screen.getByRole("button", { name: /^sign in$/i })).toBeInTheDocument();
+      expect(screen.queryByText(/finish fireflies access/i)).toBeNull();
+    });
+  });
+
+  it("session-expired banner button starts sign-in", async () => {
+    seedRestoredBackendSessionWithCachedWorkspace();
+    mockPost.mockRejectedValue(
+      Object.assign(new Error("API error (401): Invalid or expired token"), {
+        status: 401,
+        code: "invalid_token",
+        name: "ApiRequestError",
+      }),
+    );
+    openApp();
+
+    const signInButton = await screen.findByRole("button", { name: /^sign in$/i });
+    localStorage.removeItem("listen:session");
+    fireEvent.click(signInButton);
+
+    await waitFor(() => {
+      expect(connectWallet).toHaveBeenCalled();
+    });
+  });
+
+  it("delegation errors still invalidate the workspace cache", async () => {
+    seedRestoredBackendSessionWithCachedWorkspace();
+    mockPost.mockRejectedValue(
+      Object.assign(new Error("API error (403): No delegation found."), {
+        status: 403,
+        code: "no_delegation",
+      }),
+    );
+
+    openApp();
+
+    await waitFor(() => {
+      expect(localStorage.getItem(backendWorkspaceCacheKey("0xabc123", "did:key:backend"))).toBe(
+        null,
+      );
     });
   });
 });

@@ -223,16 +223,32 @@ function localConversationEventPathPrefix(): string | null {
   return CONVERSATION_HOOK_PATH_PREFIX;
 }
 
+const BACKEND_ACCESS_INVALIDATION_CODES = new Set([
+  "no_delegation",
+  "delegation_expired",
+  "delegation_stale",
+]);
+
+const SESSION_EXPIRY_CODES = new Set([
+  "session_expired",
+  "missing_token",
+  "invalid_token",
+  "unauthenticated",
+  "unauthorized",
+]);
+
 function isBackendAccessInvalidationError(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : String(err);
-  return (
-    message.includes("Session expired") ||
-    message.includes("API error (401)") ||
-    message.includes("API error (403)") ||
-    message.includes("Unauthorized Action") ||
-    message.includes("AUTH_DENIED") ||
-    /\bdelegation\b/i.test(message)
-  );
+  if (typeof err !== "object" || err === null) return false;
+  const code = (err as { code?: unknown }).code;
+  // Deliberately avoid message matching, including AUTH_DENIED: delegated
+  // secret-permission failures surface through source flows, not cache invalidation.
+  return typeof code === "string" && BACKEND_ACCESS_INVALIDATION_CODES.has(code);
+}
+
+function isSessionExpiryError(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const code = (err as { code?: unknown }).code;
+  return typeof code === "string" && SESSION_EXPIRY_CODES.has(code);
 }
 
 function withBackendWorkspaceCacheInvalidation(
@@ -244,6 +260,32 @@ function withBackendWorkspaceCacheInvalidation(
       return await operation();
     } catch (err) {
       if (isBackendAccessInvalidationError(err)) onInvalidAccess(err);
+      throw err;
+    }
+  };
+
+  return {
+    get<T>(path: string): Promise<T> {
+      return wrap(() => api.get<T>(path));
+    },
+    post<T>(path: string, body?: unknown): Promise<T> {
+      return wrap(() => (body === undefined ? api.post<T>(path) : api.post<T>(path, body)));
+    },
+    put<T>(path: string, body?: unknown): Promise<T> {
+      return wrap(() => (body === undefined ? api.put<T>(path) : api.put<T>(path, body)));
+    },
+    del<T>(path: string): Promise<T> {
+      return wrap(() => api.del<T>(path));
+    },
+  };
+}
+
+function withSessionExpiryDetection(api: ApiClient, onSessionExpired: () => void): ApiClient {
+  const wrap = async <Result,>(operation: () => Promise<Result>): Promise<Result> => {
+    try {
+      return await operation();
+    } catch (err) {
+      if (isSessionExpiryError(err)) onSessionExpired();
       throw err;
     }
   };
@@ -957,6 +999,7 @@ export function App() {
   const [showAddHub, setShowAddHub] = useState(false);
   const [searchFocusKey, setSearchFocusKey] = useState(0);
   const [pendingBanner, setPendingBanner] = useState<string | null>(null);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [gmLapsedBanner, setGmLapsedBanner] = useState(false);
   const [liveWritePathPrefix, setLiveWritePathPrefix] = useState<string | null>(null);
   const [liveWriteHost, setLiveWriteHost] = useState<string | null>(null);
@@ -994,9 +1037,13 @@ export function App() {
       setHasGoogleMeet(false);
     });
 
+    const sessionAwareClient = withSessionExpiryDetection(invalidatingClient, () =>
+      setSessionExpired(true),
+    );
+
     // Reactive renewal: 401 delegation_expired / 403 no_delegation trigger a
     // silent re-delegation and a single retry of the failed request.
-    return withDelegationAutoRenewal(invalidatingClient, () => backendRenewerRef.current);
+    return withDelegationAutoRenewal(sessionAwareClient, () => backendRenewerRef.current);
   }, []);
 
   /**
@@ -1065,6 +1112,7 @@ export function App() {
     setTcw(tcwInstance);
     setHasWalletSigner(true);
     setApi(null);
+    setSessionExpired(false);
     setAgentInfo(null);
     setBackendDid(null);
     setCapabilityRequest(null);
@@ -1176,6 +1224,7 @@ export function App() {
       setTcw(restoredTinyCloud?.tcw ?? null);
       setHasWalletSigner(false);
       setApi(apiClient);
+      setSessionExpired(false);
       setAgentInfo(agent);
       setBackendDid(info.did);
       setCapabilityRequest(composedRequest);
@@ -1619,6 +1668,7 @@ export function App() {
         setTcw(tcwInstance);
         setHasWalletSigner(true);
         setApi(apiClient);
+        setSessionExpired(false);
         setAgentInfo(agent);
         setBackendDid(info.did);
         setCapabilityRequest(composedRequest);
@@ -1665,6 +1715,7 @@ export function App() {
     setTcw(null);
     setHasWalletSigner(false);
     setApi(null);
+    setSessionExpired(false);
     setAgentInfo(null);
     setBackendDid(null);
     setCapabilityRequest(null);
@@ -1963,16 +2014,19 @@ export function App() {
   const setupAvailable = tcw !== null && hasWalletSigner && backendDid !== null && api !== null;
   const needsFirefliesAccess =
     !backendUnavailable &&
+    !sessionExpired &&
     workspaceChecksReady &&
     hasKey === true &&
     (hasBackendDelegation === false || hasFirefliesBackendAccess === false);
   const needsGranolaAccess =
     !backendUnavailable &&
+    !sessionExpired &&
     workspaceChecksReady &&
     hasGranolaKey === true &&
     (hasBackendDelegation === false || hasGranolaBackendAccess === false);
   const needsSoundcoreAccess =
     !backendUnavailable &&
+    !sessionExpired &&
     workspaceChecksReady &&
     hasSoundcoreKey === true &&
     (hasBackendDelegation === false || hasSoundcoreBackendAccess === false);
@@ -2348,6 +2402,20 @@ export function App() {
         setSearchFocusKey((k) => k + 1);
       }}
     >
+      {sessionExpired && (
+        <div style={s.pendingBanner}>
+          <span>Session expired — sign in to reconnect your workspace.</span>
+          <button
+            type="button"
+            style={authLoading ? { ...s.statusButton, ...s.statusButtonDisabled } : s.statusButton}
+            disabled={authLoading}
+            onClick={() => void handleSignIn()}
+          >
+            Sign in
+          </button>
+        </div>
+      )}
+
       {showWorkspaceLoading && !showOptimisticInbox && <WorkspaceStatusPanel mode="checking" />}
 
       {showBackendOfflineState && (
