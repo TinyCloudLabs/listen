@@ -53,7 +53,7 @@ const SOUNDCORE_SECRET_NAMES = [
   SOUNDCORE_UID_SECRET_NAME,
   SOUNDCORE_OPENUDID_SECRET_NAME,
 ] as const;
-const BACKEND_SECRET_GRANTS = [
+export const BACKEND_SECRET_GRANTS = [
   {
     name: FIREFLIES_SECRET_NAME,
     actions: ["get"],
