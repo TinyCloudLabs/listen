@@ -420,7 +420,27 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
 
       const countSql = `SELECT COUNT(*) AS total FROM conversation${whereSql}`;
       const countParams = whereParams;
-      const countResult = await sqlDb.query(countSql, countParams);
+
+      // Paginated list with participant_count subquery
+      const listSql = `SELECT c.id, c.title, c.source, c.source_url, c.started_at, c.duration_secs, c.summary, c.created_at,
+           (SELECT COUNT(*) FROM participant p WHERE p.conversation_id = c.id) AS participant_count
+         FROM conversation c${whereSql}
+         ORDER BY c.started_at DESC
+         LIMIT ? OFFSET ?`;
+      const listParams = [...whereParams, limit, offset];
+
+      // Independent reads (all inputs computed above) — run concurrently to cut
+      // three serial SQL round trips to one wall-time round trip.
+      const [countResult, sourceCountsResult, listResult] = await Promise.all([
+        sqlDb.query(countSql, countParams),
+        sqlDb.query(
+          `SELECT source, COUNT(*) AS total
+         FROM conversation
+         GROUP BY source`,
+        ),
+        sqlDb.query(listSql, listParams),
+      ]);
+
       let total = 0;
       if (countResult.ok && countResult.data.rows?.[0]) {
         const countRow = rowToObject(
@@ -430,11 +450,6 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         total = Number(countRow.total) || 0;
       }
 
-      const sourceCountsResult = await sqlDb.query(
-        `SELECT source, COUNT(*) AS total
-         FROM conversation
-         GROUP BY source`,
-      );
       const sourceCounts =
         sourceCountsResult.ok && sourceCountsResult.data.rows
           ? normalizeSourceCounts(
@@ -444,15 +459,6 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
               ),
             )
           : [];
-
-      // Paginated list with participant_count subquery
-      const listSql = `SELECT c.id, c.title, c.source, c.source_url, c.started_at, c.duration_secs, c.summary, c.created_at,
-           (SELECT COUNT(*) FROM participant p WHERE p.conversation_id = c.id) AS participant_count
-         FROM conversation c${whereSql}
-         ORDER BY c.started_at DESC
-         LIMIT ? OFFSET ?`;
-      const listParams = [...whereParams, limit, offset];
-      const listResult = await sqlDb.query(listSql, listParams);
 
       const conversations = listResult.ok
         ? rowsToObjects(listResult.data.rows as unknown[][], listResult.data.columns)
@@ -657,23 +663,68 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         transcriptJsonLength: row.transcript_json_length,
       });
 
-      const metadata = await timedDetailStep(
-        requestId,
-        "audio-metadata",
-        resolveAudioPlaybackMetadata(access, id, normalizeConversationMetadata(row.metadata)),
-      );
+      // Audio metadata, participants, and the transcript-KV read are mutually
+      // independent after the row fetch — run them concurrently. Error semantics
+      // are preserved per-arm: an audio-metadata or participants THROW still
+      // fail-fasts the whole request to 500 (timedDetailStep rethrows), while the
+      // transcript-KV arm keeps its own catch and maps failures to transcript_status.
+      const kvKey = resolveAppPath(`transcript/${id}`);
+      const readTranscriptKv = async (): Promise<{
+        transcript: unknown;
+        transcript_status: TranscriptStatus;
+      }> => {
+        let transcript: unknown = null;
+        let transcript_status: TranscriptStatus = missingTranscriptStatus(row);
+        try {
+          const kvResult = await timedDetailStep(requestId, "transcript-kv", access.kv.get(kvKey));
+          detailLog(requestId, "transcript-kv-result", {
+            ok: kvResult.ok,
+            hasData: kvResult.ok && kvResult.data?.data != null,
+            type: kvResult.ok ? typeof kvResult.data?.data : "n/a",
+          });
+          if (kvResult.ok && kvResult.data.data) {
+            const raw = kvResult.data.data;
+            // KV may return already-parsed object or a JSON string.
+            transcript = normalizeTranscript(raw);
+            transcript_status = transcriptAvailableStatus(row);
+          } else if (kvResult.ok) {
+            transcript_status = missingTranscriptStatus(row);
+          } else {
+            const message =
+              kvResult.error?.message ?? kvResult.error?.code ?? "Transcript KV read failed";
+            transcript_status = isMissingKvError(message)
+              ? missingTranscriptStatus(row, message)
+              : transcriptReadErrorStatus(row, message);
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          detailLog(requestId, "transcript-kv-unavailable", { error: message }, "warn");
+          transcript_status = isMissingKvError(err)
+            ? missingTranscriptStatus(row, message)
+            : transcriptReadErrorStatus(row, message);
+        }
+        return { transcript, transcript_status };
+      };
+
+      const [metadata, participantsResult, kvTranscript] = await Promise.all([
+        timedDetailStep(
+          requestId,
+          "audio-metadata",
+          resolveAudioPlaybackMetadata(access, id, normalizeConversationMetadata(row.metadata)),
+        ),
+        timedDetailStep(
+          requestId,
+          "participants-query",
+          sqlDb.query(
+            `SELECT id, name, email, speaker_label FROM participant WHERE conversation_id = ?`,
+            [id],
+          ),
+        ),
+        readTranscriptKv(),
+      ]);
 
       const conversation = { ...row, metadata };
 
-      // Fetch participants
-      const participantsResult = await timedDetailStep(
-        requestId,
-        "participants-query",
-        sqlDb.query(
-          `SELECT id, name, email, speaker_label FROM participant WHERE conversation_id = ?`,
-          [id],
-        ),
-      );
       const participants = participantsResult.ok
         ? rowsToObjects(
             participantsResult.data.rows as unknown[][],
@@ -682,39 +733,8 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         : [];
       detailLog(requestId, "participants", { count: participants.length });
 
-      let transcript: unknown = null;
-      let transcript_status: TranscriptStatus = missingTranscriptStatus(row);
-
-      // Load transcript blob from KV first.
-      const kvKey = resolveAppPath(`transcript/${id}`);
-      try {
-        const kvResult = await timedDetailStep(requestId, "transcript-kv", access.kv.get(kvKey));
-        detailLog(requestId, "transcript-kv-result", {
-          ok: kvResult.ok,
-          hasData: kvResult.ok && kvResult.data?.data != null,
-          type: kvResult.ok ? typeof kvResult.data?.data : "n/a",
-        });
-        if (kvResult.ok && kvResult.data.data) {
-          const raw = kvResult.data.data;
-          // KV may return already-parsed object or a JSON string.
-          transcript = normalizeTranscript(raw);
-          transcript_status = transcriptAvailableStatus(row);
-        } else if (kvResult.ok) {
-          transcript_status = missingTranscriptStatus(row);
-        } else {
-          const message =
-            kvResult.error?.message ?? kvResult.error?.code ?? "Transcript KV read failed";
-          transcript_status = isMissingKvError(message)
-            ? missingTranscriptStatus(row, message)
-            : transcriptReadErrorStatus(row, message);
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        detailLog(requestId, "transcript-kv-unavailable", { error: message }, "warn");
-        transcript_status = isMissingKvError(err)
-          ? missingTranscriptStatus(row, message)
-          : transcriptReadErrorStatus(row, message);
-      }
+      let transcript: unknown = kvTranscript.transcript;
+      let transcript_status: TranscriptStatus = kvTranscript.transcript_status;
 
       if (!transcript && Number(row.transcript_json_length) > 0) {
         try {
