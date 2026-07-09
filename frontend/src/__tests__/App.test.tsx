@@ -1089,7 +1089,7 @@ describe("App manual sign-in processing", () => {
 
     await renderAndSignIn();
 
-    fireEvent.click(await screen.findByRole("button", { name: /^Fireflies$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^settings$/i }));
 
     await waitFor(() => {
       expect(screen.getAllByRole("heading", { name: /connections/i }).length).toBeGreaterThan(0);
@@ -1144,12 +1144,23 @@ describe("App manual sign-in processing", () => {
       expect(screen.getByText(/connected · 1 source/i)).toBeInTheDocument();
     });
 
-    fireEvent.click(await screen.findByRole("button", { name: /^Soundcore$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^settings$/i }));
 
     await waitFor(() => {
       expect(screen.getAllByText("Soundcore").length).toBeGreaterThan(0);
     });
     expect(screen.queryByRole("button", { name: /add credentials/i })).not.toBeInTheDocument();
+  });
+
+  it("filters the library to a source when its sidebar row is clicked", async () => {
+    await renderAndSignIn();
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Fireflies$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: /fireflies transcripts/i })).toBeInTheDocument();
+    });
+    expect(screen.getByText(/library \/ fireflies/i)).toBeInTheDocument();
   });
 
   it("shows banner when pending items were processed", async () => {

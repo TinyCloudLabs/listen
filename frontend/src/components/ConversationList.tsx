@@ -23,7 +23,7 @@ interface ConversationsResponse {
   source_counts?: SourceCount[];
 }
 
-interface SourceCount {
+export interface SourceCount {
   source: string;
   total: number;
 }
@@ -34,6 +34,14 @@ interface ConversationListProps {
   onShareConversation?: (id: string) => void;
   refreshKey?: number;
   focusSearchKey?: number;
+  // Controlled source filter. When provided (with onSourceFilterChange), the
+  // parent owns the filter — e.g. the sidebar source rail — and the inbox
+  // chips stay in sync with it instead of keeping their own state.
+  sourceFilter?: SourceFilter;
+  onSourceFilterChange?: (next: SourceFilter) => void;
+  // Reports per-source totals from the latest page response so the shell can
+  // show real counts in the source rail.
+  onSourceCounts?: (counts: SourceCount[] | null) => void;
 }
 
 const PAGE_SIZE = 20;
@@ -86,6 +94,9 @@ export const ConversationList: FC<ConversationListProps> = ({
   onShareConversation,
   refreshKey,
   focusSearchKey,
+  sourceFilter: controlledSourceFilter,
+  onSourceFilterChange,
+  onSourceCounts,
 }) => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [total, setTotal] = useState(0);
@@ -94,7 +105,9 @@ export const ConversationList: FC<ConversationListProps> = ({
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
+  const [internalSourceFilter, setInternalSourceFilter] = useState<SourceFilter>("all");
+  const isFilterControlled = controlledSourceFilter !== undefined;
+  const sourceFilter = isFilterControlled ? controlledSourceFilter : internalSourceFilter;
   const [sourceCounts, setSourceCounts] = useState<SourceCount[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
@@ -106,6 +119,9 @@ export const ConversationList: FC<ConversationListProps> = ({
   const requestRef = useRef(0);
   const refreshKeyRef = useRef(refreshKey);
   const searchQueryRef = useRef(searchQuery);
+  const onSourceCountsRef = useRef(onSourceCounts);
+  onSourceCountsRef.current = onSourceCounts;
+  const sourceFilterRef = useRef(sourceFilter);
 
   const fetchConversations = useCallback(
     async (page: number, source: SourceFilter, query: string) => {
@@ -127,6 +143,7 @@ export const ConversationList: FC<ConversationListProps> = ({
         setConversations(cached.conversations);
         setTotal(cached.total);
         setSourceCounts(cached.source_counts ?? null);
+        if (cached.source_counts) onSourceCountsRef.current?.(cached.source_counts);
         setLoading(false);
         setRefreshing(true);
       } else {
@@ -150,6 +167,7 @@ export const ConversationList: FC<ConversationListProps> = ({
         }
         setTotal(data.total);
         setSourceCounts(data.source_counts ?? null);
+        if (data.source_counts) onSourceCountsRef.current?.(data.source_counts);
         if (!query) writeConversationPageCache(path, data);
         setError(null);
       } catch (err) {
@@ -231,13 +249,30 @@ export const ConversationList: FC<ConversationListProps> = ({
   useEffect(() => {
     if (loading) return;
     if (sourceFilter === "all" || availableSourceFilters.includes(sourceFilter)) return;
-    setSourceFilter("all");
+    // A controlled filter may deliberately point at a source with no
+    // transcripts yet (sidebar rail click) — keep it and show the empty state.
+    if (isFilterControlled) return;
+    setInternalSourceFilter("all");
     setSelected(new Set());
     setContextMenu(null);
-  }, [availableSourceFilters, loading, sourceFilter]);
+  }, [availableSourceFilters, isFilterControlled, loading, sourceFilter]);
+
+  // Reset paging/selection when the filter changes from outside (sidebar rail).
+  useEffect(() => {
+    if (sourceFilterRef.current === sourceFilter) return;
+    sourceFilterRef.current = sourceFilter;
+    setCurrentPage(1);
+    setSelected(new Set());
+    setContextMenu(null);
+  }, [sourceFilter]);
 
   const handleSourceFilterChange = (next: SourceFilter) => {
-    setSourceFilter((current) => (current === next || next === "all" ? "all" : next));
+    const resolved = sourceFilter === next || next === "all" ? "all" : next;
+    if (isFilterControlled) {
+      onSourceFilterChange?.(resolved);
+    } else {
+      setInternalSourceFilter(resolved);
+    }
     setCurrentPage(1);
     setSelected(new Set());
     setContextMenu(null);
@@ -310,10 +345,27 @@ export const ConversationList: FC<ConversationListProps> = ({
   }
 
   if (conversations.length === 0 && !searchQuery) {
+    if (sourceFilter !== "all") {
+      const chipLabel =
+        SOURCE_CHIPS.find((chip) => chip.key === sourceFilter)?.label ?? sourceFilter;
+      return (
+        <div style={s.emptyCard}>
+          <p style={s.emptyTitle}>No {chipLabel} transcripts yet</p>
+          <p style={s.emptySub}>Sync {chipLabel} to bring its conversations in.</p>
+          <button
+            type="button"
+            style={s.emptyAction}
+            onClick={() => handleSourceFilterChange("all")}
+          >
+            Show all sources
+          </button>
+        </div>
+      );
+    }
     return (
       <div style={s.emptyCard}>
         <p style={s.emptyTitle}>No conversations yet</p>
-        <p style={s.emptySub}>Sync your first meetings above.</p>
+        <p style={s.emptySub}>Connect a source or import a transcript to get started.</p>
       </div>
     );
   }
@@ -666,6 +718,18 @@ const s: Record<string, React.CSSProperties> = {
     margin: "0 0 4px",
   },
   emptySub: { fontSize: 13, color: "var(--lst-ink-55)", margin: 0 },
+  emptyAction: {
+    marginTop: 14,
+    fontFamily: FONT,
+    padding: "6px 14px",
+    fontSize: 12.5,
+    fontWeight: 500,
+    color: "var(--lst-blue)",
+    background: "transparent",
+    border: "var(--lst-border)",
+    borderRadius: 999,
+    cursor: "pointer",
+  },
   errorCard: {
     fontFamily: FONT,
     display: "flex",

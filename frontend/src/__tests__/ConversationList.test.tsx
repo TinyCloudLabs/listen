@@ -169,7 +169,9 @@ describe("ConversationList", () => {
 
     await waitFor(() => {
       expect(screen.getByText(/no conversations yet/i)).toBeInTheDocument();
-      expect(screen.getByText(/sync your first meetings above/i)).toBeInTheDocument();
+      expect(
+        screen.getByText(/connect a source or import a transcript to get started/i),
+      ).toBeInTheDocument();
     });
   });
 

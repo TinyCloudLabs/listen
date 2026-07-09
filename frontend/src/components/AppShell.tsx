@@ -42,6 +42,10 @@ interface AppShellProps {
   navCounts?: Partial<Record<Exclude<ShellRoute, "connections" | "sources">, number | null>>;
   onAddClick?: () => void;
   onSearchClick?: () => void;
+  // Opens that source's library view (filtered transcript list). When absent,
+  // source rows fall back to the connections screen.
+  onSelectSource?: (key: ShellSourceKey) => void;
+  activeSourceKey?: ShellSourceKey | null;
   children: ReactNode;
 }
 
@@ -160,6 +164,8 @@ export const AppShell: FC<AppShellProps> = ({
   navCounts,
   onAddClick,
   onSearchClick,
+  onSelectSource,
+  activeSourceKey,
   children,
 }) => {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -291,18 +297,27 @@ export const AppShell: FC<AppShellProps> = ({
           <span style={shell.sectionDash}>· sources</span>
         </div>
         <div>
-          {sources.map((source) => (
-            <button
-              key={source.key}
-              type="button"
-              onClick={() => onRouteChange("connections")}
-              {...hoverProps(`source:${source.key}`, shell.sideRow)}
-            >
-              <span style={sourceDotStyle(source.status)} aria-hidden />
-              <span style={shell.sideRowLabel}>{source.name}</span>
-              {source.count !== null && <span style={shell.sideRowCount}>{source.count}</span>}
-            </button>
-          ))}
+          {sources.map((source) => {
+            const isActive = activeRoute === "inbox" && activeSourceKey === source.key;
+            return (
+              <button
+                key={source.key}
+                type="button"
+                onClick={() =>
+                  onSelectSource ? onSelectSource(source.key) : onRouteChange("connections")
+                }
+                {...hoverProps(
+                  `source:${source.key}`,
+                  isActive ? shell.sideRowActive : shell.sideRow,
+                  isActive,
+                )}
+              >
+                <span style={sourceDotStyle(source.status)} aria-hidden />
+                <span style={shell.sideRowLabel}>{source.name}</span>
+                {source.count !== null && <span style={shell.sideRowCount}>{source.count}</span>}
+              </button>
+            );
+          })}
         </div>
 
         <div style={shell.themeRow}>
@@ -504,6 +519,22 @@ const shell: Record<string, CSSProperties> = {
     textAlign: "left",
     width: "100%",
     cursor: "pointer",
+  },
+  sideRowActive: {
+    fontFamily: FONT,
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    padding: "7px 20px",
+    fontSize: 13.5,
+    opacity: 1,
+    background: "var(--lst-ink-08)",
+    color: "var(--lst-blue)",
+    border: "none",
+    textAlign: "left",
+    width: "100%",
+    cursor: "pointer",
+    fontWeight: 600,
   },
   sideRowLabel: {
     flex: 1,

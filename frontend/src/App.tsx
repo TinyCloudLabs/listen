@@ -24,7 +24,8 @@ import {
 import { AuthPanel } from "./components/AuthPanel";
 import { SourcesSetup } from "./components/SourcesSetup";
 import { SyncControl } from "./components/SyncControl";
-import { ConversationList } from "./components/ConversationList";
+import { ConversationList, type SourceCount } from "./components/ConversationList";
+import type { SourceFilter } from "./components/InboxFilters";
 import { ConversationDetail } from "./components/ConversationDetail";
 import { ChatScreen } from "./components/ChatScreen";
 import { ConnectionsScreen } from "./components/ConnectionsScreen";
@@ -34,7 +35,20 @@ import { ConversationShareDialog } from "./components/ConversationShareDialog";
 import { GlobalSyncIndicator } from "./components/GlobalSyncIndicator";
 import { AddTranscriptHub } from "./components/AddTranscriptHub";
 import { SharedWithMe } from "./components/SharedWithMe";
-import { AppShell, type ShellRoute, type ShellSourceConfig } from "./components/AppShell";
+import {
+  AppShell,
+  type ShellRoute,
+  type ShellSourceConfig,
+  type ShellSourceKey,
+} from "./components/AppShell";
+
+// Maps source-rail keys to the source values stored on conversation rows.
+const SHELL_SOURCE_TO_DATA: Record<ShellSourceKey, SourceFilter> = {
+  fireflies: "fireflies",
+  granola: "granola",
+  soundcore: "soundcore_sync",
+  gmeet: "google-meet",
+};
 import { MobileExperience } from "./components/mobile";
 import { useIsMobile } from "./hooks/useIsMobile";
 import { APP_MANIFEST } from "./lib/appManifest";
@@ -931,6 +945,8 @@ export function App() {
   const [workspaceActionLoading, setWorkspaceActionLoading] = useState(false);
   const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null);
   const [activePage, setActivePage] = useState<ShellRoute>("inbox");
+  const [librarySourceFilter, setLibrarySourceFilter] = useState<SourceFilter>("all");
+  const [librarySourceCounts, setLibrarySourceCounts] = useState<SourceCount[] | null>(null);
   const [sourcesInitialStep, setSourcesInitialStep] = useState<
     "cards" | "transcript-import" | "soundcore-key"
   >("cards");
@@ -2005,6 +2021,18 @@ export function App() {
 
   const activeConversationApi = conversationApi ?? api!;
 
+  const activeSourceKey: ShellSourceKey | null =
+    activePage === "inbox" && librarySourceFilter !== "all"
+      ? ((Object.entries(SHELL_SOURCE_TO_DATA).find(
+          ([, dataKey]) => dataKey === librarySourceFilter,
+        )?.[0] as ShellSourceKey | undefined) ?? null)
+      : null;
+  const activeSourceLabel = activeSourceKey
+    ? { fireflies: "Fireflies", granola: "Granola", soundcore: "Soundcore", gmeet: "Google Meet" }[
+        activeSourceKey
+      ]
+    : null;
+
   const pageEyebrow = !isSignedIn
     ? "welcome"
     : selectedConversationId
@@ -2028,7 +2056,9 @@ export function App() {
                       : activePage === "chat"
                         ? "library / chat"
                         : hasUsableInbox || showOptimisticInbox
-                          ? `library · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`
+                          ? activeSourceLabel
+                            ? `library / ${activeSourceLabel.toLowerCase()}`
+                            : `library · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`
                           : "onboarding / sources";
   const pageTitle = !isSignedIn
     ? "Capture thoughts. Transform them into insights."
@@ -2053,36 +2083,44 @@ export function App() {
                       : activePage === "chat"
                         ? "Ask your transcripts."
                         : hasUsableInbox || showOptimisticInbox
-                          ? "Everything you've said."
+                          ? activeSourceLabel
+                            ? `${activeSourceLabel} transcripts.`
+                            : "Everything you've said."
                           : "Connect what you already have.";
 
   // Nav source dots reflect real connection health only. There's no
   // per-source syncing or error flag at this level, so we set "connected"
   // for sources that are actually connected and leave the rest undefined
   // (neutral blue) rather than fabricate a state.
+  const countForSource = (dataKey: SourceFilter): number | null => {
+    if (!librarySourceCounts) return null;
+    const entry = librarySourceCounts.find((count) => count.source === dataKey);
+    return entry ? entry.total : 0;
+  };
+
   const sourceItems: ShellSourceConfig[] = [
     {
       key: "fireflies",
       name: "Fireflies",
-      count: null,
+      count: countForSource("fireflies"),
       status: firefliesConnected ? "connected" : undefined,
     },
     {
       key: "granola",
       name: "Granola",
-      count: null,
+      count: countForSource("granola"),
       status: granolaConnected ? "connected" : undefined,
     },
     {
       key: "soundcore",
       name: "Soundcore",
-      count: null,
+      count: countForSource("soundcore_sync"),
       status: soundcoreConnected ? "connected" : undefined,
     },
     {
       key: "gmeet",
       name: "Google Meet",
-      count: null,
+      count: countForSource("google-meet"),
       status: hasGoogleMeet === true ? "connected" : undefined,
     },
   ];
@@ -2113,7 +2151,16 @@ export function App() {
   const handleRouteChange = (route: ShellRoute) => {
     setSelectedConversationId(null);
     if (route === "sources") setSourcesInitialStep("cards");
+    // The Library nav item always shows the unfiltered feed; per-source views
+    // are entered through the source rail.
+    if (route === "inbox") setLibrarySourceFilter("all");
     setActivePage(route);
+  };
+
+  const handleSelectSource = (key: ShellSourceKey) => {
+    setSelectedConversationId(null);
+    setLibrarySourceFilter(SHELL_SOURCE_TO_DATA[key]);
+    setActivePage("inbox");
   };
 
   const handleDisconnectFireflies = async () => {
@@ -2314,6 +2361,8 @@ export function App() {
       userMenu={userMenu}
       sources={sourceItems}
       folders={[]}
+      onSelectSource={hasUsableInbox || showOptimisticInbox ? handleSelectSource : undefined}
+      activeSourceKey={activeSourceKey}
       onAddClick={api && hasBackendDelegation === true ? () => setShowAddHub(true) : undefined}
       onSearchClick={() => {
         setActivePage("inbox");
@@ -2601,6 +2650,9 @@ export function App() {
             onSelectConversation={setSelectedConversationId}
             onShareConversation={setShareConversationId}
             refreshKey={refreshKey}
+            sourceFilter={librarySourceFilter}
+            onSourceFilterChange={setLibrarySourceFilter}
+            onSourceCounts={setLibrarySourceCounts}
           />
         </>
       )}
