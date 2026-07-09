@@ -195,9 +195,11 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
         await store.remove(address);
         cache.evict(address);
 
+        // A stale row is evidence of a prior grant, so surface it as "stale"
+        // (not "none") — the frontend renews unconditionally on stale.
         res.json({
-          status: "none",
-          expiresAt: null,
+          status: "stale",
+          expiresAt: stored.expiresAt,
         });
         return;
       }
