@@ -6,6 +6,7 @@ import {
   type ResourceCapability,
 } from "@tinycloud/web-sdk";
 import { type DelegationResponse, type ServerInfoPermission } from "@listen/core";
+import { ApiRequestError } from "./api.js";
 import { listenDebugFetch } from "./debug.js";
 
 // ── Create Delegation ────────────────────────────────────────────────
@@ -194,7 +195,11 @@ export async function sendDelegation(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: "unknown", message: res.statusText }));
-    throw new Error(`Failed to send delegation: ${err.message ?? err.error}`);
+    throw new ApiRequestError(
+      res.status,
+      err.error,
+      `Failed to send delegation: ${err.message ?? err.error}`,
+    );
   }
 
   return res.json() as Promise<DelegationResponse>;
@@ -220,7 +225,11 @@ export async function checkDelegationStatus(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: "unknown", message: res.statusText }));
-    throw new Error(`Failed to check delegation status: ${err.message ?? err.error}`);
+    throw new ApiRequestError(
+      res.status,
+      err.error,
+      `Failed to check delegation status: ${err.message ?? err.error}`,
+    );
   }
 
   return res.json() as Promise<DelegationResponse>;
