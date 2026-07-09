@@ -1,4 +1,4 @@
-import { randomBytes } from "crypto";
+import { randomBytes, hkdfSync } from "crypto";
 import { SignJWT, jwtVerify } from "jose";
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -108,6 +108,22 @@ export async function verifySIWE(
 
 // ── Session Token ───────────────────────────────────────────────────
 
+const SESSION_JWT_HKDF_INFO = "listen:session-jwt:v1";
+const derivedSecretCache = new Map<string, Uint8Array>();
+
+/** Derive the HS256 session-JWT secret from the backend private key.
+ *  Rotating BACKEND_PRIVATE_KEY therefore rotates all session JWTs. */
+function deriveSessionJwtSecret(privateKey: string): Uint8Array {
+  let secret = derivedSecretCache.get(privateKey);
+  if (!secret) {
+    secret = new Uint8Array(
+      hkdfSync("sha256", privateKey, new Uint8Array(0), SESSION_JWT_HKDF_INFO, 32),
+    );
+    derivedSecretCache.set(privateKey, secret);
+  }
+  return secret;
+}
+
 /**
  * Issue a session JWT signed with HS256.
  * Subject is the wallet address.
@@ -116,7 +132,7 @@ export async function issueSessionToken(
   address: string,
   privateKey: string,
 ): Promise<{ token: string; expiresIn: number }> {
-  const secret = new TextEncoder().encode(privateKey);
+  const secret = deriveSessionJwtSecret(privateKey);
   const expiresIn = 24 * 60 * 60; // 24 hours in seconds
 
   const token = await new SignJWT({ address })
@@ -137,7 +153,7 @@ export async function verifySessionToken(
   token: string,
   privateKey: string,
 ): Promise<{ address: string }> {
-  const secret = new TextEncoder().encode(privateKey);
+  const secret = deriveSessionJwtSecret(privateKey);
 
   const { payload } = await jwtVerify(token, secret, {
     algorithms: ["HS256"],
