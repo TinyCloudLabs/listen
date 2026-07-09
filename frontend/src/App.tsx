@@ -62,6 +62,12 @@ import {
 import { createTinyCloudConversationApi } from "./lib/tinycloudConversations";
 import { readShareTokenFromLocation } from "./lib/listenShareLinks";
 import {
+  parseRouteState,
+  subscribeToRouteState,
+  writeRouteState,
+  type RouteWriteMode,
+} from "./lib/routeState";
+import {
   clearBackendWorkspaceCache,
   readBackendWorkspaceCache,
   workspaceStateFromCache,
@@ -999,8 +1005,12 @@ export function App() {
   const [hasExistingConversations, setHasExistingConversations] = useState<boolean | null>(null);
   const [workspaceActionLoading, setWorkspaceActionLoading] = useState(false);
   const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null);
-  const [activePage, setActivePage] = useState<ShellRoute>("inbox");
-  const [librarySourceFilter, setLibrarySourceFilter] = useState<SourceFilter>("all");
+  const initialRouteRef = useRef<ReturnType<typeof parseRouteState> | null>(null);
+  if (!initialRouteRef.current) initialRouteRef.current = parseRouteState();
+  const [activePage, setActivePage] = useState<ShellRoute>(initialRouteRef.current.activePage);
+  const [librarySourceFilter, setLibrarySourceFilter] = useState<SourceFilter>(
+    initialRouteRef.current.librarySourceFilter,
+  );
   const [librarySourceCounts, setLibrarySourceCounts] = useState<SourceCount[] | null>(null);
   // Escape hatch for the workspace readiness gate: if checks stall (a failed
   // capability probe can leave a flag null forever), let the user retry or
@@ -1011,7 +1021,9 @@ export function App() {
     "cards" | "transcript-import" | "soundcore-key"
   >("cards");
   const [refreshKey, setRefreshKey] = useState(0);
-  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
+  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(
+    initialRouteRef.current.selectedConversationId,
+  );
   const [shareConversationId, setShareConversationId] = useState<string | null>(null);
   const [showAddHub, setShowAddHub] = useState(false);
   const [searchFocusKey, setSearchFocusKey] = useState(0);
@@ -1027,6 +1039,9 @@ export function App() {
 
   const sessionStoreRef = useRef(new SessionStore());
   const backendRenewerRef = useRef<BackendDelegationRenewer | null>(null);
+  const routeWriteModeRef = useRef<RouteWriteMode>("push");
+  const routeInitializedRef = useRef(false);
+  const applyingRouteFromHistoryRef = useRef(false);
   const isMobile = useIsMobile();
   const chatEnabled = isChatEnabled();
   const [shareToken, setShareToken] = useState(() => readShareTokenFromLocation());
@@ -1105,6 +1120,7 @@ export function App() {
     const acceptShareFromLocation = () => {
       const token = readShareTokenFromLocation();
       if (!token) return;
+      routeWriteModeRef.current = "replace";
       setShareToken(token);
       setActivePage("shared");
     };
@@ -1113,6 +1129,18 @@ export function App() {
     window.addEventListener("hashchange", acceptShareFromLocation);
     return () => window.removeEventListener("hashchange", acceptShareFromLocation);
   }, []);
+
+  useEffect(
+    () =>
+      subscribeToRouteState((route) => {
+        applyingRouteFromHistoryRef.current = true;
+        setActivePage(route.activePage);
+        setLibrarySourceFilter(route.librarySourceFilter);
+        setSelectedConversationId(route.selectedConversationId);
+        if (route.activePage === "sources") setSourcesInitialStep("cards");
+      }),
+    [],
+  );
 
   const applyDirectTinyCloudSession = useCallback((addr: string, tcwInstance: TinyCloudWeb) => {
     clearBackendWorkspaceCache(addr);
@@ -2031,6 +2059,26 @@ export function App() {
   const showWorkspaceLoading = isSignedIn && !showSharedPage && !workspaceChecksReady;
 
   useEffect(() => {
+    if (applyingRouteFromHistoryRef.current) {
+      applyingRouteFromHistoryRef.current = false;
+      return;
+    }
+
+    if (!isSignedIn) return;
+
+    writeRouteState(
+      {
+        activePage,
+        librarySourceFilter,
+        selectedConversationId,
+      },
+      routeInitializedRef.current ? routeWriteModeRef.current : "replace",
+    );
+    routeWriteModeRef.current = "push";
+    routeInitializedRef.current = true;
+  }, [activePage, isSignedIn, librarySourceFilter, selectedConversationId]);
+
+  useEffect(() => {
     if (!showWorkspaceLoading) {
       setWorkspaceCheckTimedOut(false);
       return;
@@ -2208,6 +2256,7 @@ export function App() {
       : `RESTORED · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`;
 
   const handleTranscriptImportComplete = (conversationId: string) => {
+    routeWriteModeRef.current = "replace";
     setHasExistingConversations(true);
     setRefreshKey((k) => k + 1);
     setSelectedConversationId(conversationId);
@@ -2217,12 +2266,14 @@ export function App() {
   const openSourcesSetup = (
     initialStep: "cards" | "transcript-import" | "soundcore-key" = "cards",
   ) => {
+    routeWriteModeRef.current = "push";
     setSourcesInitialStep(initialStep);
     setSelectedConversationId(null);
     setActivePage("sources");
   };
 
   const handleRouteChange = (route: ShellRoute) => {
+    routeWriteModeRef.current = "push";
     setSelectedConversationId(null);
     if (route === "sources") setSourcesInitialStep("cards");
     // The Library nav item always shows the unfiltered feed; per-source views
@@ -2232,9 +2283,23 @@ export function App() {
   };
 
   const handleSelectSource = (key: ShellSourceKey) => {
+    routeWriteModeRef.current = "push";
     setSelectedConversationId(null);
     setLibrarySourceFilter(SHELL_SOURCE_TO_DATA[key]);
     setActivePage("inbox");
+  };
+
+  const handleSelectConversation = (conversationId: string | null) => {
+    routeWriteModeRef.current = "push";
+    setSelectedConversationId(conversationId);
+    if (conversationId) setActivePage("inbox");
+  };
+
+  const handleMobileRouteChange = (route: ShellRoute) => {
+    routeWriteModeRef.current = "push";
+    if (route === "sources") setSourcesInitialStep("cards");
+    if (route === "inbox" && !selectedConversationId) setLibrarySourceFilter("all");
+    setActivePage(route);
   };
 
   const handleDisconnectFireflies = async () => {
@@ -2415,8 +2480,8 @@ export function App() {
             hasDeepgramBackendAccess={hasTranscriptionBackendAccess.deepgram}
             googleMeetAvailable={googleMeetAvailable}
             chatEnabled={chatEnabled}
-            onRouteChange={setActivePage}
-            onSelectConversation={setSelectedConversationId}
+            onRouteChange={handleMobileRouteChange}
+            onSelectConversation={handleSelectConversation}
             onAddSource={() => openSourcesSetup()}
             onRefresh={() => setRefreshKey((k) => k + 1)}
           />
@@ -2450,6 +2515,7 @@ export function App() {
         activeSourceKey={activeSourceKey}
         onAddClick={api && hasBackendDelegation === true ? () => setShowAddHub(true) : undefined}
         onSearchClick={() => {
+          routeWriteModeRef.current = "push";
           setActivePage("inbox");
           setSelectedConversationId(null);
           setSearchFocusKey((k) => k + 1);
@@ -2542,6 +2608,7 @@ export function App() {
               setHasSoundcoreBackendAccess(false);
             }}
             onFirefliesComplete={() => {
+              routeWriteModeRef.current = "replace";
               setHasKey(true);
               setHasBackendDelegation(true);
               setHasFirefliesBackendAccess(true);
@@ -2549,6 +2616,7 @@ export function App() {
               setActivePage("inbox");
             }}
             onGranolaComplete={() => {
+              routeWriteModeRef.current = "replace";
               setHasGranolaKey(true);
               setHasBackendDelegation(true);
               setHasGranolaBackendAccess(true);
@@ -2556,6 +2624,7 @@ export function App() {
               setActivePage("inbox");
             }}
             onSoundcoreComplete={() => {
+              routeWriteModeRef.current = "replace";
               setHasSoundcoreKey(true);
               setHasBackendDelegation(true);
               setHasSoundcoreBackendAccess(true);
@@ -2569,8 +2638,12 @@ export function App() {
               setRefreshKey((k) => k + 1);
             }}
             onTranscriptImportComplete={handleTranscriptImportComplete}
-            onDone={() => setActivePage("inbox")}
+            onDone={() => {
+              routeWriteModeRef.current = "replace";
+              setActivePage("inbox");
+            }}
             onGoogleMeetComplete={() => {
+              routeWriteModeRef.current = "replace";
               setHasGoogleMeet(true);
               setHasBackendDelegation(true);
               setRefreshKey((k) => k + 1);
@@ -2609,6 +2682,7 @@ export function App() {
               setHasSoundcoreBackendAccess(false);
             }}
             onFirefliesComplete={() => {
+              routeWriteModeRef.current = "replace";
               setHasKey(true);
               setHasBackendDelegation(true);
               setHasFirefliesBackendAccess(true);
@@ -2616,6 +2690,7 @@ export function App() {
               setActivePage("inbox");
             }}
             onGranolaComplete={() => {
+              routeWriteModeRef.current = "replace";
               setHasGranolaKey(true);
               setHasBackendDelegation(true);
               setHasGranolaBackendAccess(true);
@@ -2623,6 +2698,7 @@ export function App() {
               setActivePage("inbox");
             }}
             onSoundcoreComplete={() => {
+              routeWriteModeRef.current = "replace";
               setHasSoundcoreKey(true);
               setHasBackendDelegation(true);
               setHasSoundcoreBackendAccess(true);
@@ -2636,8 +2712,12 @@ export function App() {
               setRefreshKey((k) => k + 1);
             }}
             onTranscriptImportComplete={handleTranscriptImportComplete}
-            onDone={() => setActivePage("inbox")}
+            onDone={() => {
+              routeWriteModeRef.current = "replace";
+              setActivePage("inbox");
+            }}
             onGoogleMeetComplete={() => {
+              routeWriteModeRef.current = "replace";
               setHasGoogleMeet(true);
               setHasBackendDelegation(true);
               setRefreshKey((k) => k + 1);
@@ -2686,7 +2766,7 @@ export function App() {
           <ConversationDetail
             api={activeConversationApi}
             conversationId={selectedConversationId}
-            onBack={() => setSelectedConversationId(null)}
+            onBack={() => handleSelectConversation(null)}
             onShare={setShareConversationId}
             onUpdated={() => setRefreshKey((k) => k + 1)}
           />
@@ -2744,11 +2824,14 @@ export function App() {
             <ConversationList
               focusSearchKey={searchFocusKey}
               api={activeConversationApi}
-              onSelectConversation={setSelectedConversationId}
+              onSelectConversation={handleSelectConversation}
               onShareConversation={setShareConversationId}
               refreshKey={refreshKey}
               sourceFilter={librarySourceFilter}
-              onSourceFilterChange={setLibrarySourceFilter}
+              onSourceFilterChange={(filter) => {
+                routeWriteModeRef.current = "push";
+                setLibrarySourceFilter(filter);
+              }}
               onSourceCounts={setLibrarySourceCounts}
             />
           </>
@@ -2764,6 +2847,7 @@ export function App() {
               api={activeConversationApi}
               refreshKey={refreshKey}
               onOpenConversation={(id) => {
+                routeWriteModeRef.current = "push";
                 setSelectedConversationId(id);
                 setActivePage("inbox");
               }}
@@ -2831,6 +2915,7 @@ export function App() {
             }}
             onClose={() => setShowAddHub(false)}
             onImported={(conversationId) => {
+              routeWriteModeRef.current = "replace";
               setShowAddHub(false);
               setActivePage("inbox");
               setSelectedConversationId(conversationId);
