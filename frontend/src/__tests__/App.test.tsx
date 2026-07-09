@@ -532,7 +532,7 @@ describe("App manual sign-in processing", () => {
     });
   });
 
-  it("hydrates backend readiness from a valid local cache without checking workspace state", async () => {
+  it("hydrates backend readiness from a valid local cache while checking workspace state", async () => {
     storeBackendSession();
     vi.mocked(loadPersistedSession).mockReturnValue({
       address: "0xabc123",
@@ -557,7 +557,7 @@ describe("App manual sign-in processing", () => {
     await waitFor(() => {
       expect(mockGet).toHaveBeenCalledWith("/api/webhooks/fireflies/pending");
     });
-    expect(mockGet).not.toHaveBeenCalledWith("/api/workspace-state");
+    expect(mockGet).toHaveBeenCalledWith("/api/workspace-state");
   });
 
   it("clears cached backend readiness when an API call reports delegated access failure", async () => {
@@ -1480,6 +1480,157 @@ describe("App onboarding readiness", () => {
       expect(screen.queryByText("Checking workspace state.")).not.toBeInTheDocument();
       expect(screen.getByText("Transcript import")).toBeInTheDocument();
     });
+  });
+});
+
+describe("App workspace stale-while-revalidate", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal("localStorage", createMockStorage());
+    vi.stubGlobal(
+      "confirm",
+      vi.fn(() => true),
+    );
+    mockAuthFlow();
+    vi.mocked(loadPersistedSession).mockReturnValue(null);
+    mockSecretGet.mockResolvedValue({
+      ok: false,
+      error: { code: "key_not_found", message: "Secret not found" },
+    });
+    mockSecretDelete.mockResolvedValue({ ok: true });
+    mockTinyCloudConversationPage([]);
+    mockTinyCloudKvGet.mockResolvedValue({ ok: true, data: { data: null } });
+    mockPost.mockResolvedValue({ updated: 0, still_missing: 0 });
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(workspaceState());
+      }
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({ conversations: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  function seedRestoredBackendSessionWithCachedWorkspace() {
+    storeBackendSession();
+    vi.mocked(loadPersistedSession).mockReturnValue({
+      address: "0xabc123",
+      chainId: 1,
+      did: "did:pkh:eip155:1:0xabc123",
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      spaceId: "tinycloud:pkh:eip155:1:0xabc123:applications",
+    });
+    vi.mocked(restoreTinyCloudWeb).mockResolvedValue(null);
+    writeBackendWorkspaceCache(
+      "0xabc123",
+      "did:key:backend",
+      workspaceState({
+        delegation: { expiresAt: new Date(Date.now() + 3600_000).toISOString() },
+      }),
+    );
+  }
+
+  it("applies cached workspace state and still revalidates from the server", async () => {
+    seedRestoredBackendSessionWithCachedWorkspace();
+
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: /open app/i })[0]);
+
+    await waitFor(() => {
+      expect(mockGet).toHaveBeenCalledWith("/api/workspace-state");
+    });
+  });
+
+  it("conversation refreshes do not refetch workspace state", async () => {
+    mockPost.mockImplementation((url: string) => {
+      if (url === "/api/conversations/import") {
+        return Promise.resolve({ conversationId: "conv-import", title: "Imported" });
+      }
+      return Promise.resolve({ updated: 0, still_missing: 0 });
+    });
+
+    await renderAndSignIn();
+
+    await waitFor(() => {
+      expect(mockGet).toHaveBeenCalledWith("/api/workspace-state");
+      expect(screen.getByText(/connected · 4 sources/i)).toBeInTheDocument();
+    });
+    mockGet.mockClear();
+
+    // Import completion drives handleTranscriptImportComplete, a conversations-only refresh path.
+    fireEvent.click(screen.getByRole("button", { name: /add source or transcript/i }));
+    fireEvent.change(screen.getByLabelText(/transcript text/i), {
+      target: { value: "Speaker: hello" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Import$/i }));
+
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalledWith(
+        "/api/conversations/import",
+        expect.objectContaining({ transcriptText: "Speaker: hello" }),
+      );
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(mockGet).not.toHaveBeenCalledWith("/api/workspace-state");
+  });
+
+  it("keeps workspace state visible while a workspace refresh is in flight", async () => {
+    await renderAndSignIn();
+
+    await waitFor(() => {
+      expect(mockGet).toHaveBeenCalledWith("/api/workspace-state");
+      expect(screen.getByText(/connected · 4 sources/i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Fireflies$/i }));
+    await waitFor(() => {
+      expect(screen.getAllByRole("heading", { name: /connections/i }).length).toBeGreaterThan(0);
+    });
+
+    mockGet.mockClear();
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") return new Promise(() => {});
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({ conversations: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
+    mockPost.mockImplementation((url: string) => {
+      if (url === "/api/sync/fireflies/jobs") {
+        return Promise.resolve({
+          id: "job-1",
+          source: "fireflies",
+          status: "queued",
+          mode: "incremental",
+          synced: 0,
+          repaired: 0,
+          skipped: 0,
+          failed: 0,
+          errors: [],
+        });
+      }
+      return Promise.resolve({ updated: 0, still_missing: 0 });
+    });
+
+    fireEvent.click(screen.getAllByRole("button", { name: /sync now/i })[0]);
+
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalledWith("/api/sync/fireflies/jobs", {
+        mode: "incremental",
+      });
+      expect(mockGet).toHaveBeenCalledWith("/api/workspace-state");
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(screen.getByText(/connected · 4 sources/i)).toBeInTheDocument();
+    expect(screen.queryByText("Checking workspace state.")).toBeNull();
   });
 });
 

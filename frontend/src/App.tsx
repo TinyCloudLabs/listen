@@ -992,6 +992,7 @@ export function App() {
     "cards" | "transcript-import" | "soundcore-key"
   >("cards");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [workspaceRefreshKey, setWorkspaceRefreshKey] = useState(0);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [shareConversationId, setShareConversationId] = useState<string | null>(null);
   const [ownerShareConversationIds, setOwnerShareConversationIds] = useState<string[]>([]);
@@ -1045,6 +1046,7 @@ export function App() {
 
     // Reactive renewal: 401 delegation_expired / 403 no_delegation trigger a
     // silent re-delegation and a single retry of the failed request.
+    // The cache-invalidation wrapper is nested inside auto-renewal, so delegation_expired invalidates before the renewal retry; SWR keeps state visible and onRenewed revalidates.
     return withDelegationAutoRenewal(sessionAwareClient, () => backendRenewerRef.current);
   }, []);
 
@@ -1085,6 +1087,7 @@ export function App() {
           setHasBackendDelegation(true);
           setBackendAccessExpired(false);
           setRefreshKey((k) => k + 1);
+          setWorkspaceRefreshKey((k) => k + 1);
         },
         onRenewalFailed: ({ permanent }) => {
           if (permanent) {
@@ -1359,7 +1362,8 @@ export function App() {
       return;
     }
 
-    if (address && backendDid && refreshKey === 0) {
+    let appliedCachedState = false;
+    if (address && backendDid && workspaceRefreshKey === 0) {
       const cached = readBackendWorkspaceCache(address, backendDid);
       if (cached) {
         const cachedState = workspaceStateFromCache(cached);
@@ -1377,6 +1381,7 @@ export function App() {
           setHasTranscriptionKeys,
           setHasExistingConversations,
         });
+        appliedCachedState = true;
         debugLog("workspace-state.cache", "hit", {
           backendDid,
           expiresAt: cached.expiresAt,
@@ -1385,17 +1390,10 @@ export function App() {
           soundcoreSessionReadable: cached.backendReadableSecrets.soundcoreSession.readable,
           googleMeetConnected: cached.googleMeet.connected,
         });
-        return;
+      } else {
+        debugLog("workspace-state.cache", "miss", { backendDid });
       }
-      debugLog("workspace-state.cache", "miss", { backendDid });
     }
-
-    setHasBackendDelegation(null);
-    setHasFirefliesBackendAccess(null);
-    setHasGranolaBackendAccess(null);
-    setHasSoundcoreBackendAccess(null);
-    setHasTranscriptionBackendAccess(EMPTY_TRANSCRIPTION_STATUS);
-    setHasGoogleMeet(null);
 
     let cancelled = false;
     const step = startDebugStep("workspace-state.backend", { path: "/api/workspace-state" });
@@ -1458,6 +1456,12 @@ export function App() {
           return;
         }
         step.fail(err);
+        const errCode = (err as { code?: unknown }).code;
+        if (appliedCachedState && typeof errCode !== "string") {
+          // Transient, un-coded failure (network/offline) over cached-good
+          // state: keep showing the cached workspace instead of downgrading.
+          return;
+        }
         setHasBackendDelegation(false);
         setHasFirefliesBackendAccess(null);
         setHasGranolaBackendAccess(null);
@@ -1476,7 +1480,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [address, api, backendDid, refreshKey, tcw]);
+  }, [address, api, backendDid, workspaceRefreshKey, tcw]);
 
   useEffect(() => {
     if (!conversationApi || (!tcw && hasBackendDelegation !== true)) {
@@ -1946,6 +1950,7 @@ export function App() {
 
       setHasBackendDelegation(true);
       setRefreshKey((k) => k + 1);
+      setWorkspaceRefreshKey((k) => k + 1);
     } catch (err) {
       setWorkspaceActionError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -2537,6 +2542,7 @@ export function App() {
             setHasBackendDelegation(true);
             setHasFirefliesBackendAccess(true);
             setRefreshKey((k) => k + 1);
+            setWorkspaceRefreshKey((k) => k + 1);
             setActivePage("inbox");
           }}
           onGranolaComplete={() => {
@@ -2544,6 +2550,7 @@ export function App() {
             setHasBackendDelegation(true);
             setHasGranolaBackendAccess(true);
             setRefreshKey((k) => k + 1);
+            setWorkspaceRefreshKey((k) => k + 1);
             setActivePage("inbox");
           }}
           onSoundcoreComplete={() => {
@@ -2551,6 +2558,7 @@ export function App() {
             setHasBackendDelegation(true);
             setHasSoundcoreBackendAccess(true);
             setRefreshKey((k) => k + 1);
+            setWorkspaceRefreshKey((k) => k + 1);
             setActivePage("inbox");
           }}
           onTranscriptionProviderComplete={(provider) => {
@@ -2558,6 +2566,7 @@ export function App() {
             setHasBackendDelegation(true);
             setHasTranscriptionBackendAccess((state) => ({ ...state, [provider]: true }));
             setRefreshKey((k) => k + 1);
+            setWorkspaceRefreshKey((k) => k + 1);
           }}
           onTranscriptImportComplete={handleTranscriptImportComplete}
           onDone={() => setActivePage("inbox")}
@@ -2565,6 +2574,7 @@ export function App() {
             setHasGoogleMeet(true);
             setHasBackendDelegation(true);
             setRefreshKey((k) => k + 1);
+            setWorkspaceRefreshKey((k) => k + 1);
             setActivePage("inbox");
           }}
           backendUrl={BACKEND_URL}
@@ -2604,6 +2614,7 @@ export function App() {
             setHasBackendDelegation(true);
             setHasFirefliesBackendAccess(true);
             setRefreshKey((k) => k + 1);
+            setWorkspaceRefreshKey((k) => k + 1);
             setActivePage("inbox");
           }}
           onGranolaComplete={() => {
@@ -2611,6 +2622,7 @@ export function App() {
             setHasBackendDelegation(true);
             setHasGranolaBackendAccess(true);
             setRefreshKey((k) => k + 1);
+            setWorkspaceRefreshKey((k) => k + 1);
             setActivePage("inbox");
           }}
           onSoundcoreComplete={() => {
@@ -2618,6 +2630,7 @@ export function App() {
             setHasBackendDelegation(true);
             setHasSoundcoreBackendAccess(true);
             setRefreshKey((k) => k + 1);
+            setWorkspaceRefreshKey((k) => k + 1);
             setActivePage("inbox");
           }}
           onTranscriptionProviderComplete={(provider) => {
@@ -2625,6 +2638,7 @@ export function App() {
             setHasBackendDelegation(true);
             setHasTranscriptionBackendAccess((state) => ({ ...state, [provider]: true }));
             setRefreshKey((k) => k + 1);
+            setWorkspaceRefreshKey((k) => k + 1);
           }}
           onTranscriptImportComplete={handleTranscriptImportComplete}
           onDone={() => setActivePage("inbox")}
@@ -2632,6 +2646,7 @@ export function App() {
             setHasGoogleMeet(true);
             setHasBackendDelegation(true);
             setRefreshKey((k) => k + 1);
+            setWorkspaceRefreshKey((k) => k + 1);
             setActivePage("inbox");
           }}
           backendUrl={BACKEND_URL}
@@ -2792,7 +2807,10 @@ export function App() {
               provider === "assemblyai" ? ASSEMBLYAI_SECRET_NAME : DEEPGRAM_SECRET_NAME,
             )
           }
-          onRefresh={() => setRefreshKey((k) => k + 1)}
+          onRefresh={() => {
+            setRefreshKey((k) => k + 1);
+            setWorkspaceRefreshKey((k) => k + 1);
+          }}
         />
       )}
 
