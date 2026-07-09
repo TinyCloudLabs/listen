@@ -30,6 +30,12 @@ const NONCE_TTL_MS = 5 * 60 * 1000; // 5 minutes
  * - Bound to a specific address
  * - Single-use (deleted after validation)
  * - Short-lived (5 minute TTL)
+ *
+ * Single-instance assumption: nonces live in this process's memory, so
+ * single-use enforcement holds only for a single backend instance (or sticky
+ * routing to one instance). Listen's Phala deployment is single-instance
+ * today; horizontal scaling would require moving this to a shared store
+ * (Redis/KV) with an atomic delete-on-validate.
  */
 export function createNonceStore(): NonceStore {
   const store = new Map<string, NonceEntry>();
@@ -118,11 +124,14 @@ export async function verifySIWE(
 // ── Session Token ───────────────────────────────────────────────────
 
 const SESSION_JWT_HKDF_INFO = "listen:session-jwt:v1";
+export const SESSION_JWT_ISSUER = "listen-backend";
+export const SESSION_JWT_AUDIENCE = "xyz.tinycloud.listen";
 const derivedSecretCache = new Map<string, Uint8Array>();
 
 /** Derive the HS256 session-JWT secret from the backend private key.
- *  Rotating BACKEND_PRIVATE_KEY therefore rotates all session JWTs. */
-function deriveSessionJwtSecret(privateKey: string): Uint8Array {
+ *  Rotating BACKEND_PRIVATE_KEY therefore rotates all session JWTs.
+ *  Exported for tests that need to mint tokens with the real secret. */
+export function deriveSessionJwtSecret(privateKey: string): Uint8Array {
   let secret = derivedSecretCache.get(privateKey);
   if (!secret) {
     secret = new Uint8Array(
@@ -147,6 +156,8 @@ export async function issueSessionToken(
   const token = await new SignJWT({ address })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(address)
+    .setIssuer(SESSION_JWT_ISSUER)
+    .setAudience(SESSION_JWT_AUDIENCE)
     .setIssuedAt()
     .setExpirationTime("24h")
     .sign(secret);
@@ -166,6 +177,8 @@ export async function verifySessionToken(
 
   const { payload } = await jwtVerify(token, secret, {
     algorithms: ["HS256"],
+    issuer: SESSION_JWT_ISSUER,
+    audience: SESSION_JWT_AUDIENCE,
   });
 
   if (!payload.sub) {

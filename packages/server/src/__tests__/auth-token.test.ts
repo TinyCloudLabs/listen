@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { SignJWT, jwtVerify } from "jose";
-import { issueSessionToken, verifySessionToken } from "../auth.js";
+import { SignJWT, jwtVerify, decodeJwt } from "jose";
+import {
+  issueSessionToken,
+  verifySessionToken,
+  deriveSessionJwtSecret,
+  SESSION_JWT_ISSUER,
+  SESSION_JWT_AUDIENCE,
+} from "../auth.js";
 
 describe("session tokens", () => {
   test("preserve verified wallet address casing", async () => {
@@ -48,5 +54,45 @@ describe("session tokens", () => {
     const { token } = await issueSessionToken(address, pk1);
 
     await expect(verifySessionToken(token, pk2)).rejects.toThrow();
+  });
+
+  test("issued tokens carry the expected issuer and audience", async () => {
+    const address = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+    const { token } = await issueSessionToken(address, "test-backend-secret");
+
+    const claims = decodeJwt(token);
+    expect(claims.iss).toBe(SESSION_JWT_ISSUER);
+    expect(claims.aud).toBe(SESSION_JWT_AUDIENCE);
+  });
+
+  test("token without issuer/audience is rejected", async () => {
+    const address = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+    const pk = "test-backend-secret";
+
+    // Minted with the real derived secret but missing iss/aud.
+    const token = await new SignJWT({ address })
+      .setProtectedHeader({ alg: "HS256" })
+      .setSubject(address)
+      .setIssuedAt()
+      .setExpirationTime("24h")
+      .sign(deriveSessionJwtSecret(pk));
+
+    await expect(verifySessionToken(token, pk)).rejects.toThrow();
+  });
+
+  test("token with the wrong audience is rejected", async () => {
+    const address = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+    const pk = "test-backend-secret";
+
+    const token = await new SignJWT({ address })
+      .setProtectedHeader({ alg: "HS256" })
+      .setSubject(address)
+      .setIssuer(SESSION_JWT_ISSUER)
+      .setAudience("evil.audience")
+      .setIssuedAt()
+      .setExpirationTime("24h")
+      .sign(deriveSessionJwtSecret(pk));
+
+    await expect(verifySessionToken(token, pk)).rejects.toThrow();
   });
 });
