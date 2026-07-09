@@ -44,6 +44,7 @@ import { createGoogleMeetPushRouter } from "./routes/google-meet-webhooks.js";
 import { createGoogleMeetSyncRouter } from "./routes/google-meet-sync.js";
 import { createGoogleMeetStatusRouter } from "./routes/google-meet-status.js";
 import { createGoogleAuthRouter } from "./routes/google-auth.js";
+import { computeAllowedSiweDomains, computeFrontendOrigins } from "./frontend-origins.js";
 import {
   initGoogleMeetWebhooks,
   isGoogleMeetWebhooksEnabled,
@@ -64,18 +65,9 @@ if (!process.env.BACKEND_PRIVATE_KEY) {
 const BACKEND_PRIVATE_KEY: string = process.env.BACKEND_PRIVATE_KEY;
 const TINYCLOUD_HOST = process.env.TINYCLOUD_HOST ?? "https://node.tinycloud.xyz";
 const FRONTEND_URL = process.env.FRONTEND_URL ?? "https://localhost:5173";
-const LOCAL_FRONTEND_ORIGINS = [
-  "https://listen.localhost",
-  "https://listen.localhost:1355",
-  "https://localhost:5173",
-  "http://localhost:5173",
-] as const;
-const FRONTEND_ORIGINS = new Set([
-  ...FRONTEND_URL.split(",")
-    .map((origin) => origin.trim())
-    .filter(Boolean),
-  ...LOCAL_FRONTEND_ORIGINS,
-]);
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+const FRONTEND_ORIGINS = computeFrontendOrigins(FRONTEND_URL, IS_PRODUCTION);
+const ALLOWED_SIWE_DOMAINS = computeAllowedSiweDomains(FRONTEND_ORIGINS);
 const PORT = parseInt(process.env.PORT ?? "3001", 10);
 
 // ── Bootstrap ────────────────────────────────────────────────────────
@@ -310,6 +302,7 @@ async function main() {
     createAuthRouter({
       nonceStore,
       privateKey: BACKEND_PRIVATE_KEY,
+      allowedSiweDomains: ALLOWED_SIWE_DOMAINS,
     }),
   );
 

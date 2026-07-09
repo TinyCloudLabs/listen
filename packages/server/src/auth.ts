@@ -89,12 +89,21 @@ export function createNonceStore(): NonceStore {
 export async function verifySIWE(
   message: string,
   signature: string,
+  allowedDomains: ReadonlySet<string>,
 ): Promise<{ address: string; nonce: string }> {
   // Dynamic import to avoid requiring siwe at module load time
   const { SiweMessage } = await import("siwe");
 
   const siweMessage = new SiweMessage(message);
-  const result = await siweMessage.verify({ signature });
+  if (!allowedDomains.has(siweMessage.domain)) {
+    throw new Error(`SIWE domain not allowed: ${siweMessage.domain}`);
+  }
+
+  const result = await siweMessage.verify({
+    signature,
+    domain: siweMessage.domain,
+    time: new Date().toISOString(),
+  });
 
   if (!result.success) {
     throw new Error("SIWE signature verification failed");

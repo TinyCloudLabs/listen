@@ -8,12 +8,13 @@ import { verifySIWE, issueSessionToken } from "@listen/server";
 interface AuthRoutesConfig {
   nonceStore: NonceStore;
   privateKey: string;
+  allowedSiweDomains: ReadonlySet<string>;
 }
 
 // ── Auth Routes ─────────────────────────────────────────────────────
 
 export function createAuthRouter(config: AuthRoutesConfig) {
-  const { nonceStore, privateKey } = config;
+  const { nonceStore, privateKey, allowedSiweDomains } = config;
   const router = Router();
 
   // ── GET /api/auth/nonce — generate a nonce for SIWE ────────────
@@ -62,7 +63,7 @@ export function createAuthRouter(config: AuthRoutesConfig) {
     }
 
     try {
-      const { address, nonce } = await verifySIWE(message, signature);
+      const { address, nonce } = await verifySIWE(message, signature, allowedSiweDomains);
 
       if (!nonceStore.validate(address, nonce)) {
         res.status(401).json({
