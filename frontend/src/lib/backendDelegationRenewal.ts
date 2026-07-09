@@ -50,10 +50,13 @@ export function clearBackendDelegationGrantRecord(address: string, backendDid: s
 
 // ── Renewal trigger logic ────────────────────────────────────────────
 
-export type DelegationRenewalErrorCode = "delegation_expired" | "no_delegation";
+export type DelegationRenewalErrorCode =
+  | "delegation_expired"
+  | "delegation_stale"
+  | "no_delegation";
 
 export interface BackendDelegationRenewerDeps {
-  /** GET /api/delegations/status — returns { status: "active" | "expired" | "none" }. */
+  /** GET /api/delegations/status — returns { status: "active" | "expired" | "stale" | "none" }. */
   checkStatus: () => Promise<{ status: string }>;
   /** Whether the frontend has evidence a backend grant previously existed. */
   hasPriorGrant: () => boolean;
@@ -71,15 +74,17 @@ export interface BackendDelegationRenewerDeps {
 export interface BackendDelegationRenewer {
   /**
    * Proactive check on sign-in / session restore. Renews when the stored
-   * delegation is expired, or missing with evidence of a prior grant.
-   * Never throws; returns whether a renewal happened.
+   * delegation is expired or stale (policy hash rotated), or missing with
+   * evidence of a prior grant. Never throws; returns whether a renewal
+   * happened.
    */
   ensureFreshDelegation(): Promise<boolean>;
   /**
    * Reactive renewal after a gated API call failed. `delegation_expired`
-   * always renews (the row existed until this request); `no_delegation`
-   * renews only with prior-grant evidence. Never throws; returns whether a
-   * renewal happened (callers should retry the original request once).
+   * and `delegation_stale` always renew (the row existed until this
+   * request); `no_delegation` renews only with prior-grant evidence. Never
+   * throws; returns whether a renewal happened (callers should retry the
+   * original request once).
    */
   renewForApiError(code: DelegationRenewalErrorCode): Promise<boolean>;
 }
@@ -133,14 +138,14 @@ export function createBackendDelegationRenewer(
         return false;
       }
 
-      if (status === "expired") return renewOnce();
+      if (status === "expired" || status === "stale") return renewOnce();
       if (status === "none" && deps.hasPriorGrant()) return renewOnce();
       log("no-renewal-needed", { status });
       return false;
     },
 
     async renewForApiError(code: DelegationRenewalErrorCode): Promise<boolean> {
-      if (code === "delegation_expired") return renewOnce();
+      if (code === "delegation_expired" || code === "delegation_stale") return renewOnce();
       if (code === "no_delegation" && deps.hasPriorGrant()) return renewOnce();
       return false;
     },
@@ -157,14 +162,16 @@ export function createBackendDelegationRenewer(
 export function delegationRenewalErrorCode(err: unknown): DelegationRenewalErrorCode | null {
   if (typeof err !== "object" || err === null) return null;
   const code = (err as { code?: unknown }).code;
-  return code === "delegation_expired" || code === "no_delegation" ? code : null;
+  return code === "delegation_expired" || code === "delegation_stale" || code === "no_delegation"
+    ? code
+    : null;
 }
 
 /**
- * Wrap an ApiClient so requests failing with `401 delegation_expired` or
- * `403 no_delegation` trigger a silent delegation renewal and a single retry
- * of the original request. When renewal is unavailable or declined, the
- * original error propagates unchanged.
+ * Wrap an ApiClient so requests failing with `401 delegation_expired`,
+ * `403 delegation_stale`, or `403 no_delegation` trigger a silent delegation
+ * renewal and a single retry of the original request. When renewal is
+ * unavailable or declined, the original error propagates unchanged.
  */
 export function withDelegationAutoRenewal(
   api: ApiClient,
