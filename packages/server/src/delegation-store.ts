@@ -112,6 +112,26 @@ export class DelegationStore {
   }
 
   /**
+   * Durably revoke a stored delegation.
+   *
+   * Overwrites the row with an already-expired tombstone (`kv.put` overwrites
+   * succeed where `kv.delete` silently no-ops on overwritten keys — TC-140),
+   * then attempts a best-effort delete. The tombstone reads back through
+   * load() as an expired record, and expiry is checked before policyHash at
+   * every consumer, so a revoked delegation is terminal even if the delete
+   * no-ops. Throws only if the tombstone write itself fails (so the route's
+   * 500 is honest).
+   */
+  async revoke(identifier: string): Promise<void> {
+    await this.store(identifier, "", {
+      expiresAt: new Date(Date.now() - 1).toISOString(),
+      actions: [],
+      path: "",
+    });
+    await this.remove(identifier); // best-effort; logs on failure
+  }
+
+  /**
    * Check whether a stored delegation exists and is not expired.
    */
   async isActive(identifier: string): Promise<boolean> {

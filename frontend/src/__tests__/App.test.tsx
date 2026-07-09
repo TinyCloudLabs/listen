@@ -11,6 +11,7 @@ import {
   clearPersistedSession,
   loadPersistedSession,
   requestNonce,
+  revokeDelegation,
   sendDelegation,
   restoreTinyCloudWeb,
   verifySession,
@@ -660,6 +661,37 @@ describe("App manual sign-in processing", () => {
     expect(localStorage.getItem("tinycloud:session:0xabc123")).toBeNull();
     expect(localStorage.getItem("lastSyncTimestamp")).toBeNull();
     expect(localStorage.getItem("unrelated")).toBe("keep");
+  });
+
+  it("awaits the backend delegation revoke on sign-out and sets the resurrection tombstone", async () => {
+    await renderAndSignIn();
+    vi.mocked(revokeDelegation).mockClear();
+
+    await openUserMenu();
+    fireEvent.click(screen.getByRole("button", { name: /sign out/i }));
+
+    await waitFor(() => {
+      expect(revokeDelegation).toHaveBeenCalledWith("http://localhost:3001", "mock-token");
+    });
+    await waitFor(() => {
+      expect(localStorage.getItem("listen:session")).toBeNull();
+    });
+    // The revoke tombstone is set AFTER the listen: purge so it survives.
+    expect(localStorage.getItem("listen:revoked-at")).not.toBeNull();
+  });
+
+  it("still completes sign-out when the revoke request fails", async () => {
+    await renderAndSignIn();
+    vi.mocked(revokeDelegation).mockRejectedValueOnce(new Error("network down"));
+
+    await openUserMenu();
+    fireEvent.click(screen.getByRole("button", { name: /sign out/i }));
+
+    // Session is cleared even though revoke rejected.
+    await waitFor(() => {
+      expect(localStorage.getItem("listen:session")).toBeNull();
+    });
+    expect(await screen.findByText(/revoking backend access failed/i)).toBeInTheDocument();
   });
 
   it("does not pass a sign strategy into TinyCloud sign-in (bootstrap is server-side)", async () => {

@@ -140,7 +140,7 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
       const { address } = req.user;
 
       try {
-        await store.remove(address);
+        await store.revoke(address);
         cache.evict(address);
 
         res.json({

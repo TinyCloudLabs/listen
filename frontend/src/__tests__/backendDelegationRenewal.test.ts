@@ -6,6 +6,8 @@ import {
   recordBackendDelegationGrant,
   hasBackendDelegationGrantRecord,
   clearBackendDelegationGrantRecord,
+  recordDelegationRevoked,
+  wasRecentlyRevoked,
   type BackendDelegationRenewerDeps,
 } from "../lib/backendDelegationRenewal";
 import type { ApiClient } from "@listen/client";
@@ -158,6 +160,45 @@ describe("createBackendDelegationRenewer — renewForApiError", () => {
     expect(await Promise.all([first, second, third])).toEqual([true, true, true]);
     expect(renew).toHaveBeenCalledTimes(1);
     expect(deps.onRenewed).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── Sign-out revoke tombstone (same-browser resurrection guard) ──────
+
+describe("sign-out revoke tombstone", () => {
+  it("blocks the unconditional expired-renewal path after a sign-out revoke", async () => {
+    const deps = createDeps({ checkStatus: vi.fn().mockResolvedValue({ status: "expired" }) });
+    const renewer = createBackendDelegationRenewer(deps);
+
+    recordDelegationRevoked();
+
+    expect(await renewer.ensureFreshDelegation()).toBe(false);
+    expect(await renewer.renewForApiError("delegation_expired")).toBe(false);
+    expect(deps.renew).not.toHaveBeenCalled();
+  });
+
+  it("stops resurrecting once the tombstone is cleared", async () => {
+    const deps = createDeps({ checkStatus: vi.fn().mockResolvedValue({ status: "expired" }) });
+    const renewer = createBackendDelegationRenewer(deps);
+
+    recordDelegationRevoked();
+    expect(await renewer.renewForApiError("delegation_expired")).toBe(false);
+
+    // A fresh grant supersedes the revoke; renewal is allowed again.
+    recordBackendDelegationGrant("0xabc", "did:key:backend");
+    expect(wasRecentlyRevoked()).toBe(false);
+    expect(await renewer.renewForApiError("delegation_expired")).toBe(true);
+    expect(deps.renew).toHaveBeenCalledTimes(1);
+  });
+
+  it("expires the tombstone after its TTL", () => {
+    recordDelegationRevoked();
+    expect(wasRecentlyRevoked()).toBe(true);
+
+    // Backdate the marker past the 10-minute TTL.
+    localStorage.setItem("listen:revoked-at", String(Date.now() - 11 * 60 * 1000));
+    expect(wasRecentlyRevoked()).toBe(false);
+    expect(localStorage.getItem("listen:revoked-at")).toBeNull();
   });
 });
 

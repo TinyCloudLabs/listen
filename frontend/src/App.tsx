@@ -52,6 +52,7 @@ import {
   createBackendDelegationRenewer,
   hasBackendDelegationGrantRecord,
   recordBackendDelegationGrant,
+  recordDelegationRevoked,
   withDelegationAutoRenewal,
   type BackendDelegationRenewer,
 } from "./lib/backendDelegationRenewal";
@@ -1636,12 +1637,25 @@ export function App() {
 
   const handleSignOut = useCallback(async () => {
     const token = sessionStoreRef.current.getToken();
-    if (token) revokeDelegation(BACKEND_URL, token).catch(() => {});
+    // Null the renewer BEFORE awaiting revoke so an in-flight gated request
+    // cannot silently re-grant the delegation we are revoking.
+    backendRenewerRef.current = null;
+    let revokeError: string | null = null;
+    if (token) {
+      try {
+        await revokeDelegation(BACKEND_URL, token);
+      } catch {
+        revokeError =
+          "Signed out, but revoking backend access failed. It expires automatically within 7 days.";
+      }
+    }
     await tcw?.signOut?.();
     if (address) clearBackendWorkspaceCache(address, backendDid ?? undefined);
     if (address) clearPersistedSession(address);
     purgeListenLocalData();
-    backendRenewerRef.current = null;
+    // Set AFTER purge (purge clears listen: keys): a same-browser resurrection
+    // guard so an unconditional renewal cannot re-grant the revoked delegation.
+    recordDelegationRevoked();
     sessionStoreRef.current.clear();
     setAddress(null);
     setDid(null);
@@ -1655,7 +1669,7 @@ export function App() {
     setLiveWritePathPrefix(null);
     setLiveWriteHost(null);
     setLiveWriteSpaceId(null);
-    setAuthError(null);
+    setAuthError(revokeError);
     setHasKey(null);
     setHasGranolaKey(null);
     setHasSoundcoreKey(null);
