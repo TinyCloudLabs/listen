@@ -1599,6 +1599,66 @@ describe("App session expiry", () => {
   });
 });
 
+describe("App backend-access expiry", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal("localStorage", createMockStorage());
+    vi.stubGlobal(
+      "confirm",
+      vi.fn(() => true),
+    );
+    mockAuthFlow();
+    vi.mocked(loadPersistedSession).mockReturnValue(null);
+    mockSecretGet.mockResolvedValue({
+      ok: false,
+      error: { code: "key_not_found", message: "Secret not found" },
+    });
+    mockSecretDelete.mockResolvedValue({ ok: true });
+    mockTinyCloudConversationPage([]);
+    mockTinyCloudKvGet.mockResolvedValue({ ok: true, data: { data: null } });
+    mockPost.mockResolvedValue({ updated: 0, still_missing: 0 });
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(workspaceState());
+      }
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({ conversations: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
+    vi.mocked(checkDelegationStatus).mockResolvedValue({ status: "expired", expiresAt: null });
+    vi.mocked(createManifestDelegation).mockRejectedValue(
+      Object.assign(new Error("session expired"), { name: "SessionExpiredError" }),
+    );
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the backend-access reconnect banner when silent renewal permanently fails", async () => {
+    await renderAndSignIn();
+
+    await waitFor(() => {
+      expect(screen.getByText(/backend access expired/i)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /reconnect/i })).toBeInTheDocument();
+    });
+  });
+
+  it("reconnect button starts a wallet sign-in", async () => {
+    await renderAndSignIn();
+
+    const reconnectButton = await screen.findByRole("button", { name: /reconnect/i });
+    vi.mocked(connectWallet).mockClear();
+    fireEvent.click(reconnectButton);
+
+    await waitFor(() => {
+      expect(connectWallet).toHaveBeenCalled();
+    });
+  });
+});
+
 // ── Google Meet Webhook Tests ─────────────────────────────────────────
 
 /**

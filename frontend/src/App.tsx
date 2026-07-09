@@ -1000,6 +1000,7 @@ export function App() {
   const [searchFocusKey, setSearchFocusKey] = useState(0);
   const [pendingBanner, setPendingBanner] = useState<string | null>(null);
   const [sessionExpired, setSessionExpired] = useState(false);
+  const [backendAccessExpired, setBackendAccessExpired] = useState(false);
   const [gmLapsedBanner, setGmLapsedBanner] = useState(false);
   const [liveWritePathPrefix, setLiveWritePathPrefix] = useState<string | null>(null);
   const [liveWriteHost, setLiveWriteHost] = useState<string | null>(null);
@@ -1011,6 +1012,7 @@ export function App() {
 
   const sessionStoreRef = useRef(new SessionStore());
   const backendRenewerRef = useRef<BackendDelegationRenewer | null>(null);
+  const backendAccessRenewalFailedRef = useRef(false);
   const isMobile = useIsMobile();
   const chatEnabled = isChatEnabled();
   const [shareToken, setShareToken] = useState(() => readShareTokenFromLocation());
@@ -1077,10 +1079,18 @@ export function App() {
           await sendDelegation(BACKEND_URL, serialized, token);
         },
         onRenewed: () => {
+          backendAccessRenewalFailedRef.current = false;
           clearBackendWorkspaceCache(addr, bDid);
           recordBackendDelegationGrant(addr, bDid);
           setHasBackendDelegation(true);
+          setBackendAccessExpired(false);
           setRefreshKey((k) => k + 1);
+        },
+        onRenewalFailed: ({ permanent }) => {
+          if (permanent) {
+            backendAccessRenewalFailedRef.current = true;
+            setBackendAccessExpired(true);
+          }
         },
         log: (event, detail) => debugLog("delegation.auto-renew", event, detail),
       });
@@ -1106,6 +1116,7 @@ export function App() {
   const applyDirectTinyCloudSession = useCallback((addr: string, tcwInstance: TinyCloudWeb) => {
     clearBackendWorkspaceCache(addr);
     backendRenewerRef.current = null;
+    backendAccessRenewalFailedRef.current = false;
     sessionStoreRef.current.clear();
     setAddress(addr);
     setDid(tcwInstance.did ?? null);
@@ -1113,6 +1124,7 @@ export function App() {
     setHasWalletSigner(true);
     setApi(null);
     setSessionExpired(false);
+    setBackendAccessExpired(false);
     setAgentInfo(null);
     setBackendDid(null);
     setCapabilityRequest(null);
@@ -1225,6 +1237,8 @@ export function App() {
       setHasWalletSigner(false);
       setApi(apiClient);
       setSessionExpired(false);
+      setBackendAccessExpired(false);
+      if (backendAccessRenewalFailedRef.current) setBackendAccessExpired(true);
       setAgentInfo(agent);
       setBackendDid(info.did);
       setCapabilityRequest(composedRequest);
@@ -1268,7 +1282,10 @@ export function App() {
       const { serialized } = await createManifestDelegation(tcw, backendDid, capabilityRequest);
       await sendDelegation(BACKEND_URL, serialized, token);
       if (address) recordBackendDelegationGrant(address, backendDid);
+      backendAccessRenewalFailedRef.current = false;
       setHasBackendDelegation(true);
+      backendRenewerRef.current?.reset();
+      setBackendAccessExpired(false);
       step.complete({ ok: true, backendDid });
     } catch (err) {
       step.fail(err);
@@ -1312,7 +1329,10 @@ export function App() {
         ]);
         await sendDelegation(BACKEND_URL, serialized, token);
         if (address) recordBackendDelegationGrant(address, backendDid);
+        backendAccessRenewalFailedRef.current = false;
         setHasBackendDelegation(true);
+        backendRenewerRef.current?.reset();
+        setBackendAccessExpired(false);
         step.complete({ ok: true, backendDid, secretCount: secretNames.length });
       } catch (err) {
         step.fail(err);
@@ -1545,6 +1565,7 @@ export function App() {
       setAuthLoading(true);
       setAuthError(null);
       setWorkspaceActionError(null);
+      backendAccessRenewalFailedRef.current = false;
       try {
         if (!options?.forceWallet) {
           debugLog("auth.sign-in", "restore-before-wallet");
@@ -1669,6 +1690,8 @@ export function App() {
         setHasWalletSigner(true);
         setApi(apiClient);
         setSessionExpired(false);
+        setBackendAccessExpired(false);
+        if (backendAccessRenewalFailedRef.current) setBackendAccessExpired(true);
         setAgentInfo(agent);
         setBackendDid(info.did);
         setCapabilityRequest(composedRequest);
@@ -1709,6 +1732,7 @@ export function App() {
     if (address) clearPersistedSession(address);
     purgeListenLocalData();
     backendRenewerRef.current = null;
+    backendAccessRenewalFailedRef.current = false;
     sessionStoreRef.current.clear();
     setAddress(null);
     setDid(null);
@@ -1716,6 +1740,7 @@ export function App() {
     setHasWalletSigner(false);
     setApi(null);
     setSessionExpired(false);
+    setBackendAccessExpired(false);
     setAgentInfo(null);
     setBackendDid(null);
     setCapabilityRequest(null);
@@ -2015,18 +2040,21 @@ export function App() {
   const needsFirefliesAccess =
     !backendUnavailable &&
     !sessionExpired &&
+    !backendAccessExpired &&
     workspaceChecksReady &&
     hasKey === true &&
     (hasBackendDelegation === false || hasFirefliesBackendAccess === false);
   const needsGranolaAccess =
     !backendUnavailable &&
     !sessionExpired &&
+    !backendAccessExpired &&
     workspaceChecksReady &&
     hasGranolaKey === true &&
     (hasBackendDelegation === false || hasGranolaBackendAccess === false);
   const needsSoundcoreAccess =
     !backendUnavailable &&
     !sessionExpired &&
+    !backendAccessExpired &&
     workspaceChecksReady &&
     hasSoundcoreKey === true &&
     (hasBackendDelegation === false || hasSoundcoreBackendAccess === false);
@@ -2412,6 +2440,20 @@ export function App() {
             onClick={() => void handleSignIn()}
           >
             Sign in
+          </button>
+        </div>
+      )}
+
+      {!sessionExpired && backendAccessExpired && (
+        <div style={s.pendingBanner}>
+          <span>Backend access expired — reconnect to restore workspace access.</span>
+          <button
+            type="button"
+            style={authLoading ? { ...s.statusButton, ...s.statusButtonDisabled } : s.statusButton}
+            disabled={authLoading}
+            onClick={() => void handleSignIn({ forceWallet: true })}
+          >
+            Reconnect
           </button>
         </div>
       )}
