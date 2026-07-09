@@ -359,6 +359,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
   const [titleDraft, setTitleDraft] = useState("");
   const [titleSaving, setTitleSaving] = useState(false);
   const [summaryView, setSummaryView] = useState<"formatted" | "markdown">("formatted");
+  const [reloadKey, setReloadKey] = useState(0);
   const useCache = cacheMode !== "disabled";
   const canEditTitle = cacheMode !== "disabled";
 
@@ -453,7 +454,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [api, cacheScope, conversationId, useCache]);
+  }, [api, cacheScope, conversationId, reloadKey, useCache]);
 
   useEffect(() => {
     if (!notice) return;
@@ -480,7 +481,12 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
         <button style={s.backBtn} onClick={onBack}>
           &larr; Back
         </button>
-        <div style={s.errorCard}>{error}</div>
+        <div style={s.errorCard}>
+          {error}
+          <button type="button" style={s.actionBtn} onClick={() => setReloadKey((k) => k + 1)}>
+            Retry
+          </button>
+        </div>
       </div>
     );
   }
@@ -1086,6 +1092,11 @@ const s: Record<string, React.CSSProperties> = {
   },
   errorCard: {
     fontFamily: FONT,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    flexWrap: "wrap" as const,
     fontSize: 13,
     color: "var(--lst-blue)",
     background: "var(--lst-ink-08)",

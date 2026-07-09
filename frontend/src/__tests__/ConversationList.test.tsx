@@ -169,7 +169,9 @@ describe("ConversationList", () => {
 
     await waitFor(() => {
       expect(screen.getByText(/no conversations yet/i)).toBeInTheDocument();
-      expect(screen.getByText(/sync your first meetings above/i)).toBeInTheDocument();
+      expect(
+        screen.getByText(/connect a source or add a transcript to get started/i),
+      ).toBeInTheDocument();
     });
   });
 
@@ -386,6 +388,30 @@ describe("ConversationList", () => {
     await waitFor(() => {
       expect(screen.getByText(/network error/i)).toBeInTheDocument();
     });
+  });
+
+  it("retries loading after an error", async () => {
+    const getMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Network error"))
+      .mockResolvedValueOnce({
+        conversations: [CONVERSATIONS[0]],
+        total: 1,
+      });
+    api = mockApi({ get: getMock });
+
+    render(<ConversationList api={api} onSelectConversation={onSelectConversation} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/network error/i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
+    });
+    expect(getMock).toHaveBeenCalledTimes(2);
   });
 
   it("shows conversation count header", async () => {

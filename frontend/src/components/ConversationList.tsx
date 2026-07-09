@@ -314,6 +314,13 @@ export const ConversationList: FC<ConversationListProps> = ({
       <div style={s.errorCard}>
         <span style={s.errorIcon}>!</span>
         {error}
+        <button
+          type="button"
+          style={s.noticeRetry}
+          onClick={() => void fetchConversations(currentPage, sourceFilter, searchQuery)}
+        >
+          Retry
+        </button>
       </div>
     );
   }
@@ -322,7 +329,7 @@ export const ConversationList: FC<ConversationListProps> = ({
     return (
       <div style={s.emptyCard}>
         <p style={s.emptyTitle}>No conversations yet</p>
-        <p style={s.emptySub}>Sync your first meetings above.</p>
+        <p style={s.emptySub}>Connect a source or add a transcript to get started.</p>
       </div>
     );
   }

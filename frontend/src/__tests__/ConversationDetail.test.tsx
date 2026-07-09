@@ -533,6 +533,27 @@ describe("ConversationDetail", () => {
     });
   });
 
+  it("retries loading after an error", async () => {
+    const getMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Network error"))
+      .mockResolvedValueOnce(DETAIL_RESPONSE);
+    api = mockApi({ get: getMock });
+
+    render(<ConversationDetail api={api} conversationId="01ABC" onBack={onBack} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/network error/i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
+    });
+    expect(getMock).toHaveBeenCalledTimes(2);
+  });
+
   // ── New dynamic source link test ─────────────────────────────────
 
   it("shows 'View transcript' for Google Meet source", async () => {
