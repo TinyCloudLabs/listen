@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ConnectionsScreen } from "../ConnectionsScreen";
+import { SyncManagerProvider } from "../../lib/syncManager";
 
 const api = {
   get: vi.fn(),
@@ -10,21 +11,38 @@ const api = {
 };
 
 function renderConnections(overrides: Partial<Parameters<typeof ConnectionsScreen>[0]> = {}) {
+  const props: Parameters<typeof ConnectionsScreen>[0] = {
+    api,
+    hasFireflies: false,
+    hasGoogleMeet: false,
+    hasFirefliesBackendAccess: false,
+    googleMeetAvailable: false,
+    onAddSource: vi.fn(),
+    onRefresh: vi.fn(),
+    ...overrides,
+  };
+
   return render(
-    <ConnectionsScreen
+    <SyncManagerProvider
       api={api}
-      hasFireflies={false}
-      hasGoogleMeet={false}
-      hasFirefliesBackendAccess={false}
-      googleMeetAvailable={false}
-      onAddSource={vi.fn()}
-      onRefresh={vi.fn()}
-      {...overrides}
-    />,
+      backendUrl="http://localhost:3001"
+      getAccessToken={() => "test-token"}
+      onSyncComplete={props.onRefresh}
+      hasFireflies={props.hasFireflies}
+      hasGranola={props.hasGranola}
+      hasSoundcore={props.hasSoundcore}
+      hasGoogleMeet={props.hasGoogleMeet}
+    >
+      <ConnectionsScreen {...props} />
+    </SyncManagerProvider>,
   );
 }
 
 describe("ConnectionsScreen", () => {
+  beforeEach(() => {
+    api.get.mockResolvedValue(null);
+  });
+
   afterEach(() => {
     vi.clearAllMocks();
     cleanup();

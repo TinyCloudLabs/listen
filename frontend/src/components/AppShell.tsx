@@ -46,6 +46,7 @@ interface AppShellProps {
   // source rows fall back to the connections screen.
   onSelectSource?: (key: ShellSourceKey) => void;
   activeSourceKey?: ShellSourceKey | null;
+  syncStrip?: ReactNode;
   children: ReactNode;
 }
 
@@ -166,6 +167,7 @@ export const AppShell: FC<AppShellProps> = ({
   onSearchClick,
   onSelectSource,
   activeSourceKey,
+  syncStrip,
   children,
 }) => {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -320,8 +322,11 @@ export const AppShell: FC<AppShellProps> = ({
           })}
         </div>
 
-        <div style={shell.themeRow}>
-          <ThemeToggle />
+        <div style={shell.sidebarFooter}>
+          {syncStrip}
+          <div style={shell.themeRow}>
+            <ThemeToggle />
+          </div>
         </div>
 
         <div style={shell.userFooterWrap} ref={userMenuRef}>
@@ -553,9 +558,11 @@ const shell: Record<string, CSSProperties> = {
     flexShrink: 0,
   },
   themeRow: {
-    marginTop: "auto",
     padding: "10px 14px",
     borderTop: "var(--lst-border)",
+  },
+  sidebarFooter: {
+    marginTop: "auto",
   },
   userFooterWrap: {
     position: "relative",

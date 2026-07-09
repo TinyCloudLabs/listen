@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
 import { SyncControl } from "../components/SyncControl";
 import type { ApiClient } from "@listen/client";
+import { SyncManagerProvider } from "../lib/syncManager";
 
 function mockApi(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
@@ -73,6 +74,23 @@ function googleMeetJob(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function SyncControlUnderTest(props: Parameters<typeof SyncControl>[0]) {
+  return (
+    <SyncManagerProvider
+      api={props.api}
+      backendUrl={props.backendUrl}
+      getAccessToken={props.getAccessToken}
+      onSyncComplete={props.onSyncComplete}
+      hasFireflies={props.hasFireflies}
+      hasGranola={props.hasGranola}
+      hasSoundcore={props.hasSoundcore}
+      hasGoogleMeet={props.hasGoogleMeet}
+    >
+      <SyncControl {...props} />
+    </SyncManagerProvider>
+  );
+}
+
 describe("SyncControl", () => {
   let api: ApiClient;
   let onSyncComplete: ReturnType<typeof vi.fn>;
@@ -92,7 +110,7 @@ describe("SyncControl", () => {
 
   it("renders Sync Fireflies and Reset buttons when hasFireflies is true", () => {
     render(
-      <SyncControl
+      <SyncControlUnderTest
         api={api}
         backendUrl="http://localhost:3001"
         getAccessToken={getAccessToken}
@@ -113,7 +131,7 @@ describe("SyncControl", () => {
     api = mockApi({ get: getMock });
 
     render(
-      <SyncControl
+      <SyncControlUnderTest
         api={api}
         backendUrl="http://localhost:3001"
         getAccessToken={getAccessToken}
@@ -135,7 +153,7 @@ describe("SyncControl", () => {
     api = mockApi({ get: getMock });
 
     render(
-      <SyncControl
+      <SyncControlUnderTest
         api={api}
         backendUrl="http://localhost:3001"
         getAccessToken={getAccessToken}
@@ -158,7 +176,7 @@ describe("SyncControl", () => {
     api = mockApi({ get: getMock });
 
     render(
-      <SyncControl
+      <SyncControlUnderTest
         api={api}
         backendUrl="http://localhost:3001"
         getAccessToken={getAccessToken}
@@ -182,7 +200,7 @@ describe("SyncControl", () => {
     api = mockApi({ get: getMock });
 
     render(
-      <SyncControl
+      <SyncControlUnderTest
         api={api}
         backendUrl="http://localhost:3001"
         getAccessToken={getAccessToken}
@@ -201,7 +219,7 @@ describe("SyncControl", () => {
     api = mockApi({ get: getMock });
 
     render(
-      <SyncControl
+      <SyncControlUnderTest
         api={api}
         backendUrl="http://localhost:3001"
         getAccessToken={getAccessToken}
@@ -222,7 +240,7 @@ describe("SyncControl", () => {
     localStorage.setItem("lastSyncTimestamp", new Date("2026-03-24T15:00:00Z").toISOString());
 
     render(
-      <SyncControl
+      <SyncControlUnderTest
         api={api}
         backendUrl="http://localhost:3001"
         getAccessToken={getAccessToken}
@@ -251,7 +269,7 @@ describe("SyncControl", () => {
     api = mockApi({ get: getMock, post: postMock });
 
     render(
-      <SyncControl
+      <SyncControlUnderTest
         api={api}
         backendUrl="http://localhost:3001"
         getAccessToken={getAccessToken}
@@ -291,7 +309,7 @@ describe("SyncControl", () => {
     api = mockApi({ get: getMock, post: postMock });
 
     render(
-      <SyncControl
+      <SyncControlUnderTest
         api={api}
         backendUrl="http://localhost:3001"
         getAccessToken={getAccessToken}
@@ -334,7 +352,7 @@ describe("SyncControl", () => {
     api = mockApi({ get: getMock, post: postMock });
 
     render(
-      <SyncControl
+      <SyncControlUnderTest
         api={api}
         backendUrl="http://localhost:3001"
         getAccessToken={getAccessToken}
@@ -375,7 +393,7 @@ describe("SyncControl", () => {
     api = mockApi({ get: getMock });
 
     render(
-      <SyncControl
+      <SyncControlUnderTest
         api={api}
         backendUrl="http://localhost:3001"
         getAccessToken={getAccessToken}
@@ -399,7 +417,7 @@ describe("SyncControl", () => {
 
   it("shows Sync Fireflies button when hasFireflies is true", () => {
     render(
-      <SyncControl
+      <SyncControlUnderTest
         api={api}
         backendUrl="http://localhost:3001"
         getAccessToken={getAccessToken}
@@ -430,7 +448,7 @@ describe("SyncControl", () => {
     api = mockApi({ get: getMock });
 
     render(
-      <SyncControl
+      <SyncControlUnderTest
         api={api}
         backendUrl="http://localhost:3001"
         getAccessToken={getAccessToken}
@@ -445,7 +463,7 @@ describe("SyncControl", () => {
 
   it("shows Sync Granola button when hasGranola is true", () => {
     render(
-      <SyncControl
+      <SyncControlUnderTest
         api={api}
         backendUrl="http://localhost:3001"
         getAccessToken={getAccessToken}
@@ -477,7 +495,7 @@ describe("SyncControl", () => {
     api = mockApi({ get: getMock });
 
     render(
-      <SyncControl
+      <SyncControlUnderTest
         api={api}
         backendUrl="http://localhost:3001"
         getAccessToken={getAccessToken}
@@ -533,7 +551,7 @@ describe("SyncControl", () => {
     api = mockApi({ get: getMock, post: postMock });
 
     render(
-      <SyncControl
+      <SyncControlUnderTest
         api={api}
         backendUrl="http://localhost:3001"
         getAccessToken={getAccessToken}
@@ -579,7 +597,7 @@ describe("SyncControl", () => {
     api = mockApi({ get: getMock });
 
     render(
-      <SyncControl
+      <SyncControlUnderTest
         api={api}
         backendUrl="http://localhost:3001"
         getAccessToken={getAccessToken}
@@ -611,7 +629,7 @@ describe("SyncControl", () => {
     api = mockApi({ get: getMock });
 
     render(
-      <SyncControl
+      <SyncControlUnderTest
         api={api}
         backendUrl="http://localhost:3001"
         getAccessToken={getAccessToken}
@@ -644,7 +662,7 @@ describe("SyncControl", () => {
     api = mockApi({ get: getMock });
 
     render(
-      <SyncControl
+      <SyncControlUnderTest
         api={api}
         backendUrl="http://localhost:3001"
         getAccessToken={getAccessToken}
@@ -676,7 +694,7 @@ describe("SyncControl", () => {
     api = mockApi({ get: getMock });
 
     render(
-      <SyncControl
+      <SyncControlUnderTest
         api={api}
         backendUrl="http://localhost:3001"
         getAccessToken={getAccessToken}
@@ -703,7 +721,7 @@ describe("SyncControl", () => {
     api = mockApi({ get: getMock });
 
     render(
-      <SyncControl
+      <SyncControlUnderTest
         api={api}
         backendUrl="http://localhost:3001"
         getAccessToken={getAccessToken}

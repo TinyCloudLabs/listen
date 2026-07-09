@@ -1,6 +1,14 @@
 import { useState, type FC } from "react";
 import type { ApiClient } from "@listen/client";
 import { useIsMobile } from "../hooks/useIsMobile";
+import {
+  formatSyncTimeAgo,
+  syncSourceLabel,
+  useSyncManager,
+  type SyncProgress,
+  type SyncResult,
+  type SyncSource,
+} from "../lib/syncManager";
 
 interface ConnectionsScreenProps {
   api: ApiClient;
@@ -26,6 +34,15 @@ interface ConnectionsScreenProps {
 }
 
 type SourceId = "fireflies" | "granola" | "soundcore" | "google-meet" | "assemblyai" | "deepgram";
+
+function isSyncSource(source: SourceId): source is SyncSource {
+  return (
+    source === "fireflies" ||
+    source === "granola" ||
+    source === "soundcore" ||
+    source === "google-meet"
+  );
+}
 
 const LOCAL_IMPORTER_INSTRUCTIONS_URL = "https://listen.xyz/importer";
 const LOCAL_IMPORTER_REFERENCE_URL = "https://github.com/TinyCloudLabs/listen-importer";
@@ -75,11 +92,22 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
 }) => {
   const [busySource, setBusySource] = useState<SourceId | "all" | "migration" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
   const [showLocalImporter, setShowLocalImporter] = useState(false);
   const [localImporterCopied, setLocalImporterCopied] = useState(false);
   const openTranscriptImport = onAddTranscript ?? onAddSource;
   const isMobile = useIsMobile();
+  const {
+    syncing,
+    syncSource,
+    progress,
+    result,
+    error: syncError,
+    lastSync,
+    startSyncSource,
+    startSyncAll,
+    clearError,
+  } = useSyncManager();
 
   // On narrow widths the source cards stack vertically so the description
   // keeps a comfortable width and the badge/action buttons wrap instead of
@@ -157,6 +185,8 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
   const available = sources.filter((source) => !source.connected);
   const syncableConnected = connected.filter((source) => source.ready && source.syncable);
   const availableCount = available.length;
+  const syncBusy = syncing || busySource !== null;
+  const visibleError = localError ?? syncError;
 
   const copyLocalImporterCommand = async () => {
     await navigator.clipboard?.writeText(LOCAL_IMPORTER_AGENT_PROMPT);
@@ -164,63 +194,29 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
     window.setTimeout(() => setLocalImporterCopied(false), 1600);
   };
 
-  const syncSource = async (source: SourceId) => {
-    setBusySource(source);
-    setError(null);
+  const syncSourceNow = async (source: SourceId) => {
+    if (!isSyncSource(source)) return;
+    setLocalError(null);
+    clearError();
     setMessage(null);
-    try {
-      if (source === "fireflies") {
-        await api.post("/api/sync/fireflies/jobs", { mode: "incremental" });
-      } else if (source === "granola") {
-        await api.post("/api/sync/granola/jobs", { mode: "incremental" });
-      } else if (source === "soundcore") {
-        await api.post("/api/sync/soundcore", {});
-      } else if (source === "google-meet") {
-        await api.post("/api/sync/google-meet");
-      }
-      setMessage(
-        source === "fireflies"
-          ? "Fireflies sync started"
-          : `${sources.find((item) => item.id === source)?.name ?? "Source"} synced`,
-      );
-      onRefresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusySource(null);
-    }
+    await startSyncSource(source);
   };
 
   const syncAll = async () => {
-    setBusySource("all");
-    setError(null);
+    const syncSources = syncableConnected.flatMap((source) =>
+      isSyncSource(source.id) ? [source.id] : [],
+    );
+    if (syncSources.length === 0) return;
+    setLocalError(null);
+    clearError();
     setMessage(null);
-    try {
-      for (const source of connected) {
-        if (source.ready && source.syncable) {
-          if (source.id === "fireflies") {
-            await api.post("/api/sync/fireflies/jobs", { mode: "incremental" });
-          } else if (source.id === "granola") {
-            await api.post("/api/sync/granola/jobs", { mode: "incremental" });
-          } else if (source.id === "soundcore") {
-            await api.post("/api/sync/soundcore", {});
-          } else if (source.id === "google-meet") {
-            await api.post("/api/sync/google-meet");
-          }
-        }
-      }
-      setMessage("Connected sources synced");
-      onRefresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusySource(null);
-    }
+    await startSyncAll(syncSources);
   };
 
   const migrateTranscripts = async () => {
     setBusySource("migration");
-    setError(null);
+    setLocalError(null);
+    clearError();
     setMessage(null);
     try {
       const result = await api.post<MigrationResult>("/api/config/migrate-transcripts", {});
@@ -229,7 +225,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
       );
       onRefresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setLocalError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusySource(null);
     }
@@ -244,11 +240,14 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
           <div style={s.headerActions}>
             <button
               type="button"
-              style={{ ...s.btnGhost, ...(syncableConnected.length === 0 ? s.btnDisabled : {}) }}
+              style={{
+                ...s.btnGhost,
+                ...(syncableConnected.length === 0 || syncBusy ? s.btnDisabled : {}),
+              }}
               onClick={syncAll}
-              disabled={syncableConnected.length === 0 || busySource !== null}
+              disabled={syncableConnected.length === 0 || syncBusy}
             >
-              {busySource === "all" ? "Syncing" : "Sync connected"}
+              {syncing && syncSource === null ? "Syncing" : "Sync connected"}
             </button>
             <button type="button" style={s.btnPrimary} onClick={onAddSource}>
               Add source or transcript
@@ -262,7 +261,16 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
       </header>
 
       {message && <div style={s.notice}>{message}</div>}
-      {error && <div style={s.error}>{error}</div>}
+      {visibleError && <div style={s.error}>{visibleError}</div>}
+      {(syncing || progress || result || lastSync) && (
+        <SyncStatusSummary
+          syncing={syncing}
+          syncSource={syncSource}
+          progress={progress}
+          result={result}
+          lastSync={lastSync}
+        />
+      )}
 
       <div style={s.body}>
         <div style={s.sectionLabelRow}>
@@ -294,10 +302,10 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
                   <button
                     type="button"
                     style={s.btnGhostSm}
-                    onClick={() => void syncSource(source.id)}
-                    disabled={busySource !== null}
+                    onClick={() => void syncSourceNow(source.id)}
+                    disabled={syncBusy}
                   >
-                    {busySource === source.id ? "Syncing" : "Sync now"}
+                    {syncing && syncSource === source.id ? "Syncing" : "Sync now"}
                   </button>
                 ) : !source.ready && source.finishSetup ? (
                   <button
@@ -305,7 +313,8 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
                     style={s.btnGhostSm}
                     onClick={() => {
                       setBusySource(source.id);
-                      setError(null);
+                      setLocalError(null);
+                      clearError();
                       setMessage(null);
                       source
                         .finishSetup?.()
@@ -313,10 +322,12 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
                           setMessage(`${source.name} setup finished`);
                           onRefresh();
                         })
-                        .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+                        .catch((err) =>
+                          setLocalError(err instanceof Error ? err.message : String(err)),
+                        )
                         .finally(() => setBusySource(null));
                     }}
-                    disabled={busySource !== null}
+                    disabled={syncBusy}
                   >
                     {busySource === source.id ? "Connecting" : "Finish setup"}
                   </button>
@@ -495,6 +506,66 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
     </section>
   );
 };
+
+function SyncStatusSummary({
+  syncing,
+  syncSource,
+  progress,
+  result,
+  lastSync,
+}: {
+  syncing: boolean;
+  syncSource: SyncSource | null;
+  progress: SyncProgress | null;
+  result: SyncResult | null;
+  lastSync: string | null;
+}) {
+  const label = syncSourceLabel(syncSource);
+  const hasCount = progress?.phase === "syncing" && progress.total != null && progress.total > 0;
+  const listingCount = progress?.totalListed ?? progress?.checked;
+
+  if (syncing && progress) {
+    return (
+      <div style={s.syncSummary}>
+        <div style={s.syncSummaryRow}>
+          <span style={s.syncPulseDot} />
+          <span style={s.syncSummaryTitle}>
+            Syncing {label}
+            {hasCount
+              ? ` · ${progress.current ?? 0}/${progress.total}`
+              : progress.phase === "listing" && listingCount != null
+                ? ` · ${listingCount} checked`
+                : ""}
+          </span>
+        </div>
+        {progress.phase === "syncing" && (
+          <div style={s.syncSummaryMeta}>
+            {progress.synced ?? 0} synced
+            {(progress.skipped ?? 0) > 0 ? ` · ${progress.skipped} skipped` : ""}
+            {(progress.failed ?? 0) > 0 ? ` · ${progress.failed} failed` : ""}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (result) {
+    return (
+      <div style={s.syncSummary}>
+        <div style={s.syncSummaryTitle}>Last sync complete</div>
+        <div style={s.syncSummaryMeta}>
+          {result.synced} synced · {result.skipped} skipped · {result.failed} failed
+        </div>
+      </div>
+    );
+  }
+
+  if (lastSync) {
+    return <div style={s.syncSummary}>Synced {formatSyncTimeAgo(lastSync)}</div>;
+  }
+
+  return null;
+}
 
 const FONT = "var(--lst-font)";
 const MONO = "var(--lst-mono)";
@@ -800,6 +871,34 @@ const s: Record<string, React.CSSProperties> = {
     background: "var(--lst-alert-soft)",
     color: "var(--lst-alert)",
     fontSize: 13,
+  },
+  syncSummary: {
+    padding: "10px 32px",
+    borderBottom: "var(--lst-border)",
+    background: "var(--lst-ink-08)",
+    color: "var(--lst-blue)",
+    fontSize: 13,
+  },
+  syncSummaryRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+  },
+  syncSummaryTitle: {
+    fontWeight: 600,
+  },
+  syncSummaryMeta: {
+    marginTop: 4,
+    fontFamily: MONO,
+    fontSize: 11,
+    color: "var(--lst-ink-55)",
+  },
+  syncPulseDot: {
+    width: 7,
+    height: 7,
+    borderRadius: "50%",
+    background: "var(--lst-warn)",
+    animation: "syncPulse 1.5s ease-in-out infinite",
   },
   empty: {
     border: "var(--lst-border)",

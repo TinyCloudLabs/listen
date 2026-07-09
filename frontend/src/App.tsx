@@ -32,7 +32,6 @@ import { ConnectionsScreen } from "./components/ConnectionsScreen";
 import { LiveWriteEvents } from "./components/LiveWriteEvents";
 import { ConnectAgentButton } from "./components/ConnectAgentButton";
 import { ConversationShareDialog } from "./components/ConversationShareDialog";
-import { GlobalSyncIndicator } from "./components/GlobalSyncIndicator";
 import { AddTranscriptHub } from "./components/AddTranscriptHub";
 import { SharedWithMe } from "./components/SharedWithMe";
 import {
@@ -54,6 +53,12 @@ import { useIsMobile } from "./hooks/useIsMobile";
 import { APP_MANIFEST } from "./lib/appManifest";
 import { debugFetch, debugLog, startDebugStep } from "./lib/debug";
 import { purgeListenLocalData } from "./lib/localData";
+import {
+  formatSyncTimeAgo,
+  SyncManagerProvider,
+  syncSourceLabel,
+  useSyncManager,
+} from "./lib/syncManager";
 import { createTinyCloudConversationApi } from "./lib/tinycloudConversations";
 import { readShareTokenFromLocation } from "./lib/listenShareLinks";
 import {
@@ -106,6 +111,30 @@ const EMPTY_TRANSCRIPTION_STATUS: TranscriptionProviderStatus = {
   assemblyai: null,
   deepgram: null,
 };
+
+function SidebarSyncStrip({ onClick }: { onClick: () => void }) {
+  const { syncing, syncSource, progress, lastSync } = useSyncManager();
+
+  if (!syncing && !lastSync) return null;
+
+  const countLabel =
+    progress?.phase === "syncing" && progress.total != null && progress.total > 0
+      ? `${progress.current ?? 0}/${progress.total}`
+      : progress?.phase === "listing" && (progress.totalListed != null || progress.checked != null)
+        ? `${progress.totalListed ?? progress.checked} checked`
+        : null;
+  const phaseLabel = progress?.phase ?? "queued";
+  const label = syncing
+    ? `Syncing ${syncSourceLabel(syncSource)} · ${phaseLabel}${countLabel ? ` · ${countLabel}` : ""}`
+    : `Synced ${formatSyncTimeAgo(lastSync!)}`;
+
+  return (
+    <button type="button" style={s.syncStripButton} onClick={onClick} aria-label={label}>
+      {syncing && <span style={s.syncStripDot} aria-hidden />}
+      <span style={s.syncStripLabel}>{label}</span>
+    </button>
+  );
+}
 
 interface AppBootstrapContext {
   info: ServerInfo | null;
@@ -2357,458 +2386,464 @@ export function App() {
     !showBackendOfflineState
   ) {
     return (
-      <>
-        <MobileExperience
-          api={activeConversationApi}
-          activeRoute={activePage}
-          selectedConversationId={selectedConversationId}
-          refreshKey={refreshKey}
-          hasFireflies={firefliesConnected}
-          hasGranola={granolaConnected}
-          hasSoundcore={soundcoreConnected}
-          hasGoogleMeet={hasGoogleMeet === true}
-          hasFirefliesBackendAccess={hasFirefliesBackendAccess === true}
-          hasGranolaBackendAccess={hasGranolaBackendAccess === true}
-          hasSoundcoreBackendAccess={hasSoundcoreBackendAccess === true}
-          hasAssemblyAIKey={hasTranscriptionKeys.assemblyai}
-          hasAssemblyAIBackendAccess={hasTranscriptionBackendAccess.assemblyai}
-          hasDeepgramKey={hasTranscriptionKeys.deepgram}
-          hasDeepgramBackendAccess={hasTranscriptionBackendAccess.deepgram}
-          googleMeetAvailable={googleMeetAvailable}
-          chatEnabled={chatEnabled}
-          onRouteChange={setActivePage}
-          onSelectConversation={setSelectedConversationId}
-          onAddSource={() => openSourcesSetup()}
-          onRefresh={() => setRefreshKey((k) => k + 1)}
-        />
-        {api && hasBackendDelegation === true && (
-          <GlobalSyncIndicator
-            api={api}
-            onViewResults={() => {
-              setActivePage("inbox");
-              setSelectedConversationId(null);
-              setRefreshKey((k) => k + 1);
-            }}
+      <SyncManagerProvider
+        api={api}
+        backendUrl={BACKEND_URL}
+        getAccessToken={() => sessionStoreRef.current.getToken()}
+        onSyncComplete={() => setRefreshKey((k) => k + 1)}
+        hasFireflies={firefliesConnected}
+        hasGranola={granolaConnected}
+        hasSoundcore={soundcoreConnected}
+        hasGoogleMeet={hasGoogleMeet === true}
+      >
+        <>
+          <MobileExperience
+            api={activeConversationApi}
+            activeRoute={activePage}
+            selectedConversationId={selectedConversationId}
+            refreshKey={refreshKey}
+            hasFireflies={firefliesConnected}
+            hasGranola={granolaConnected}
+            hasSoundcore={soundcoreConnected}
+            hasGoogleMeet={hasGoogleMeet === true}
+            hasFirefliesBackendAccess={hasFirefliesBackendAccess === true}
+            hasGranolaBackendAccess={hasGranolaBackendAccess === true}
+            hasSoundcoreBackendAccess={hasSoundcoreBackendAccess === true}
+            hasAssemblyAIKey={hasTranscriptionKeys.assemblyai}
+            hasAssemblyAIBackendAccess={hasTranscriptionBackendAccess.assemblyai}
+            hasDeepgramKey={hasTranscriptionKeys.deepgram}
+            hasDeepgramBackendAccess={hasTranscriptionBackendAccess.deepgram}
+            googleMeetAvailable={googleMeetAvailable}
+            chatEnabled={chatEnabled}
+            onRouteChange={setActivePage}
+            onSelectConversation={setSelectedConversationId}
+            onAddSource={() => openSourcesSetup()}
+            onRefresh={() => setRefreshKey((k) => k + 1)}
           />
-        )}
-      </>
+        </>
+      </SyncManagerProvider>
     );
   }
 
   return (
-    <AppShell
-      activeRoute={activePage}
-      onRouteChange={handleRouteChange}
-      pageEyebrow={pageEyebrow}
-      pageTitle={pageTitle}
-      topbarActions={topbarActions}
-      user={{ initials: userInitials, name: userName, plan: userPlan }}
-      userMenu={userMenu}
-      sources={sourceItems}
-      folders={[]}
-      onSelectSource={hasUsableInbox || showOptimisticInbox ? handleSelectSource : undefined}
-      activeSourceKey={activeSourceKey}
-      onAddClick={api && hasBackendDelegation === true ? () => setShowAddHub(true) : undefined}
-      onSearchClick={() => {
-        setActivePage("inbox");
-        setSelectedConversationId(null);
-        setSearchFocusKey((k) => k + 1);
-      }}
+    <SyncManagerProvider
+      api={api}
+      backendUrl={BACKEND_URL}
+      getAccessToken={() => sessionStoreRef.current.getToken()}
+      onSyncComplete={() => setRefreshKey((k) => k + 1)}
+      hasFireflies={firefliesConnected}
+      hasGranola={granolaConnected}
+      hasSoundcore={soundcoreConnected}
+      hasGoogleMeet={hasGoogleMeet === true}
     >
-      {showWorkspaceLoading && !showOptimisticInbox && (
-        <WorkspaceStatusPanel
-          mode="checking"
-          timedOut={workspaceCheckTimedOut}
-          onRetry={() => setRefreshKey((k) => k + 1)}
-          onContinue={() => setWorkspaceChecksForced(true)}
-        />
-      )}
+      <AppShell
+        activeRoute={activePage}
+        onRouteChange={handleRouteChange}
+        pageEyebrow={pageEyebrow}
+        pageTitle={pageTitle}
+        topbarActions={topbarActions}
+        user={{ initials: userInitials, name: userName, plan: userPlan }}
+        userMenu={userMenu}
+        sources={sourceItems}
+        folders={[]}
+        onSelectSource={hasUsableInbox || showOptimisticInbox ? handleSelectSource : undefined}
+        activeSourceKey={activeSourceKey}
+        onAddClick={api && hasBackendDelegation === true ? () => setShowAddHub(true) : undefined}
+        onSearchClick={() => {
+          setActivePage("inbox");
+          setSelectedConversationId(null);
+          setSearchFocusKey((k) => k + 1);
+        }}
+        syncStrip={
+          api && hasBackendDelegation === true ? (
+            <SidebarSyncStrip onClick={() => handleRouteChange("inbox")} />
+          ) : undefined
+        }
+      >
+        {showWorkspaceLoading && !showOptimisticInbox && (
+          <WorkspaceStatusPanel
+            mode="checking"
+            timedOut={workspaceCheckTimedOut}
+            onRetry={() => setRefreshKey((k) => k + 1)}
+            onContinue={() => setWorkspaceChecksForced(true)}
+          />
+        )}
 
-      {showBackendOfflineState && (
-        <WorkspaceStatusPanel
-          mode="backend-offline"
-          loading={authLoading}
-          error={authError}
-          onAction={() => void handleSignIn({ forceWallet: true })}
-        />
-      )}
+        {showBackendOfflineState && (
+          <WorkspaceStatusPanel
+            mode="backend-offline"
+            loading={authLoading}
+            error={authError}
+            onAction={() => void handleSignIn({ forceWallet: true })}
+          />
+        )}
 
-      {needsFirefliesAccess && (
-        <WorkspaceStatusPanel
-          mode="fireflies-access"
-          loading={workspaceActionLoading}
-          error={workspaceActionError}
-          onAction={handleFinishMissingSourceAccess}
-        />
-      )}
+        {needsFirefliesAccess && (
+          <WorkspaceStatusPanel
+            mode="fireflies-access"
+            loading={workspaceActionLoading}
+            error={workspaceActionError}
+            onAction={handleFinishMissingSourceAccess}
+          />
+        )}
 
-      {needsGranolaAccess && (
-        <WorkspaceStatusPanel
-          mode="granola-access"
-          loading={workspaceActionLoading}
-          error={workspaceActionError}
-          onAction={handleFinishMissingSourceAccess}
-        />
-      )}
+        {needsGranolaAccess && (
+          <WorkspaceStatusPanel
+            mode="granola-access"
+            loading={workspaceActionLoading}
+            error={workspaceActionError}
+            onAction={handleFinishMissingSourceAccess}
+          />
+        )}
 
-      {needsSoundcoreAccess && (
-        <WorkspaceStatusPanel
-          mode="soundcore-access"
-          loading={workspaceActionLoading}
-          error={workspaceActionError}
-          onAction={handleFinishMissingSourceAccess}
-        />
-      )}
+        {needsSoundcoreAccess && (
+          <WorkspaceStatusPanel
+            mode="soundcore-access"
+            loading={workspaceActionLoading}
+            error={workspaceActionError}
+            onAction={handleFinishMissingSourceAccess}
+          />
+        )}
 
-      {(showWalletSetupState || showSourcesWalletState) && (
-        <WorkspaceStatusPanel
-          mode="wallet"
-          loading={authLoading}
-          error={authError}
-          onAction={() => void handleSignIn({ forceWallet: true })}
-        />
-      )}
+        {(showWalletSetupState || showSourcesWalletState) && (
+          <WorkspaceStatusPanel
+            mode="wallet"
+            loading={authLoading}
+            error={authError}
+            onAction={() => void handleSignIn({ forceWallet: true })}
+          />
+        )}
 
-      {showOnboarding && tcw && (
-        <SourcesSetup
-          api={api!}
-          tcw={tcw}
-          mode="onboarding"
-          hasFirefliesKey={hasKey}
-          hasGranolaKey={hasGranolaKey}
-          hasSoundcoreKey={hasSoundcoreKey}
-          hasAssemblyAIKey={hasTranscriptionKeys.assemblyai}
-          hasDeepgramKey={hasTranscriptionKeys.deepgram}
-          hasBackendDelegation={hasBackendDelegation}
-          hasFirefliesBackendAccess={hasFirefliesBackendAccess}
-          hasGranolaBackendAccess={hasGranolaBackendAccess}
-          hasSoundcoreBackendAccess={hasSoundcoreBackendAccess}
-          hasAssemblyAIBackendAccess={hasTranscriptionBackendAccess.assemblyai}
-          hasDeepgramBackendAccess={hasTranscriptionBackendAccess.deepgram}
-          hasGoogleMeet={hasGoogleMeet}
-          initialStep="cards"
-          onEnsureBackendAccess={ensureBackendAccess}
-          onEnsureFirefliesBackendAccess={ensureFirefliesBackendAccess}
-          onEnsureGranolaBackendAccess={ensureGranolaBackendAccess}
-          onEnsureSoundcoreBackendAccess={ensureSoundcoreBackendAccess}
-          onEnsureSecretBackendAccess={ensureSecretBackendAccess}
-          onSoundcoreCredentialsSaved={() => {
-            setHasSoundcoreKey(true);
-            setHasSoundcoreBackendAccess(false);
-          }}
-          onFirefliesComplete={() => {
-            setHasKey(true);
-            setHasBackendDelegation(true);
-            setHasFirefliesBackendAccess(true);
-            setRefreshKey((k) => k + 1);
-            setActivePage("inbox");
-          }}
-          onGranolaComplete={() => {
-            setHasGranolaKey(true);
-            setHasBackendDelegation(true);
-            setHasGranolaBackendAccess(true);
-            setRefreshKey((k) => k + 1);
-            setActivePage("inbox");
-          }}
-          onSoundcoreComplete={() => {
-            setHasSoundcoreKey(true);
-            setHasBackendDelegation(true);
-            setHasSoundcoreBackendAccess(true);
-            setRefreshKey((k) => k + 1);
-            setActivePage("inbox");
-          }}
-          onTranscriptionProviderComplete={(provider) => {
-            setHasTranscriptionKeys((state) => ({ ...state, [provider]: true }));
-            setHasBackendDelegation(true);
-            setHasTranscriptionBackendAccess((state) => ({ ...state, [provider]: true }));
-            setRefreshKey((k) => k + 1);
-          }}
-          onTranscriptImportComplete={handleTranscriptImportComplete}
-          onDone={() => setActivePage("inbox")}
-          onGoogleMeetComplete={() => {
-            setHasGoogleMeet(true);
-            setHasBackendDelegation(true);
-            setRefreshKey((k) => k + 1);
-            setActivePage("inbox");
-          }}
-          backendUrl={BACKEND_URL}
-          googleMeetAvailable={googleMeetAvailable}
-        />
-      )}
+        {showOnboarding && tcw && (
+          <SourcesSetup
+            api={api!}
+            tcw={tcw}
+            mode="onboarding"
+            hasFirefliesKey={hasKey}
+            hasGranolaKey={hasGranolaKey}
+            hasSoundcoreKey={hasSoundcoreKey}
+            hasAssemblyAIKey={hasTranscriptionKeys.assemblyai}
+            hasDeepgramKey={hasTranscriptionKeys.deepgram}
+            hasBackendDelegation={hasBackendDelegation}
+            hasFirefliesBackendAccess={hasFirefliesBackendAccess}
+            hasGranolaBackendAccess={hasGranolaBackendAccess}
+            hasSoundcoreBackendAccess={hasSoundcoreBackendAccess}
+            hasAssemblyAIBackendAccess={hasTranscriptionBackendAccess.assemblyai}
+            hasDeepgramBackendAccess={hasTranscriptionBackendAccess.deepgram}
+            hasGoogleMeet={hasGoogleMeet}
+            initialStep="cards"
+            onEnsureBackendAccess={ensureBackendAccess}
+            onEnsureFirefliesBackendAccess={ensureFirefliesBackendAccess}
+            onEnsureGranolaBackendAccess={ensureGranolaBackendAccess}
+            onEnsureSoundcoreBackendAccess={ensureSoundcoreBackendAccess}
+            onEnsureSecretBackendAccess={ensureSecretBackendAccess}
+            onSoundcoreCredentialsSaved={() => {
+              setHasSoundcoreKey(true);
+              setHasSoundcoreBackendAccess(false);
+            }}
+            onFirefliesComplete={() => {
+              setHasKey(true);
+              setHasBackendDelegation(true);
+              setHasFirefliesBackendAccess(true);
+              setRefreshKey((k) => k + 1);
+              setActivePage("inbox");
+            }}
+            onGranolaComplete={() => {
+              setHasGranolaKey(true);
+              setHasBackendDelegation(true);
+              setHasGranolaBackendAccess(true);
+              setRefreshKey((k) => k + 1);
+              setActivePage("inbox");
+            }}
+            onSoundcoreComplete={() => {
+              setHasSoundcoreKey(true);
+              setHasBackendDelegation(true);
+              setHasSoundcoreBackendAccess(true);
+              setRefreshKey((k) => k + 1);
+              setActivePage("inbox");
+            }}
+            onTranscriptionProviderComplete={(provider) => {
+              setHasTranscriptionKeys((state) => ({ ...state, [provider]: true }));
+              setHasBackendDelegation(true);
+              setHasTranscriptionBackendAccess((state) => ({ ...state, [provider]: true }));
+              setRefreshKey((k) => k + 1);
+            }}
+            onTranscriptImportComplete={handleTranscriptImportComplete}
+            onDone={() => setActivePage("inbox")}
+            onGoogleMeetComplete={() => {
+              setHasGoogleMeet(true);
+              setHasBackendDelegation(true);
+              setRefreshKey((k) => k + 1);
+              setActivePage("inbox");
+            }}
+            backendUrl={BACKEND_URL}
+            googleMeetAvailable={googleMeetAvailable}
+          />
+        )}
 
-      {showSourcesSetup && tcw && (
-        <SourcesSetup
-          api={api!}
-          tcw={tcw}
-          mode="sources"
-          hasFirefliesKey={hasKey}
-          hasGranolaKey={hasGranolaKey}
-          hasSoundcoreKey={hasSoundcoreKey}
-          hasAssemblyAIKey={hasTranscriptionKeys.assemblyai}
-          hasDeepgramKey={hasTranscriptionKeys.deepgram}
-          hasBackendDelegation={hasBackendDelegation}
-          hasFirefliesBackendAccess={hasFirefliesBackendAccess}
-          hasGranolaBackendAccess={hasGranolaBackendAccess}
-          hasSoundcoreBackendAccess={hasSoundcoreBackendAccess}
-          hasAssemblyAIBackendAccess={hasTranscriptionBackendAccess.assemblyai}
-          hasDeepgramBackendAccess={hasTranscriptionBackendAccess.deepgram}
-          hasGoogleMeet={hasGoogleMeet}
-          initialStep={sourcesInitialStep}
-          onEnsureBackendAccess={ensureBackendAccess}
-          onEnsureFirefliesBackendAccess={ensureFirefliesBackendAccess}
-          onEnsureGranolaBackendAccess={ensureGranolaBackendAccess}
-          onEnsureSoundcoreBackendAccess={ensureSoundcoreBackendAccess}
-          onEnsureSecretBackendAccess={ensureSecretBackendAccess}
-          onSoundcoreCredentialsSaved={() => {
-            setHasSoundcoreKey(true);
-            setHasSoundcoreBackendAccess(false);
-          }}
-          onFirefliesComplete={() => {
-            setHasKey(true);
-            setHasBackendDelegation(true);
-            setHasFirefliesBackendAccess(true);
-            setRefreshKey((k) => k + 1);
-            setActivePage("inbox");
-          }}
-          onGranolaComplete={() => {
-            setHasGranolaKey(true);
-            setHasBackendDelegation(true);
-            setHasGranolaBackendAccess(true);
-            setRefreshKey((k) => k + 1);
-            setActivePage("inbox");
-          }}
-          onSoundcoreComplete={() => {
-            setHasSoundcoreKey(true);
-            setHasBackendDelegation(true);
-            setHasSoundcoreBackendAccess(true);
-            setRefreshKey((k) => k + 1);
-            setActivePage("inbox");
-          }}
-          onTranscriptionProviderComplete={(provider) => {
-            setHasTranscriptionKeys((state) => ({ ...state, [provider]: true }));
-            setHasBackendDelegation(true);
-            setHasTranscriptionBackendAccess((state) => ({ ...state, [provider]: true }));
-            setRefreshKey((k) => k + 1);
-          }}
-          onTranscriptImportComplete={handleTranscriptImportComplete}
-          onDone={() => setActivePage("inbox")}
-          onGoogleMeetComplete={() => {
-            setHasGoogleMeet(true);
-            setHasBackendDelegation(true);
-            setRefreshKey((k) => k + 1);
-            setActivePage("inbox");
-          }}
-          backendUrl={BACKEND_URL}
-          googleMeetAvailable={googleMeetAvailable}
-        />
-      )}
+        {showSourcesSetup && tcw && (
+          <SourcesSetup
+            api={api!}
+            tcw={tcw}
+            mode="sources"
+            hasFirefliesKey={hasKey}
+            hasGranolaKey={hasGranolaKey}
+            hasSoundcoreKey={hasSoundcoreKey}
+            hasAssemblyAIKey={hasTranscriptionKeys.assemblyai}
+            hasDeepgramKey={hasTranscriptionKeys.deepgram}
+            hasBackendDelegation={hasBackendDelegation}
+            hasFirefliesBackendAccess={hasFirefliesBackendAccess}
+            hasGranolaBackendAccess={hasGranolaBackendAccess}
+            hasSoundcoreBackendAccess={hasSoundcoreBackendAccess}
+            hasAssemblyAIBackendAccess={hasTranscriptionBackendAccess.assemblyai}
+            hasDeepgramBackendAccess={hasTranscriptionBackendAccess.deepgram}
+            hasGoogleMeet={hasGoogleMeet}
+            initialStep={sourcesInitialStep}
+            onEnsureBackendAccess={ensureBackendAccess}
+            onEnsureFirefliesBackendAccess={ensureFirefliesBackendAccess}
+            onEnsureGranolaBackendAccess={ensureGranolaBackendAccess}
+            onEnsureSoundcoreBackendAccess={ensureSoundcoreBackendAccess}
+            onEnsureSecretBackendAccess={ensureSecretBackendAccess}
+            onSoundcoreCredentialsSaved={() => {
+              setHasSoundcoreKey(true);
+              setHasSoundcoreBackendAccess(false);
+            }}
+            onFirefliesComplete={() => {
+              setHasKey(true);
+              setHasBackendDelegation(true);
+              setHasFirefliesBackendAccess(true);
+              setRefreshKey((k) => k + 1);
+              setActivePage("inbox");
+            }}
+            onGranolaComplete={() => {
+              setHasGranolaKey(true);
+              setHasBackendDelegation(true);
+              setHasGranolaBackendAccess(true);
+              setRefreshKey((k) => k + 1);
+              setActivePage("inbox");
+            }}
+            onSoundcoreComplete={() => {
+              setHasSoundcoreKey(true);
+              setHasBackendDelegation(true);
+              setHasSoundcoreBackendAccess(true);
+              setRefreshKey((k) => k + 1);
+              setActivePage("inbox");
+            }}
+            onTranscriptionProviderComplete={(provider) => {
+              setHasTranscriptionKeys((state) => ({ ...state, [provider]: true }));
+              setHasBackendDelegation(true);
+              setHasTranscriptionBackendAccess((state) => ({ ...state, [provider]: true }));
+              setRefreshKey((k) => k + 1);
+            }}
+            onTranscriptImportComplete={handleTranscriptImportComplete}
+            onDone={() => setActivePage("inbox")}
+            onGoogleMeetComplete={() => {
+              setHasGoogleMeet(true);
+              setHasBackendDelegation(true);
+              setRefreshKey((k) => k + 1);
+              setActivePage("inbox");
+            }}
+            backendUrl={BACKEND_URL}
+            googleMeetAvailable={googleMeetAvailable}
+          />
+        )}
 
-      {pendingBanner && (
-        <div style={s.pendingBanner}>
-          <span>{pendingBanner}</span>
-          <button style={s.bannerDismiss} onClick={() => setPendingBanner(null)}>
-            &times;
-          </button>
-        </div>
-      )}
-
-      {gmLapsedBanner && (
-        <div style={s.lapsedBanner}>
-          <span>Real-time sync was inactive. Some meetings may not have been captured.</span>
-          <div style={s.lapsedActions}>
-            <button
-              style={s.lapsedSyncBtn}
-              onClick={() => {
-                api
-                  ?.post("/api/sync/google-meet")
-                  .then(() => {
-                    setRefreshKey((k) => k + 1);
-                    setGmLapsedBanner(false);
-                  })
-                  .catch(() => {});
-              }}
-            >
-              Sync Now
-            </button>
-            <button style={s.bannerDismiss} onClick={() => setGmLapsedBanner(false)}>
+        {pendingBanner && (
+          <div style={s.pendingBanner}>
+            <span>{pendingBanner}</span>
+            <button style={s.bannerDismiss} onClick={() => setPendingBanner(null)}>
               &times;
             </button>
           </div>
-        </div>
-      )}
+        )}
 
-      {hasUsableInbox && activePage === "inbox" && selectedConversationId && (
-        <ConversationDetail
-          api={activeConversationApi}
-          conversationId={selectedConversationId}
-          onBack={() => setSelectedConversationId(null)}
-          onShare={setShareConversationId}
-          onUpdated={() => setRefreshKey((k) => k + 1)}
-        />
-      )}
-
-      {showInbox && (
-        <>
-          {showWorkspaceLoading && (
-            <div style={s.pendingBanner}>
-              <span>
-                Checking workspace access. Cached conversations are available while Listen refreshes
-                source state.
-              </span>
-            </div>
-          )}
-          {backendUnavailable && (
-            <div style={s.pendingBanner}>
-              <span>
-                {authError
-                  ? `Backend reconnect failed: ${authError}`
-                  : "Backend offline. Sync and source setup are unavailable; the library reads directly from TinyCloud."}
-              </span>
+        {gmLapsedBanner && (
+          <div style={s.lapsedBanner}>
+            <span>Real-time sync was inactive. Some meetings may not have been captured.</span>
+            <div style={s.lapsedActions}>
               <button
-                type="button"
-                style={
-                  authLoading ? { ...s.statusButton, ...s.statusButtonDisabled } : s.statusButton
-                }
-                disabled={authLoading}
-                onClick={() => void handleSignIn({ forceWallet: true })}
+                style={s.lapsedSyncBtn}
+                onClick={() => {
+                  api
+                    ?.post("/api/sync/google-meet")
+                    .then(() => {
+                      setRefreshKey((k) => k + 1);
+                      setGmLapsedBanner(false);
+                    })
+                    .catch(() => {});
+                }}
               >
-                {authLoading ? "Connecting..." : "Reconnect backend"}
+                Sync Now
+              </button>
+              <button style={s.bannerDismiss} onClick={() => setGmLapsedBanner(false)}>
+                &times;
               </button>
             </div>
-          )}
-          {api && hasUsableInbox && (
-            <SyncControl
-              api={api}
-              backendUrl={BACKEND_URL}
-              getAccessToken={() => sessionStoreRef.current.getToken()}
-              onSyncComplete={() => setRefreshKey((k) => k + 1)}
-              hasFireflies={firefliesConnected}
-              hasGranola={granolaConnected}
-              hasSoundcore={soundcoreConnected}
-              hasGoogleMeet={hasGoogleMeet === true}
-            />
-          )}
-          {ENABLE_TINYCLOUD_HOOKS && liveWriteHost && (
-            <LiveWriteEvents
-              tcw={tcw}
-              spaceId={liveWriteSpaceId}
-              pathPrefix={liveWritePathPrefix}
-              onWrite={() => setRefreshKey((k) => k + 1)}
-            />
-          )}
-          <ConversationList
-            focusSearchKey={searchFocusKey}
+          </div>
+        )}
+
+        {hasUsableInbox && activePage === "inbox" && selectedConversationId && (
+          <ConversationDetail
             api={activeConversationApi}
-            onSelectConversation={setSelectedConversationId}
-            onShareConversation={setShareConversationId}
-            refreshKey={refreshKey}
-            sourceFilter={librarySourceFilter}
-            onSourceFilterChange={setLibrarySourceFilter}
-            onSourceCounts={setLibrarySourceCounts}
+            conversationId={selectedConversationId}
+            onBack={() => setSelectedConversationId(null)}
+            onShare={setShareConversationId}
+            onUpdated={() => setRefreshKey((k) => k + 1)}
           />
-        </>
-      )}
+        )}
 
-      {activePage === "shared" && <SharedWithMe initialShareToken={shareToken} />}
+        {showInbox && (
+          <>
+            {showWorkspaceLoading && (
+              <div style={s.pendingBanner}>
+                <span>
+                  Checking workspace access. Cached conversations are available while Listen
+                  refreshes source state.
+                </span>
+              </div>
+            )}
+            {backendUnavailable && (
+              <div style={s.pendingBanner}>
+                <span>
+                  {authError
+                    ? `Backend reconnect failed: ${authError}`
+                    : "Backend offline. Sync and source setup are unavailable; the library reads directly from TinyCloud."}
+                </span>
+                <button
+                  type="button"
+                  style={
+                    authLoading ? { ...s.statusButton, ...s.statusButtonDisabled } : s.statusButton
+                  }
+                  disabled={authLoading}
+                  onClick={() => void handleSignIn({ forceWallet: true })}
+                >
+                  {authLoading ? "Connecting..." : "Reconnect backend"}
+                </button>
+              </div>
+            )}
+            {api && hasUsableInbox && (
+              <SyncControl
+                api={api}
+                backendUrl={BACKEND_URL}
+                getAccessToken={() => sessionStoreRef.current.getToken()}
+                onSyncComplete={() => setRefreshKey((k) => k + 1)}
+                hasFireflies={firefliesConnected}
+                hasGranola={granolaConnected}
+                hasSoundcore={soundcoreConnected}
+                hasGoogleMeet={hasGoogleMeet === true}
+              />
+            )}
+            {ENABLE_TINYCLOUD_HOOKS && liveWriteHost && (
+              <LiveWriteEvents
+                tcw={tcw}
+                spaceId={liveWriteSpaceId}
+                pathPrefix={liveWritePathPrefix}
+                onWrite={() => setRefreshKey((k) => k + 1)}
+              />
+            )}
+            <ConversationList
+              focusSearchKey={searchFocusKey}
+              api={activeConversationApi}
+              onSelectConversation={setSelectedConversationId}
+              onShareConversation={setShareConversationId}
+              refreshKey={refreshKey}
+              sourceFilter={librarySourceFilter}
+              onSourceFilterChange={setLibrarySourceFilter}
+              onSourceCounts={setLibrarySourceCounts}
+            />
+          </>
+        )}
 
-      {hasUsableInbox &&
-        activePage === "chat" &&
-        conversationApi &&
-        (chatEnabled ? (
-          <ChatScreen
+        {activePage === "shared" && <SharedWithMe initialShareToken={shareToken} />}
+
+        {hasUsableInbox &&
+          activePage === "chat" &&
+          conversationApi &&
+          (chatEnabled ? (
+            <ChatScreen
+              api={activeConversationApi}
+              refreshKey={refreshKey}
+              onOpenConversation={(id) => {
+                setSelectedConversationId(id);
+                setActivePage("inbox");
+              }}
+            />
+          ) : (
+            <ChatUnderDevelopmentPanel />
+          ))}
+
+        {hasUsableInbox && activePage === "connections" && api && (
+          <ConnectionsScreen
+            api={api}
+            hasFireflies={firefliesConnected}
+            hasGranola={granolaConnected}
+            hasSoundcore={soundcoreConnected}
+            hasSoundcoreCredentials={hasSoundcoreKey === true}
+            hasGoogleMeet={hasGoogleMeet === true}
+            hasFirefliesBackendAccess={hasFirefliesBackendAccess === true}
+            hasGranolaBackendAccess={hasGranolaBackendAccess === true}
+            hasSoundcoreBackendAccess={hasSoundcoreBackendAccess === true}
+            hasAssemblyAIKey={hasTranscriptionKeys.assemblyai}
+            hasAssemblyAIBackendAccess={hasTranscriptionBackendAccess.assemblyai}
+            hasDeepgramKey={hasTranscriptionKeys.deepgram}
+            hasDeepgramBackendAccess={hasTranscriptionBackendAccess.deepgram}
+            googleMeetAvailable={googleMeetAvailable}
+            onAddSource={() => openSourcesSetup()}
+            onConnectSoundcore={() => openSourcesSetup("soundcore-key")}
+            onFinishSoundcoreAccess={async () => {
+              await handleFinishMissingSourceAccess();
+            }}
+            onAddTranscript={() => openSourcesSetup("transcript-import")}
+            onFinishTranscriptionProviderAccess={(provider) =>
+              ensureSecretBackendAccess(
+                provider === "assemblyai" ? ASSEMBLYAI_SECRET_NAME : DEEPGRAM_SECRET_NAME,
+              )
+            }
+            onRefresh={() => setRefreshKey((k) => k + 1)}
+          />
+        )}
+
+        {shareConversationId && (
+          <ConversationShareDialog
             api={activeConversationApi}
-            refreshKey={refreshKey}
-            onOpenConversation={(id) => {
-              setSelectedConversationId(id);
+            tcw={tcw}
+            conversationId={shareConversationId}
+            onClose={() => setShareConversationId(null)}
+          />
+        )}
+
+        {showAddHub && api && (
+          <AddTranscriptHub
+            api={api}
+            transcriptionReady={{
+              assemblyai:
+                hasTranscriptionKeys.assemblyai === true &&
+                hasTranscriptionBackendAccess.assemblyai === true,
+              deepgram:
+                hasTranscriptionKeys.deepgram === true &&
+                hasTranscriptionBackendAccess.deepgram === true,
+            }}
+            sourcesConnected={{
+              fireflies: firefliesConnected,
+              granola: granolaConnected,
+              soundcore: soundcoreConnected,
+              googleMeet: hasGoogleMeet === true,
+            }}
+            onClose={() => setShowAddHub(false)}
+            onImported={(conversationId) => {
+              setShowAddHub(false);
               setActivePage("inbox");
+              setSelectedConversationId(conversationId);
+              setRefreshKey((k) => k + 1);
+            }}
+            onOpenSources={() => {
+              setShowAddHub(false);
+              openSourcesSetup();
             }}
           />
-        ) : (
-          <ChatUnderDevelopmentPanel />
-        ))}
-
-      {hasUsableInbox && activePage === "connections" && api && (
-        <ConnectionsScreen
-          api={api}
-          hasFireflies={firefliesConnected}
-          hasGranola={granolaConnected}
-          hasSoundcore={soundcoreConnected}
-          hasSoundcoreCredentials={hasSoundcoreKey === true}
-          hasGoogleMeet={hasGoogleMeet === true}
-          hasFirefliesBackendAccess={hasFirefliesBackendAccess === true}
-          hasGranolaBackendAccess={hasGranolaBackendAccess === true}
-          hasSoundcoreBackendAccess={hasSoundcoreBackendAccess === true}
-          hasAssemblyAIKey={hasTranscriptionKeys.assemblyai}
-          hasAssemblyAIBackendAccess={hasTranscriptionBackendAccess.assemblyai}
-          hasDeepgramKey={hasTranscriptionKeys.deepgram}
-          hasDeepgramBackendAccess={hasTranscriptionBackendAccess.deepgram}
-          googleMeetAvailable={googleMeetAvailable}
-          onAddSource={() => openSourcesSetup()}
-          onConnectSoundcore={() => openSourcesSetup("soundcore-key")}
-          onFinishSoundcoreAccess={async () => {
-            await handleFinishMissingSourceAccess();
-          }}
-          onAddTranscript={() => openSourcesSetup("transcript-import")}
-          onFinishTranscriptionProviderAccess={(provider) =>
-            ensureSecretBackendAccess(
-              provider === "assemblyai" ? ASSEMBLYAI_SECRET_NAME : DEEPGRAM_SECRET_NAME,
-            )
-          }
-          onRefresh={() => setRefreshKey((k) => k + 1)}
-        />
-      )}
-
-      {shareConversationId && (
-        <ConversationShareDialog
-          api={activeConversationApi}
-          tcw={tcw}
-          conversationId={shareConversationId}
-          onClose={() => setShareConversationId(null)}
-        />
-      )}
-
-      {showAddHub && api && (
-        <AddTranscriptHub
-          api={api}
-          transcriptionReady={{
-            assemblyai:
-              hasTranscriptionKeys.assemblyai === true &&
-              hasTranscriptionBackendAccess.assemblyai === true,
-            deepgram:
-              hasTranscriptionKeys.deepgram === true &&
-              hasTranscriptionBackendAccess.deepgram === true,
-          }}
-          sourcesConnected={{
-            fireflies: firefliesConnected,
-            granola: granolaConnected,
-            soundcore: soundcoreConnected,
-            googleMeet: hasGoogleMeet === true,
-          }}
-          onClose={() => setShowAddHub(false)}
-          onImported={(conversationId) => {
-            setShowAddHub(false);
-            setActivePage("inbox");
-            setSelectedConversationId(conversationId);
-            setRefreshKey((k) => k + 1);
-          }}
-          onOpenSources={() => {
-            setShowAddHub(false);
-            openSourcesSetup();
-          }}
-        />
-      )}
-
-      {api && hasBackendDelegation === true && (
-        <GlobalSyncIndicator
-          api={api}
-          onViewResults={() => {
-            setActivePage("inbox");
-            setSelectedConversationId(null);
-            setRefreshKey((k) => k + 1);
-          }}
-        />
-      )}
-    </AppShell>
+        )}
+      </AppShell>
+    </SyncManagerProvider>
   );
 }
 
@@ -2851,6 +2886,37 @@ const s: Record<string, React.CSSProperties> = {
     borderRadius: 999,
     letterSpacing: "0.08em",
     textTransform: "uppercase" as const,
+    whiteSpace: "nowrap" as const,
+  },
+  syncStripButton: {
+    fontFamily: FONT,
+    width: "calc(100% - 28px)",
+    margin: "0 14px 10px",
+    border: "var(--lst-border)",
+    background: "var(--lst-ink-08)",
+    color: "var(--lst-blue)",
+    padding: "8px 10px",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    textAlign: "left",
+    cursor: "pointer",
+    fontSize: 12,
+    lineHeight: 1.25,
+  },
+  syncStripDot: {
+    width: 7,
+    height: 7,
+    borderRadius: "50%",
+    background: "var(--lst-warn)",
+    display: "inline-block",
+    flexShrink: 0,
+    animation: "syncPulse 1.5s ease-in-out infinite",
+  },
+  syncStripLabel: {
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
     whiteSpace: "nowrap" as const,
   },
   statusPanel: {
