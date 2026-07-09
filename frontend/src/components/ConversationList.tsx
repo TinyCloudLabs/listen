@@ -1,6 +1,10 @@
 import { useState, useEffect, useCallback, useMemo, useRef, type FC, type MouseEvent } from "react";
 import type { ApiClient } from "@listen/client";
-import { readConversationPageCache, writeConversationPageCache } from "../conversationPageCache";
+import {
+  readConversationPageCache,
+  writeConversationPageCache,
+  type ConversationCacheScope,
+} from "../conversationPageCache";
 import { InboxFilters, SOURCE_CHIPS, type SourceFilter } from "./InboxFilters";
 import { InboxBulkBar } from "./InboxBulkBar";
 import { InboxRow, InboxRowGrid } from "./InboxRow";
@@ -34,6 +38,7 @@ interface ConversationListProps {
   onShareConversation?: (id: string) => void;
   refreshKey?: number;
   focusSearchKey?: number;
+  cacheScope?: ConversationCacheScope;
 }
 
 const PAGE_SIZE = 20;
@@ -86,6 +91,7 @@ export const ConversationList: FC<ConversationListProps> = ({
   onShareConversation,
   refreshKey,
   focusSearchKey,
+  cacheScope,
 }) => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [total, setTotal] = useState(0);
@@ -112,7 +118,8 @@ export const ConversationList: FC<ConversationListProps> = ({
       const path = conversationPagePath(page, source, query);
       const append = page > 1;
       // Searches bypass the page cache — cache slots are for the browse path.
-      const cached = append || query ? null : readConversationPageCache<Conversation>(path);
+      const cached =
+        append || query ? null : readConversationPageCache<Conversation>(path, cacheScope);
       const requestId = requestRef.current + 1;
       requestRef.current = requestId;
 
@@ -150,7 +157,7 @@ export const ConversationList: FC<ConversationListProps> = ({
         }
         setTotal(data.total);
         setSourceCounts(data.source_counts ?? null);
-        if (!query) writeConversationPageCache(path, data);
+        if (!query) writeConversationPageCache(path, data, cacheScope);
         setError(null);
       } catch (err) {
         if (requestRef.current !== requestId) return;
@@ -169,7 +176,7 @@ export const ConversationList: FC<ConversationListProps> = ({
         }
       }
     },
-    [api],
+    [api, cacheScope],
   );
 
   useEffect(() => {

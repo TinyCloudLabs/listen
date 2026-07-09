@@ -159,6 +159,7 @@ vi.mock("@listen/client", () => {
 });
 
 import { App } from "../App";
+import { conversationPageCacheKey } from "../conversationPageCache";
 import { backendWorkspaceCacheKey, writeBackendWorkspaceCache } from "../lib/backendWorkspaceCache";
 import { recordBackendDelegationGrant } from "../lib/backendDelegationRenewal";
 
@@ -771,7 +772,7 @@ describe("App manual sign-in processing", () => {
       return Promise.resolve({});
     });
     localStorage.setItem(
-      "listen:conversation-page:v1:/api/conversations?limit=20&offset=0",
+      conversationPageCacheKey("/api/conversations?limit=20&offset=0", "0xabc123"),
       JSON.stringify({
         conversations: [
           {

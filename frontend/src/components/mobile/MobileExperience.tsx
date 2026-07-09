@@ -4,6 +4,7 @@ import type { TranscriptSentence } from "../TranscriptPane";
 import {
   readConversationDetailCache,
   readConversationPageCache,
+  type ConversationCacheScope,
   writeConversationDetailCache,
   writeConversationPageCache,
 } from "../../conversationPageCache";
@@ -44,6 +45,7 @@ interface MobileExperienceProps {
   activeRoute: ShellRoute;
   selectedConversationId: string | null;
   refreshKey: number;
+  cacheScope?: ConversationCacheScope;
   hasFireflies: boolean;
   hasGranola?: boolean;
   hasSoundcore?: boolean;
@@ -83,6 +85,11 @@ const STOPWORDS = new Set([
 ]);
 
 const MOBILE_CONVERSATIONS_PATH = "/api/conversations?limit=100&offset=0";
+const MOBILE_INTRO_MESSAGE: MobileChatMessage = {
+  id: "intro",
+  role: "assistant",
+  text: "Ask about synced transcripts. I will search titles, summaries, and transcript text, then cite matching conversations.",
+};
 
 function tokenize(input: string): string[] {
   return input
@@ -214,6 +221,7 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
   activeRoute,
   selectedConversationId,
   refreshKey,
+  cacheScope,
   hasFireflies,
   hasGranola,
   hasSoundcore,
@@ -241,16 +249,18 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [chatBusy, setChatBusy] = useState(false);
-  const [chatMessages, setChatMessages] = useState<MobileChatMessage[]>([
-    {
-      id: "intro",
-      role: "assistant",
-      text: "Ask about synced transcripts. I will search titles, summaries, and transcript text, then cite matching conversations.",
-    },
-  ]);
+  const [chatMessages, setChatMessages] = useState<MobileChatMessage[]>([MOBILE_INTRO_MESSAGE]);
 
   useEffect(() => {
-    const cached = readConversationPageCache<ConversationSummary>(MOBILE_CONVERSATIONS_PATH);
+    setChatBusy(false);
+    setChatMessages([MOBILE_INTRO_MESSAGE]);
+  }, [cacheScope]);
+
+  useEffect(() => {
+    const cached = readConversationPageCache<ConversationSummary>(
+      MOBILE_CONVERSATIONS_PATH,
+      cacheScope,
+    );
     let cancelled = false;
 
     if (cached) {
@@ -272,7 +282,7 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
         };
         setConversations(next.conversations);
         setTotal(next.total);
-        writeConversationPageCache(MOBILE_CONVERSATIONS_PATH, next);
+        writeConversationPageCache(MOBILE_CONVERSATIONS_PATH, next, cacheScope);
         setConversationError(null);
       })
       .catch((err) => {
@@ -286,7 +296,7 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [api, refreshKey]);
+  }, [api, cacheScope, refreshKey]);
 
   useEffect(() => {
     if (!selectedConversationId) {
@@ -295,7 +305,7 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
       return;
     }
 
-    const cached = readConversationDetailCache<DetailResponse>(selectedConversationId);
+    const cached = readConversationDetailCache<DetailResponse>(selectedConversationId, cacheScope);
     let cancelled = false;
     setDetailError(null);
 
@@ -313,7 +323,7 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
         if (cancelled) return;
         const normalized = normalizeDetailResponse(res);
         setDetail(normalized);
-        writeConversationDetailCache(selectedConversationId, normalized);
+        writeConversationDetailCache(selectedConversationId, normalized, cacheScope);
       })
       .catch((err) => {
         if (!cancelled && !cached) {
@@ -326,7 +336,7 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [api, selectedConversationId]);
+  }, [api, cacheScope, selectedConversationId]);
 
   const activeTab: MobileTab =
     activeRoute === "chat" ? "chat" : activeRoute === "connections" ? "connections" : "inbox";
@@ -368,19 +378,19 @@ export const MobileExperience: FC<MobileExperienceProps> = ({
   const getConversationDetail = async (
     conversation: ConversationSummary,
   ): Promise<DetailResponse> => {
-    const cached = readConversationDetailCache<DetailResponse>(conversation.id);
+    const cached = readConversationDetailCache<DetailResponse>(conversation.id, cacheScope);
     const path = `/api/conversations/${conversation.id}`;
 
     if (cached) {
       void api
         .get<DetailResponse>(path)
-        .then((fresh) => writeConversationDetailCache(conversation.id, fresh))
+        .then((fresh) => writeConversationDetailCache(conversation.id, fresh, cacheScope))
         .catch(() => {});
       return cached.data;
     }
 
     const fresh = await api.get<DetailResponse>(path);
-    writeConversationDetailCache(conversation.id, fresh);
+    writeConversationDetailCache(conversation.id, fresh, cacheScope);
     return fresh;
   };
 

@@ -124,4 +124,57 @@ describe("ChatScreen", () => {
     expect(screen.getByText(/roadmap priorities/i)).toBeInTheDocument();
     expect(getMock).toHaveBeenCalledWith("/api/conversations/01ABC");
   });
+
+  it("clears chat results when the signed-in cache scope changes", async () => {
+    localStorage.setItem(
+      conversationPageCacheKey(CHAT_CONVERSATIONS_PATH, "0xAlice"),
+      JSON.stringify({
+        conversations: [CONVERSATION],
+        total: 1,
+        cachedAt: "2026-03-20T15:00:00Z",
+      }),
+    );
+    localStorage.setItem(
+      conversationDetailCacheKey("01ABC", "0xAlice"),
+      JSON.stringify({
+        data: {
+          ...DETAIL_RESPONSE,
+          conversation: { ...CONVERSATION, title: "Cached Planning" },
+        },
+        cachedAt: "2026-03-20T15:00:00Z",
+      }),
+    );
+
+    api = mockApi({ get: vi.fn().mockReturnValue(new Promise(() => {})) });
+    const { rerender } = render(
+      <ChatScreen
+        api={api}
+        refreshKey={0}
+        cacheScope="0xAlice"
+        onOpenConversation={onOpenConversation}
+      />,
+    );
+
+    await screen.findByText("Searches 1 synced transcript.");
+    fireEvent.change(screen.getByPlaceholderText("Search across transcripts"), {
+      target: { value: "roadmap" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+
+    expect(await screen.findByText("Cached Planning")).toBeInTheDocument();
+
+    rerender(
+      <ChatScreen
+        api={api}
+        refreshKey={0}
+        cacheScope="0xBob"
+        onOpenConversation={onOpenConversation}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("Cached Planning")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText(/Ask about your synced transcripts/i)).toBeInTheDocument();
+  });
 });
