@@ -13,11 +13,10 @@ interface SchemaRoutesConfig {
  * read (backend-primary; the frontend falls back to seeding via its own session
  * if this is unavailable or fails).
  *
- * NOTE: the backend delegation currently only requests `tinycloud.sql/read` and
- * `tinycloud.sql/write` (see `backendDelegationPermissions`), so this endpoint is
- * expected to fail with a 401 (`requiredAction: tinycloud.sql/schema`) for an
- * unseeded DB until the backend delegation gains the `schema` ability. The
- * frontend fallback covers that case today. Tracked as a follow-up.
+ * The backend delegation requests `tinycloud.sql/schema` on the conversations
+ * path (see `backendDelegationPermissions`), so `ensureSchema` can create and
+ * migrate the schema here for fresh accounts. The browser fallback remains for
+ * when the backend is offline or the delegation is stale.
  */
 export function createSchemaRouter(config: SchemaRoutesConfig) {
   const { authMiddleware, delegationMiddleware } = config;
