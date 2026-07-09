@@ -11,6 +11,7 @@ import {
 } from "react";
 import type { ApiClient } from "@listen/client";
 import { debugLog, startDebugStep } from "./debug";
+import { parseStorageQuotaError, type StorageQuotaErrorDetails } from "./storageQuotaError";
 
 const LAST_SYNC_KEY = "lastSyncTimestamp";
 const FIREFLIES_JOB_NOT_FOUND_RETRY_LIMIT = 8;
@@ -132,6 +133,7 @@ interface SyncManagerContextValue {
   progress: SyncProgress | null;
   result: SyncResult | null;
   error: string | null;
+  storageQuotaError: StorageQuotaErrorDetails | null;
   lastSync: string | null;
   startFirefliesJob: (mode: "incremental" | "full") => Promise<void>;
   startGranolaJob: (mode: "incremental" | "full") => Promise<void>;
@@ -309,6 +311,7 @@ export const SyncManagerProvider: FC<SyncManagerProviderProps> = ({
   const [progress, setProgress] = useState<SyncProgress | null>(null);
   const [result, setResult] = useState<SyncResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const storageQuotaError = useMemo(() => (error ? parseStorageQuotaError(error) : null), [error]);
   const [lastSync, setLastSync] = useState<string | null>(() =>
     localStorage.getItem(LAST_SYNC_KEY),
   );
@@ -1101,6 +1104,7 @@ export const SyncManagerProvider: FC<SyncManagerProviderProps> = ({
       progress,
       result,
       error,
+      storageQuotaError,
       lastSync,
       startFirefliesJob,
       startGranolaJob,
@@ -1125,6 +1129,7 @@ export const SyncManagerProvider: FC<SyncManagerProviderProps> = ({
       startSoundcoreSync,
       startSyncAll,
       startSyncSource,
+      storageQuotaError,
       syncSource,
       syncing,
     ],

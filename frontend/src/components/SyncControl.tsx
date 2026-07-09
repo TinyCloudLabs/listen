@@ -2,6 +2,7 @@ import { useState, useEffect, type FC } from "react";
 import type { ApiClient } from "@listen/client";
 import { debugLog } from "../lib/debug";
 import { formatSyncTimeAgo, useSyncManager } from "../lib/syncManager";
+import { StorageQuotaErrorCard } from "./StorageQuotaErrorCard";
 
 interface WebhookStatus {
   configured: boolean;
@@ -61,6 +62,7 @@ export const SyncControl: FC<SyncControlProps> = ({
     progress,
     result,
     error,
+    storageQuotaError,
     lastSync,
     startFirefliesJob,
     startGranolaJob,
@@ -344,7 +346,10 @@ export const SyncControl: FC<SyncControlProps> = ({
       )}
 
       {/* Error */}
-      {error && (
+      {error && storageQuotaError && (
+        <StorageQuotaErrorCard message={error} style={s.quotaErrorBanner} />
+      )}
+      {error && !storageQuotaError && (
         <div style={s.errorBanner}>
           <span style={s.errorIcon}>!</span>
           {error}
@@ -691,6 +696,11 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: 11,
     fontWeight: 700,
     flexShrink: 0,
+  },
+  quotaErrorBanner: {
+    marginTop: 16,
+    background: "var(--lst-alert-soft)",
+    border: "1px solid var(--lst-alert)",
   },
 
   // Pending

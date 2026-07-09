@@ -80,17 +80,17 @@ function PreferenceIcon({ preference }: { preference: ThemePreference }) {
 export const ThemeToggle: FC = () => {
   const { preference, cyclePreference } = useTheme();
   const label = LABELS[preference];
+  const tooltip = `Theme: ${label} — click to switch`;
 
   return (
     <button
       type="button"
       style={styles.button}
       onClick={cyclePreference}
-      aria-label={`Theme: ${label.toLowerCase()}`}
-      title={`Theme: ${label.toLowerCase()}`}
+      aria-label={tooltip}
+      title={tooltip}
     >
       <PreferenceIcon preference={preference} />
-      <span style={styles.label}>{label}</span>
     </button>
   );
 };
@@ -101,18 +101,13 @@ const styles: Record<string, CSSProperties> = {
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
-    width: "100%",
+    width: 30,
+    height: 30,
     border: "var(--lst-border)",
     background: "transparent",
     color: "var(--lst-blue)",
-    borderRadius: 999,
-    padding: "6px 12px",
-    fontSize: 12.5,
-    fontWeight: 500,
+    borderRadius: 6,
+    padding: 0,
     cursor: "pointer",
-  },
-  label: {
-    fontFamily: FONT,
   },
 };

@@ -1076,7 +1076,7 @@ describe("App manual sign-in processing", () => {
     expect(mockGet).not.toHaveBeenCalledWith("/api/webhooks/fireflies/pending");
   });
 
-  it("opens Soundcore credential setup from Connections when another source is connected", async () => {
+  it("opens Soundcore credential setup from Sources & sync when another source is connected", async () => {
     mockSecretGet.mockImplementation((secretName: string) => {
       if (secretName.startsWith("SOUNDCORE_")) {
         return Promise.resolve({
@@ -1092,9 +1092,9 @@ describe("App manual sign-in processing", () => {
     fireEvent.click(await screen.findByRole("button", { name: /^settings$/i }));
 
     await waitFor(() => {
-      expect(screen.getAllByRole("heading", { name: /connections/i }).length).toBeGreaterThan(0);
+      expect(screen.getAllByRole("heading", { name: /sources & sync/i }).length).toBeGreaterThan(0);
     });
-    expect(await screen.findByText(/available connections/i)).toBeInTheDocument();
+    expect(await screen.findByText(/available sources/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /add credentials/i }));
 

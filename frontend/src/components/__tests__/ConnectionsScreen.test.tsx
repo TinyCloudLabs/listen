@@ -65,7 +65,7 @@ describe("ConnectionsScreen", () => {
     expect(connectButtons.at(-1)).not.toBeDisabled();
   });
 
-  it("shows transcription providers as available connections", () => {
+  it("shows transcription providers as available sources", () => {
     renderConnections();
 
     expect(screen.getByText("AssemblyAI")).toBeInTheDocument();

@@ -9,6 +9,8 @@ import {
   type SyncResult,
   type SyncSource,
 } from "../lib/syncManager";
+import { parseStorageQuotaError } from "../lib/storageQuotaError";
+import { StorageQuotaErrorCard } from "./StorageQuotaErrorCard";
 
 interface ConnectionsScreenProps {
   api: ApiClient;
@@ -103,6 +105,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
     progress,
     result,
     error: syncError,
+    storageQuotaError: syncStorageQuotaError,
     lastSync,
     startSyncSource,
     startSyncAll,
@@ -187,6 +190,9 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
   const availableCount = available.length;
   const syncBusy = syncing || busySource !== null;
   const visibleError = localError ?? syncError;
+  const visibleStorageQuotaError = localError
+    ? parseStorageQuotaError(localError)
+    : syncStorageQuotaError;
 
   const copyLocalImporterCommand = async () => {
     await navigator.clipboard?.writeText(LOCAL_IMPORTER_AGENT_PROMPT);
@@ -236,7 +242,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
       <header style={s.header}>
         <span style={s.eyebrow}>· settings / sources</span>
         <div style={s.headerRow}>
-          <h2 style={s.title}>Connections</h2>
+          <h2 style={s.title}>Sources & sync</h2>
           <div style={s.headerActions}>
             <button
               type="button"
@@ -261,7 +267,10 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
       </header>
 
       {message && <div style={s.notice}>{message}</div>}
-      {visibleError && <div style={s.error}>{visibleError}</div>}
+      {visibleError && visibleStorageQuotaError && (
+        <StorageQuotaErrorCard message={visibleError} style={s.quotaError} />
+      )}
+      {visibleError && !visibleStorageQuotaError && <div style={s.error}>{visibleError}</div>}
       {(syncing || progress || result || lastSync) && (
         <SyncStatusSummary
           syncing={syncing}
@@ -345,7 +354,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
         )}
 
         <div style={{ ...s.sectionLabelRow, marginTop: 28 }}>
-          <span style={s.sectionLabel}>· available connections · {availableCount}</span>
+          <span style={s.sectionLabel}>· available sources · {availableCount}</span>
           <span style={s.sectionRule} />
         </div>
 
@@ -871,6 +880,12 @@ const s: Record<string, React.CSSProperties> = {
     background: "var(--lst-alert-soft)",
     color: "var(--lst-alert)",
     fontSize: 13,
+  },
+  quotaError: {
+    padding: "12px 32px",
+    border: "none",
+    borderBottom: "1px solid var(--lst-alert)",
+    background: "var(--lst-alert-soft)",
   },
   syncSummary: {
     padding: "10px 32px",

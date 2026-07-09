@@ -18,11 +18,6 @@ export interface ShellSourceConfig {
   status?: ShellSourceStatus;
 }
 
-export interface ShellFolderConfig {
-  name: string;
-  count: number;
-}
-
 export interface ShellUser {
   initials: string;
   name: string;
@@ -38,7 +33,6 @@ interface AppShellProps {
   user: ShellUser;
   userMenu?: ReactNode;
   sources: ShellSourceConfig[];
-  folders: ShellFolderConfig[];
   navCounts?: Partial<Record<Exclude<ShellRoute, "connections" | "sources">, number | null>>;
   onAddClick?: () => void;
   onSearchClick?: () => void;
@@ -161,7 +155,6 @@ export const AppShell: FC<AppShellProps> = ({
   user,
   userMenu,
   sources,
-  folders,
   navCounts,
   onAddClick,
   onSearchClick,
@@ -270,29 +263,6 @@ export const AppShell: FC<AppShellProps> = ({
             );
           })}
         </nav>
-
-        {folders.length > 0 && (
-          <>
-            {/* Folders */}
-            <div style={shell.sectionHeading}>
-              <span style={shell.sectionDash}>· folders</span>
-            </div>
-            <div>
-              {folders.map((folder) => (
-                <button
-                  key={folder.name}
-                  type="button"
-                  onClick={() => onRouteChange("inbox")}
-                  {...hoverProps(`folder:${folder.name}`, shell.sideRow)}
-                >
-                  <ShellIcon name="folder" size={13} />
-                  <span style={shell.sideRowLabel}>{folder.name}</span>
-                  <span style={shell.sideRowCount}>{folder.count}</span>
-                </button>
-              ))}
-            </div>
-          </>
-        )}
 
         {/* Sources */}
         <div style={shell.sectionHeading}>
@@ -558,6 +528,8 @@ const shell: Record<string, CSSProperties> = {
     flexShrink: 0,
   },
   themeRow: {
+    display: "flex",
+    justifyContent: "flex-end",
     padding: "10px 14px",
     borderTop: "var(--lst-border)",
   },

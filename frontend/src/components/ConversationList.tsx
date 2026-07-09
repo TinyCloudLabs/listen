@@ -4,6 +4,8 @@ import { readConversationPageCache, writeConversationPageCache } from "../conver
 import { InboxFilters, SOURCE_CHIPS, type SourceFilter } from "./InboxFilters";
 import { InboxBulkBar } from "./InboxBulkBar";
 import { InboxRow, InboxRowGrid } from "./InboxRow";
+import { StorageQuotaErrorCard } from "./StorageQuotaErrorCard";
+import { parseStorageQuotaError } from "../lib/storageQuotaError";
 
 interface Conversation {
   id: string;
@@ -336,6 +338,8 @@ export const ConversationList: FC<ConversationListProps> = ({
   }
 
   if (error) {
+    if (parseStorageQuotaError(error)) return <StorageQuotaErrorCard message={error} />;
+
     return (
       <div style={s.errorCard}>
         <span style={s.errorIcon}>!</span>

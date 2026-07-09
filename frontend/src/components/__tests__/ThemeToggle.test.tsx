@@ -47,14 +47,18 @@ describe("ThemeToggle", () => {
     render(<ThemeToggle />);
     expect(document.documentElement.dataset.theme).toBeUndefined();
     expect(localStorage.getItem("listen:theme")).toBeNull();
-    expect(screen.getByRole("button", { name: /theme: system/i })).toBeInTheDocument();
+    const button = screen.getByRole("button", { name: /theme: system — click to switch/i });
+    expect(button).toHaveAttribute("title", "Theme: System — click to switch");
+    expect(screen.queryByText("System")).not.toBeInTheDocument();
   });
 
   it("defaults to System and resolves to dark when the OS prefers dark", () => {
     installMatchMedia(true);
     render(<ThemeToggle />);
     expect(document.documentElement.dataset.theme).toBe("dark");
-    expect(screen.getByRole("button", { name: /theme: system/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /theme: system — click to switch/i }),
+    ).toBeInTheDocument();
   });
 
   it("follows live OS changes while the preference is System", () => {
@@ -73,23 +77,31 @@ describe("ThemeToggle", () => {
     render(<ThemeToggle />);
 
     // System (default)
-    expect(screen.getByRole("button", { name: /theme: system/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /theme: system — click to switch/i }),
+    ).toBeInTheDocument();
 
     // → Light
-    fireEvent.click(screen.getByRole("button", { name: /theme: system/i }));
-    expect(screen.getByRole("button", { name: /theme: light/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /theme: system — click to switch/i }));
+    expect(
+      screen.getByRole("button", { name: /theme: light — click to switch/i }),
+    ).toBeInTheDocument();
     expect(document.documentElement.dataset.theme).toBeUndefined();
     expect(localStorage.getItem("listen:theme")).toBe("light");
 
     // → Dark
-    fireEvent.click(screen.getByRole("button", { name: /theme: light/i }));
-    expect(screen.getByRole("button", { name: /theme: dark/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /theme: light — click to switch/i }));
+    expect(
+      screen.getByRole("button", { name: /theme: dark — click to switch/i }),
+    ).toBeInTheDocument();
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect(localStorage.getItem("listen:theme")).toBe("dark");
 
     // → System
-    fireEvent.click(screen.getByRole("button", { name: /theme: dark/i }));
-    expect(screen.getByRole("button", { name: /theme: system/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /theme: dark — click to switch/i }));
+    expect(
+      screen.getByRole("button", { name: /theme: system — click to switch/i }),
+    ).toBeInTheDocument();
     expect(localStorage.getItem("listen:theme")).toBe("system");
   });
 
@@ -97,8 +109,10 @@ describe("ThemeToggle", () => {
     const media = installMatchMedia(false);
     render(<ThemeToggle />);
 
-    fireEvent.click(screen.getByRole("button", { name: /theme: system/i }));
-    expect(screen.getByRole("button", { name: /theme: light/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /theme: system — click to switch/i }));
+    expect(
+      screen.getByRole("button", { name: /theme: light — click to switch/i }),
+    ).toBeInTheDocument();
 
     media.setDark(true);
     // Still light — pinned preference ignores the OS.
@@ -110,7 +124,9 @@ describe("ThemeToggle", () => {
 
     render(<ThemeToggle />);
     expect(document.documentElement.dataset.theme).toBe("dark");
-    expect(screen.getByRole("button", { name: /theme: dark/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /theme: dark — click to switch/i }),
+    ).toBeInTheDocument();
   });
 
   it("restores a persisted System preference on mount", () => {
@@ -119,6 +135,8 @@ describe("ThemeToggle", () => {
 
     render(<ThemeToggle />);
     expect(document.documentElement.dataset.theme).toBe("dark");
-    expect(screen.getByRole("button", { name: /theme: system/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /theme: system — click to switch/i }),
+    ).toBeInTheDocument();
   });
 });

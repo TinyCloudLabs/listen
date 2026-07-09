@@ -2199,7 +2199,7 @@ export function App() {
                 : activePage === "sources"
                   ? "Add sources."
                   : activePage === "connections"
-                    ? "Connections."
+                    ? "Sources & sync."
                     : activePage === "shared"
                       ? "Shared with me."
                       : activePage === "chat"
@@ -2328,32 +2328,11 @@ export function App() {
 
   const topbarActions = (
     <>
-      {firefliesConnected && <span style={s.badge}>Fireflies</span>}
-      {hasKey === true &&
-        (hasBackendDelegation === false || hasFirefliesBackendAccess === false) && (
-          <span style={s.badge}>Fireflies key saved</span>
-        )}
-      {granolaConnected && <span style={s.badge}>Granola</span>}
-      {hasGranolaKey === true &&
-        (hasBackendDelegation === false || hasGranolaBackendAccess === false) && (
-          <span style={s.badge}>Granola key saved</span>
-        )}
-      {soundcoreConnected && <span style={s.badge}>Soundcore</span>}
-      {hasSoundcoreKey === true &&
-        (hasBackendDelegation === false || hasSoundcoreBackendAccess === false) && (
-          <span style={s.badge}>Soundcore credentials saved</span>
-        )}
-      {assemblyAIConnected && <span style={s.badge}>AssemblyAI</span>}
-      {hasTranscriptionKeys.assemblyai === true &&
-        (hasBackendDelegation === false || hasTranscriptionBackendAccess.assemblyai === false) && (
-          <span style={s.badge}>AssemblyAI key saved</span>
-        )}
-      {deepgramConnected && <span style={s.badge}>Deepgram</span>}
-      {hasTranscriptionKeys.deepgram === true &&
-        (hasBackendDelegation === false || hasTranscriptionBackendAccess.deepgram === false) && (
-          <span style={s.badge}>Deepgram key saved</span>
-        )}
-      {hasGoogleMeet && <span style={s.badge}>Google Meet</span>}
+      {connectedSourceCount > 0 && (
+        <span style={s.badge}>
+          {connectedSourceCount} source{connectedSourceCount === 1 ? "" : "s"}
+        </span>
+      )}
       {backendUnavailable && <span style={s.badge}>Backend offline</span>}
       <span style={s.badgeSolid}>{did ? "Connected" : "Restored"}</span>
     </>
@@ -2510,7 +2489,6 @@ export function App() {
         user={{ initials: userInitials, name: userName, plan: userPlan }}
         userMenu={userMenu}
         sources={sourceItems}
-        folders={[]}
         onSelectSource={hasUsableInbox || showOptimisticInbox ? handleSelectSource : undefined}
         activeSourceKey={activeSourceKey}
         onAddClick={api && hasBackendDelegation === true ? () => setShowAddHub(true) : undefined}
