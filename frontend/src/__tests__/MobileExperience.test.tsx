@@ -3,6 +3,7 @@ import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/re
 import { MobileExperience } from "../components/mobile/MobileExperience";
 import { conversationDetailCacheKey, conversationPageCacheKey } from "../conversationPageCache";
 import type { ApiClient } from "@listen/client";
+import type { ShellRoute } from "../components/AppShell";
 
 function mockApi(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
@@ -37,13 +38,18 @@ const DETAIL_RESPONSE = {
   ],
 };
 
-function renderMobile(api: ApiClient, selectedConversationId: string | null = null) {
+function renderMobile(
+  api: ApiClient,
+  selectedConversationId: string | null = null,
+  options: { activeRoute?: ShellRoute; cacheScope?: string } = {},
+) {
   return render(
     <MobileExperience
       api={api}
-      activeRoute="inbox"
+      activeRoute={options.activeRoute ?? "inbox"}
       selectedConversationId={selectedConversationId}
       refreshKey={0}
+      cacheScope={options.cacheScope}
       hasFireflies
       hasGoogleMeet={false}
       hasFirefliesBackendAccess
@@ -126,6 +132,65 @@ describe("MobileExperience", () => {
     expect(await screen.findByText("Cached Mobile Detail")).toBeInTheDocument();
     expect(screen.getByText(/roadmap priorities/i)).toBeInTheDocument();
     expect(getMock).toHaveBeenCalledWith("/api/conversations/01ABC");
+  });
+
+  it("clears mobile chat results when the signed-in cache scope changes", async () => {
+    localStorage.setItem(
+      conversationPageCacheKey(MOBILE_CONVERSATIONS_PATH, "0xAlice"),
+      JSON.stringify({
+        conversations: [CONVERSATION],
+        total: 1,
+        cachedAt: "2026-03-20T15:00:00Z",
+      }),
+    );
+    localStorage.setItem(
+      conversationDetailCacheKey("01ABC", "0xAlice"),
+      JSON.stringify({
+        data: {
+          ...DETAIL_RESPONSE,
+          conversation: { ...CONVERSATION, title: "Cached Mobile Planning" },
+        },
+        cachedAt: "2026-03-20T15:00:00Z",
+      }),
+    );
+
+    api = mockApi({ get: vi.fn().mockReturnValue(new Promise(() => {})) });
+    const { rerender } = renderMobile(api, null, {
+      activeRoute: "chat",
+      cacheScope: "0xAlice",
+    });
+
+    await screen.findByText("All transcripts - 1");
+    fireEvent.change(screen.getByPlaceholderText("Ask anything…"), {
+      target: { value: "roadmap" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("Cached Mobile Planning")).toBeInTheDocument();
+
+    rerender(
+      <MobileExperience
+        api={api}
+        activeRoute="chat"
+        selectedConversationId={null}
+        refreshKey={0}
+        cacheScope="0xBob"
+        hasFireflies
+        hasGoogleMeet={false}
+        hasFirefliesBackendAccess
+        googleMeetAvailable={false}
+        chatEnabled
+        onRouteChange={vi.fn()}
+        onSelectConversation={vi.fn()}
+        onAddSource={vi.fn()}
+        onRefresh={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("Cached Mobile Planning")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText(/Ask about synced transcripts/i)).toBeInTheDocument();
   });
 
   it("toggles an active source chip back to all locally", async () => {

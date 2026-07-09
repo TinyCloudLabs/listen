@@ -958,6 +958,7 @@ export function App() {
     () => (api || tcw ? createTinyCloudConversationApi(api, tcw) : null),
     [api, tcw],
   );
+  const conversationCacheScope = address?.toLowerCase() ?? did ?? null;
 
   const createBackendApiClient = useCallback((addr: string, bDid: string): ApiClient => {
     const baseClient = createApiClient(BACKEND_URL, {
@@ -1065,6 +1066,8 @@ export function App() {
     setHasTranscriptionBackendAccess(EMPTY_TRANSCRIPTION_STATUS);
     setHasGoogleMeet(null);
     setWorkspaceActionError(null);
+    setSelectedConversationId(null);
+    setShareConversationId(null);
   }, []);
 
   const signInDirectTinyCloud = useCallback(
@@ -1163,6 +1166,8 @@ export function App() {
       setLiveWritePathPrefix(conversationEventPathPrefix);
       setLiveWriteHost(restoredTinyCloud?.tcw.hosts[0] ?? null);
       setLiveWriteSpaceId(restoredTinyCloud?.tcw.spaceId ?? persistedSession?.spaceId ?? null);
+      setSelectedConversationId(null);
+      setShareConversationId(null);
       step.complete({
         restored: true,
         hasPersistedTinyCloud: Boolean(persistedSession),
@@ -1604,6 +1609,8 @@ export function App() {
         setLiveWritePathPrefix(conversationEventPathPrefix);
         setLiveWriteHost(tcwInstance.hosts[0] ?? null);
         setLiveWriteSpaceId(tcwInstance.spaceId ?? null);
+        setSelectedConversationId(null);
+        setShareConversationId(null);
         step.complete({
           mode: "backend",
           backendDid: info.did,
@@ -1663,6 +1670,8 @@ export function App() {
     setWorkspaceActionError(null);
     setWorkspaceActionLoading(false);
     setActivePage("inbox");
+    setSelectedConversationId(null);
+    setShareConversationId(null);
     setGmLapsedBanner(false);
   }, [address, backendDid, tcw]);
 
@@ -2271,6 +2280,7 @@ export function App() {
           activeRoute={activePage}
           selectedConversationId={selectedConversationId}
           refreshKey={refreshKey}
+          cacheScope={conversationCacheScope}
           hasFireflies={firefliesConnected}
           hasGranola={granolaConnected}
           hasSoundcore={soundcoreConnected}
@@ -2542,6 +2552,7 @@ export function App() {
           conversationId={selectedConversationId}
           onBack={() => setSelectedConversationId(null)}
           onShare={setShareConversationId}
+          cacheScope={conversationCacheScope}
           onUpdated={() => setRefreshKey((k) => k + 1)}
         />
       )}
@@ -2601,6 +2612,7 @@ export function App() {
             onSelectConversation={setSelectedConversationId}
             onShareConversation={setShareConversationId}
             refreshKey={refreshKey}
+            cacheScope={conversationCacheScope}
           />
         </>
       )}
@@ -2614,6 +2626,7 @@ export function App() {
           <ChatScreen
             api={activeConversationApi}
             refreshKey={refreshKey}
+            cacheScope={conversationCacheScope}
             onOpenConversation={(id) => {
               setSelectedConversationId(id);
               setActivePage("inbox");

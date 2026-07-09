@@ -3,6 +3,7 @@ import type { ApiClient } from "@listen/client";
 import {
   readConversationDetailCache,
   readConversationPageCache,
+  type ConversationCacheScope,
   writeConversationDetailCache,
   writeConversationPageCache,
 } from "../conversationPageCache";
@@ -50,6 +51,7 @@ interface ChatScreenProps {
   api: ApiClient;
   refreshKey?: number;
   onOpenConversation: (id: string) => void;
+  cacheScope?: ConversationCacheScope;
 }
 
 const STOPWORDS = new Set([
@@ -72,6 +74,12 @@ const STOPWORDS = new Set([
 ]);
 
 const CHAT_CONVERSATIONS_PATH = "/api/conversations?limit=100&offset=0";
+const INTRO_MESSAGE: ChatMessage = {
+  id: "intro",
+  role: "assistant",
+  content:
+    "Ask about your synced transcripts. I will search titles, summaries, and transcript text, then cite the matching conversations.",
+};
 
 function tokenize(input: string): string[] {
   return input
@@ -135,23 +143,30 @@ function snippetFor(text: string, tokens: string[], max = 180): string {
   return `${start > 0 ? "... " : ""}${snippet}${start + max < clean.length ? " ..." : ""}`;
 }
 
-export const ChatScreen: FC<ChatScreenProps> = ({ api, refreshKey, onOpenConversation }) => {
+export const ChatScreen: FC<ChatScreenProps> = ({
+  api,
+  refreshKey,
+  onOpenConversation,
+  cacheScope,
+}) => {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: "intro",
-      role: "assistant",
-      content:
-        "Ask about your synced transcripts. I will search titles, summaries, and transcript text, then cite the matching conversations.",
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([INTRO_MESSAGE]);
 
   useEffect(() => {
-    const cached = readConversationPageCache<ConversationSummary>(CHAT_CONVERSATIONS_PATH);
+    setDraft("");
+    setSearching(false);
+    setMessages([INTRO_MESSAGE]);
+  }, [cacheScope]);
+
+  useEffect(() => {
+    const cached = readConversationPageCache<ConversationSummary>(
+      CHAT_CONVERSATIONS_PATH,
+      cacheScope,
+    );
     let cancelled = false;
 
     if (cached) {
@@ -167,7 +182,7 @@ export const ChatScreen: FC<ChatScreenProps> = ({ api, refreshKey, onOpenConvers
       .then((res) => {
         if (cancelled) return;
         setConversations(res.conversations);
-        writeConversationPageCache(CHAT_CONVERSATIONS_PATH, res);
+        writeConversationPageCache(CHAT_CONVERSATIONS_PATH, res, cacheScope);
         setError(null);
       })
       .catch((err) => {
@@ -180,26 +195,26 @@ export const ChatScreen: FC<ChatScreenProps> = ({ api, refreshKey, onOpenConvers
     return () => {
       cancelled = true;
     };
-  }, [api, refreshKey]);
+  }, [api, cacheScope, refreshKey]);
 
   const getConversationDetail = useCallback(
     async (conversation: ConversationSummary): Promise<DetailResponse> => {
-      const cached = readConversationDetailCache<DetailResponse>(conversation.id);
+      const cached = readConversationDetailCache<DetailResponse>(conversation.id, cacheScope);
       const path = `/api/conversations/${conversation.id}`;
 
       if (cached) {
         void api
           .get<DetailResponse>(path)
-          .then((fresh) => writeConversationDetailCache(conversation.id, fresh))
+          .then((fresh) => writeConversationDetailCache(conversation.id, fresh, cacheScope))
           .catch(() => {});
         return cached.data;
       }
 
       const detail = await api.get<DetailResponse>(path);
-      writeConversationDetailCache(conversation.id, detail);
+      writeConversationDetailCache(conversation.id, detail, cacheScope);
       return detail;
     },
-    [api],
+    [api, cacheScope],
   );
 
   const suggestions = useMemo(() => {
