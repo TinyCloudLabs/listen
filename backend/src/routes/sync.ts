@@ -15,6 +15,7 @@ import {
 } from "../services/persist-conversation.js";
 import { readFirefliesApiKey } from "../services/fireflies-secret.js";
 import { resolveAppPath } from "../manifest.js";
+import type { SyncJobResumeRegistry } from "./sync-jobs.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -24,6 +25,7 @@ interface SyncRoutesConfig {
   authMiddleware: RequestHandler;
   delegationMiddleware: RequestHandler;
   backendKV?: BackendKV;
+  resumeRegistry?: SyncJobResumeRegistry;
   /** Optional factory for testing — defaults to creating a real FirefliesClient */
   createClient?: (apiKey: string) => FirefliesSyncClient;
   /** Delay between API calls in ms (default 800). Set to 0 for tests. */
@@ -195,6 +197,8 @@ async function readCurrentJob(backendKV: BackendKV, ownerAddress: string) {
   const jobId = current.ok && current.data?.data ? current.data.data : null;
   return jobId ? readJob(backendKV, ownerAddress, jobId) : null;
 }
+
+export { readCurrentJob as readCurrentFirefliesJobKV };
 
 async function writeJob(backendKV: BackendKV, job: FirefliesSyncJob): Promise<void> {
   const recordKey = jobRecordKey(job.ownerAddress, job.id);
@@ -570,6 +574,45 @@ export function createSyncRouter(config: SyncRoutesConfig) {
     }
   };
 
+  const resumeFirefliesJobOnPoll = async (
+    req: Request,
+    job: FirefliesSyncJob | null,
+  ): Promise<FirefliesSyncJob | null> => {
+    const ownerAddress = normalizeOwnerAddress(req);
+    if (isActiveJob(job) && !runningFirefliesJobs.has(ownerAddress)) {
+      const apiKey = await readFirefliesApiKey(req);
+      if (apiKey) {
+        runFirefliesJob({
+          runningJobs: runningFirefliesJobs,
+          job,
+          access: req.delegatedAccess!,
+          client: makeClient(apiKey),
+          limit: DEFAULT_LIMIT,
+          delayMs,
+          persistJob: persistFirefliesJob,
+        });
+      } else {
+        const failedJob = {
+          ...job,
+          status: "failed",
+          updatedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          message: "No Fireflies API key configured.",
+          errors: [...job.errors, "No Fireflies API key configured."],
+        } satisfies FirefliesSyncJob;
+        await persistFirefliesJob(failedJob);
+        return failedJob;
+      }
+    }
+
+    return job;
+  };
+
+  if (config.resumeRegistry) {
+    config.resumeRegistry.fireflies = async (req, job) =>
+      resumeFirefliesJobOnPoll(req, job as FirefliesSyncJob);
+  }
+
   // All sync routes require auth + delegation
   router.use(authMiddleware);
   router.use(delegationMiddleware);
@@ -666,33 +709,7 @@ export function createSyncRouter(config: SyncRoutesConfig) {
 
     try {
       const ownerAddress = normalizeOwnerAddress(req);
-      const job = await readCurrentFirefliesJob(ownerAddress);
-      if (isActiveJob(job) && !runningFirefliesJobs.has(ownerAddress)) {
-        const apiKey = await readFirefliesApiKey(req);
-        if (apiKey) {
-          runFirefliesJob({
-            runningJobs: runningFirefliesJobs,
-            job,
-            access: req.delegatedAccess!,
-            client: makeClient(apiKey),
-            limit: DEFAULT_LIMIT,
-            delayMs,
-            persistJob: persistFirefliesJob,
-          });
-        } else {
-          const failedJob = {
-            ...job,
-            status: "failed",
-            updatedAt: new Date().toISOString(),
-            completedAt: new Date().toISOString(),
-            message: "No Fireflies API key configured.",
-            errors: [...job.errors, "No Fireflies API key configured."],
-          } satisfies FirefliesSyncJob;
-          await persistFirefliesJob(failedJob);
-          res.json(failedJob);
-          return;
-        }
-      }
+      const job = await resumeFirefliesJobOnPoll(req, await readCurrentFirefliesJob(ownerAddress));
 
       res.json(job);
     } catch (err) {

@@ -8,11 +8,13 @@ import type { GranolaNoteSummary } from "../services/granola-client.js";
 import { readGranolaApiKey } from "../services/granola-secret.js";
 import { persistGranolaNote } from "../services/granola-sync.js";
 import { resolveAppPath } from "../manifest.js";
+import type { SyncJobResumeRegistry } from "./sync-jobs.js";
 
 interface GranolaSyncRoutesConfig {
   authMiddleware: RequestHandler;
   delegationMiddleware: RequestHandler;
   backendKV?: BackendKV;
+  resumeRegistry?: SyncJobResumeRegistry;
   createClient?: (apiKey: string) => Pick<GranolaClient, "listAllNotes" | "getNote">;
 }
 
@@ -148,6 +150,8 @@ async function readCurrentJob(backendKV: BackendKV, ownerAddress: string) {
   const jobId = current.ok && current.data?.data ? current.data.data : null;
   return jobId ? readJob(backendKV, ownerAddress, jobId) : null;
 }
+
+export { readCurrentJob as readCurrentGranolaJobKV };
 
 async function loadKnownGranolaSourceIds(sqlDb: Pick<ReturnType<typeof conversationSql>, "query">) {
   const knownIds = new Set<string>();
@@ -393,6 +397,43 @@ export function createGranolaSyncRouter(config: GranolaSyncRoutesConfig) {
     }
   };
 
+  const resumeGranolaJobOnPoll = async (
+    req: Request,
+    job: GranolaSyncJob | null,
+  ): Promise<GranolaSyncJob | null> => {
+    const ownerAddress = normalizeOwnerAddress(req);
+    if (isActiveJob(job) && !runningGranolaJobs.has(ownerAddress)) {
+      const apiKey = await readGranolaApiKey(req);
+      if (apiKey) {
+        runGranolaJob({
+          runningJobs: runningGranolaJobs,
+          job,
+          access: req.delegatedAccess!,
+          client: makeClient(apiKey),
+          persistJob: persistGranolaJob,
+        });
+      } else {
+        const failedJob = {
+          ...job,
+          status: "failed" as const,
+          updatedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          message: "No Granola API key configured.",
+          errors: [...job.errors, "No Granola API key configured."],
+        };
+        await persistGranolaJob(failedJob);
+        return failedJob;
+      }
+    }
+
+    return job;
+  };
+
+  if (config.resumeRegistry) {
+    config.resumeRegistry.granola = async (req, job) =>
+      resumeGranolaJobOnPoll(req, job as GranolaSyncJob);
+  }
+
   router.use(authMiddleware);
   router.use(delegationMiddleware);
 
@@ -477,31 +518,7 @@ export function createGranolaSyncRouter(config: GranolaSyncRoutesConfig) {
 
     try {
       const ownerAddress = normalizeOwnerAddress(req);
-      const job = await readCurrentGranolaJob(ownerAddress);
-      if (isActiveJob(job) && !runningGranolaJobs.has(ownerAddress)) {
-        const apiKey = await readGranolaApiKey(req);
-        if (apiKey) {
-          runGranolaJob({
-            runningJobs: runningGranolaJobs,
-            job,
-            access: req.delegatedAccess!,
-            client: makeClient(apiKey),
-            persistJob: persistGranolaJob,
-          });
-        } else {
-          const failedJob = {
-            ...job,
-            status: "failed" as const,
-            updatedAt: new Date().toISOString(),
-            completedAt: new Date().toISOString(),
-            message: "No Granola API key configured.",
-            errors: [...job.errors, "No Granola API key configured."],
-          };
-          await persistGranolaJob(failedJob);
-          res.json(failedJob);
-          return;
-        }
-      }
+      const job = await resumeGranolaJobOnPoll(req, await readCurrentGranolaJob(ownerAddress));
 
       res.json(job);
     } catch (err) {

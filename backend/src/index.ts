@@ -33,6 +33,7 @@ import { createFirefliesRouter } from "./routes/fireflies.js";
 import { createGranolaRouter } from "./routes/granola.js";
 import { createSoundcoreRouter } from "./routes/soundcore.js";
 import { createSyncRouter } from "./routes/sync.js";
+import { createSyncJobsRouter, type SyncJobResumeRegistry } from "./routes/sync-jobs.js";
 import { createGranolaSyncRouter } from "./routes/granola-sync.js";
 import { createOtterRouter } from "./routes/otter.js";
 import { createOtterSyncRouter } from "./routes/otter-sync.js";
@@ -112,6 +113,7 @@ async function main() {
     get: (key: string) => withSessionRefresh(node, () => node.kv.get(key)),
     put: (key: string, value: string) => withSessionRefresh(node, () => node.kv.put(key, value)),
   } as any;
+  const syncJobResumers: SyncJobResumeRegistry = {};
 
   const cachedDelegationIsCurrent = async (address: string, label: string) => {
     const ownerDid = ownerDidFromAddress(address);
@@ -304,6 +306,30 @@ async function main() {
     message: { error: "rate_limited", message: "Too many delegation requests" },
   });
 
+  const syncJobsLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 240,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    message: { error: "rate_limited", message: "Too many sync status requests" },
+  });
+
+  // Dedicated limiter: active-sync polling (1 req/5s = 180/15min) cannot fit the
+  // general 100/15min budget; this endpoint is auth-gated, read-mostly, and
+  // replaces three per-source polls (which also each ran the delegation middleware
+  // twice via the /api/sync mount fall-through). Mounted before the /api/sync router
+  // so the fireflies router middleware stack never runs for it.
+  app.use(
+    "/api/sync/jobs",
+    syncJobsLimiter,
+    createSyncJobsRouter({
+      authMiddleware,
+      delegationMiddleware,
+      backendKV,
+      resumeRegistry: syncJobResumers,
+    }),
+  );
+
   app.use(generalLimiter);
 
   // 7. Mount routes
@@ -430,6 +456,7 @@ async function main() {
       authMiddleware,
       delegationMiddleware,
       backendKV,
+      resumeRegistry: syncJobResumers,
     }),
   );
 
@@ -440,6 +467,7 @@ async function main() {
       authMiddleware,
       delegationMiddleware,
       backendKV,
+      resumeRegistry: syncJobResumers,
     }),
   );
 
@@ -468,6 +496,7 @@ async function main() {
       authMiddleware,
       delegationMiddleware,
       backendKV,
+      resumeRegistry: syncJobResumers,
     }),
   );
 
