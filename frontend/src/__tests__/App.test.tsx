@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, within, cleanup, fireEvent } from "@testing-library/react";
 import {
   composeManifestWithDelegatees,
   connectWallet,
@@ -1155,7 +1155,11 @@ describe("App manual sign-in processing", () => {
   it("filters the library to a source when its sidebar row is clicked", async () => {
     await renderAndSignIn();
 
-    fireEvent.click(await screen.findByRole("button", { name: /^Fireflies$/i }));
+    // Sidebar rows may include a trailing count in the accessible name once
+    // source_counts load ("Fireflies 3"), and the inbox filter chips render a
+    // plain "Fireflies" button — scope to the sidebar and match the prefix.
+    const sidebar = document.querySelector(".listen-sidebar") as HTMLElement;
+    fireEvent.click(await within(sidebar).findByRole("button", { name: /^Fireflies/i }));
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: /fireflies transcripts/i })).toBeInTheDocument();

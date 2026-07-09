@@ -825,11 +825,17 @@ function WorkspaceStatusPanel({
   loading = false,
   error,
   onAction,
+  timedOut = false,
+  onRetry,
+  onContinue,
 }: {
   mode: WorkspaceStatusMode;
   loading?: boolean;
   error?: string | null;
   onAction?: () => void;
+  timedOut?: boolean;
+  onRetry?: () => void;
+  onContinue?: () => void;
 }) {
   const content = {
     checking: {
@@ -887,6 +893,26 @@ function WorkspaceStatusPanel({
         ))}
       </div>
       {error && <div style={s.statusError}>{error}</div>}
+      {mode === "checking" && timedOut && (
+        <>
+          <div style={s.statusError}>
+            This is taking longer than expected. A capability check may have failed — you can retry,
+            or continue with what has loaded so far.
+          </div>
+          <div style={s.statusActionRow}>
+            {onRetry && (
+              <button style={s.statusButton} onClick={onRetry}>
+                Retry checks
+              </button>
+            )}
+            {onContinue && (
+              <button style={s.statusButton} onClick={onContinue}>
+                Continue anyway
+              </button>
+            )}
+          </div>
+        </>
+      )}
       {content.action && onAction && (
         <div style={s.statusActionRow}>
           <button
@@ -947,6 +973,11 @@ export function App() {
   const [activePage, setActivePage] = useState<ShellRoute>("inbox");
   const [librarySourceFilter, setLibrarySourceFilter] = useState<SourceFilter>("all");
   const [librarySourceCounts, setLibrarySourceCounts] = useState<SourceCount[] | null>(null);
+  // Escape hatch for the workspace readiness gate: if checks stall (a failed
+  // capability probe can leave a flag null forever), let the user retry or
+  // continue with whatever resolved.
+  const [workspaceCheckTimedOut, setWorkspaceCheckTimedOut] = useState(false);
+  const [workspaceChecksForced, setWorkspaceChecksForced] = useState(false);
   const [sourcesInitialStep, setSourcesInitialStep] = useState<
     "cards" | "transcript-import" | "soundcore-key"
   >("cards");
@@ -1941,15 +1972,16 @@ export function App() {
   const conversationChecksReady =
     tcw || hasBackendDelegation === true ? hasExistingConversations !== null : true;
   const workspaceChecksReady =
-    isSignedIn &&
-    conversationChecksReady &&
-    (directExistingConversationsReady ||
-      (backendStatusReady &&
-        firefliesKeyReady &&
-        granolaKeyReady &&
-        soundcoreKeyReady &&
-        transcriptionKeysReady &&
-        backendBackedChecksReady));
+    workspaceChecksForced ||
+    (isSignedIn &&
+      conversationChecksReady &&
+      (directExistingConversationsReady ||
+        (backendStatusReady &&
+          firefliesKeyReady &&
+          granolaKeyReady &&
+          soundcoreKeyReady &&
+          transcriptionKeysReady &&
+          backendBackedChecksReady)));
   const setupAvailable = tcw !== null && hasWalletSigner && backendDid !== null && api !== null;
   const needsFirefliesAccess =
     !backendUnavailable &&
@@ -1968,6 +2000,19 @@ export function App() {
     (hasBackendDelegation === false || hasSoundcoreBackendAccess === false);
   const showSharedPage = activePage === "shared";
   const showWorkspaceLoading = isSignedIn && !showSharedPage && !workspaceChecksReady;
+
+  useEffect(() => {
+    if (!showWorkspaceLoading) {
+      setWorkspaceCheckTimedOut(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setWorkspaceCheckTimedOut(true), 12_000);
+    return () => window.clearTimeout(timer);
+  }, [showWorkspaceLoading]);
+
+  useEffect(() => {
+    if (!isSignedIn) setWorkspaceChecksForced(false);
+  }, [isSignedIn]);
   const showOnboarding =
     isSignedIn &&
     workspaceChecksReady &&
@@ -2370,7 +2415,14 @@ export function App() {
         setSearchFocusKey((k) => k + 1);
       }}
     >
-      {showWorkspaceLoading && !showOptimisticInbox && <WorkspaceStatusPanel mode="checking" />}
+      {showWorkspaceLoading && !showOptimisticInbox && (
+        <WorkspaceStatusPanel
+          mode="checking"
+          timedOut={workspaceCheckTimedOut}
+          onRetry={() => setRefreshKey((k) => k + 1)}
+          onContinue={() => setWorkspaceChecksForced(true)}
+        />
+      )}
 
       {showBackendOfflineState && (
         <WorkspaceStatusPanel
