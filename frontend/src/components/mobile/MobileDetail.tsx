@@ -81,6 +81,8 @@ function renderSummary(text: string): string {
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/^[-*]\s+/gm, "• ")
     .replace(/\n/g, "<br />");
