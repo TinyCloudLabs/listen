@@ -1326,6 +1326,158 @@ describe("App manual sign-in processing", () => {
   });
 });
 
+describe("App onboarding readiness", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal("localStorage", createMockStorage());
+    vi.stubGlobal(
+      "confirm",
+      vi.fn(() => true),
+    );
+    mockAuthFlow();
+    vi.mocked(loadPersistedSession).mockReturnValue(null);
+    mockSecretGet.mockResolvedValue({
+      ok: false,
+      error: { code: "key_not_found", message: "Secret not found" },
+    });
+    mockSecretDelete.mockResolvedValue({ ok: true });
+    mockTinyCloudConversationPage([]);
+    mockTinyCloudKvGet.mockResolvedValue({ ok: true, data: { data: null } });
+    mockPost.mockResolvedValue({ updated: 0, still_missing: 0 });
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(workspaceState());
+      }
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({ conversations: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("fresh wallet sign-in with no backend delegation reaches source onboarding", async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(
+          workspaceState({
+            delegation: {
+              status: "none",
+              stored: false,
+              validPolicy: false,
+              expiresAt: null,
+              activation: "unknown",
+            },
+            backendReadableSecrets: {
+              fireflies: { readable: null },
+              granola: { readable: null },
+              soundcoreSession: { readable: null },
+              soundcoreAuthToken: { readable: null },
+              soundcoreUid: { readable: null },
+              soundcoreOpenudid: { readable: null },
+              assemblyai: { readable: null },
+              deepgram: { readable: null },
+            },
+            googleMeet: { available: true, connected: null },
+            conversations: { hasAny: null, total: null },
+          }),
+        );
+      }
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({ conversations: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
+
+    await renderAndSignIn();
+
+    await waitFor(() => {
+      expect(screen.queryByText("Checking workspace state.")).not.toBeInTheDocument();
+      expect(screen.getByText("Transcript import")).toBeInTheDocument();
+    });
+  });
+
+  it("Add source button opens the add hub without a backend delegation", async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(
+          workspaceState({
+            delegation: {
+              status: "none",
+              stored: false,
+              validPolicy: false,
+              expiresAt: null,
+              activation: "unknown",
+            },
+            backendReadableSecrets: {
+              fireflies: { readable: null },
+              granola: { readable: null },
+              soundcoreSession: { readable: null },
+              soundcoreAuthToken: { readable: null },
+              soundcoreUid: { readable: null },
+              soundcoreOpenudid: { readable: null },
+              assemblyai: { readable: null },
+              deepgram: { readable: null },
+            },
+            googleMeet: { available: true, connected: null },
+            conversations: { hasAny: null, total: null },
+          }),
+        );
+      }
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({ conversations: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
+
+    await renderAndSignIn();
+
+    await waitFor(() => {
+      expect(screen.getByText("Transcript import")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /add source or transcript/i }));
+
+    expect(screen.getByRole("heading", { name: /add transcripts/i })).toBeInTheDocument();
+  });
+
+  it("resolves workspace checks when the delegation is active but secrets are unreadable", async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(
+          workspaceState({
+            backendReadableSecrets: {
+              fireflies: { readable: false },
+              granola: { readable: false },
+              soundcoreSession: { readable: false },
+              soundcoreAuthToken: { readable: false },
+              soundcoreUid: { readable: false },
+              soundcoreOpenudid: { readable: null },
+              assemblyai: { readable: false },
+              deepgram: { readable: false },
+            },
+          }),
+        );
+      }
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({ conversations: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
+
+    await renderAndSignIn();
+
+    await waitFor(() => {
+      expect(screen.queryByText("Checking workspace state.")).not.toBeInTheDocument();
+      expect(screen.getByText("Transcript import")).toBeInTheDocument();
+    });
+  });
+});
+
 // ── Google Meet Webhook Tests ─────────────────────────────────────────
 
 /**

@@ -291,8 +291,8 @@ function applyWorkspaceReadiness(
     setHasSoundcoreBackendAccess: (value: boolean | null) => void;
     setHasTranscriptionBackendAccess: (value: TranscriptionProviderStatus) => void;
     setHasGoogleMeet: (value: boolean | null) => void;
-    setHasKey: (value: boolean) => void;
-    setHasGranolaKey: (value: boolean) => void;
+    setHasKey: (value: SetStateAction<boolean | null>) => void;
+    setHasGranolaKey: (value: SetStateAction<boolean | null>) => void;
     setHasSoundcoreKey: (value: SetStateAction<boolean | null>) => void;
     setHasTranscriptionKeys: (value: SetStateAction<TranscriptionProviderStatus>) => void;
     setHasExistingConversations: (value: boolean) => void;
@@ -347,6 +347,19 @@ function applyWorkspaceReadiness(
       deepgram: backendSecretReadable.deepgram.readable === true || previous.deepgram,
     }));
   }
+
+  // Key states must always resolve to a boolean once workspace-state
+  // responds, regardless of delegation status: with no active delegation
+  // backend readability is unknowable (map null -> false, keep an
+  // in-session true); with an active delegation the server's readable
+  // booleans are definitive for anything still unresolved.
+  setHasKey((previous) => previous ?? backendSecretReadable.fireflies.readable === true);
+  setHasGranolaKey((previous) => previous ?? backendSecretReadable.granola.readable === true);
+  setHasSoundcoreKey((previous) => previous ?? soundcoreBackendReadable === true);
+  setHasTranscriptionKeys((previous) => ({
+    assemblyai: previous.assemblyai ?? backendSecretReadable.assemblyai.readable === true,
+    deepgram: previous.deepgram ?? backendSecretReadable.deepgram.readable === true,
+  }));
 
   if (state.conversations.hasAny !== null) {
     setHasExistingConversations(state.conversations.hasAny);
@@ -2328,7 +2341,7 @@ export function App() {
       userMenu={userMenu}
       sources={sourceItems}
       folders={[]}
-      onAddClick={api && hasBackendDelegation === true ? () => setShowAddHub(true) : undefined}
+      onAddClick={api ? () => setShowAddHub(true) : undefined}
       onSearchClick={() => {
         setActivePage("inbox");
         setSelectedConversationId(null);
