@@ -20,7 +20,10 @@ mock.module("@tinycloud/node-sdk", () => ({
 import express from "express";
 import type { Server } from "http";
 import type { Request, Response, NextFunction } from "express";
-import { createWorkspaceStateRouter } from "../routes/workspace-state.js";
+import {
+  createWorkspaceStateRouter,
+  bustWorkspaceSecretsCache,
+} from "../routes/workspace-state.js";
 import { backendDelegationPolicyHash, ownerDidFromAddress } from "../manifest.js";
 
 const TEST_ADDRESS = "0xTEST";
@@ -219,5 +222,133 @@ describe("Workspace State Routes", () => {
     expect(body.backendReadableSecrets.fireflies.readable).toBeNull();
     expect(body.conversations.hasAny).toBeNull();
     expect(cache.has(TEST_ADDRESS)).toBe(false);
+  });
+});
+
+describe("Workspace State Routes — secret readability cache", () => {
+  const servers: Server[] = [];
+
+  afterEach(async () => {
+    await Promise.all(servers.splice(0).map((s) => closeServer(s)));
+  });
+
+  // Only the 8 workspace-secret probes are cached; googleTokensExist probes a
+  // separate google secret on every request, so filter it out of the counter.
+  const isWorkspaceSecret = (name: string) =>
+    name.endsWith("_API_KEY") || name.startsWith("SOUNDCORE_");
+
+  function createCountingAccess() {
+    const getCalls: string[] = [];
+    return {
+      _getCalls: getCalls,
+      secrets: {
+        get: async (name: string) => {
+          if (isWorkspaceSecret(name)) getCalls.push(name);
+          return name === "GRANOLA_API_KEY"
+            ? { ok: false, error: { code: "KEY_NOT_FOUND" } }
+            : { ok: true, data: "secret-value" };
+        },
+      },
+      kv: {
+        get: async (key: string) =>
+          key === "config/google-tokens"
+            ? { ok: true, data: { data: JSON.stringify({ access_token: "token" }) } }
+            : { ok: false, error: { code: "KV_NOT_FOUND" } },
+      },
+      sql: {
+        db: () => ({
+          query: async () => ({ ok: true, data: { rows: [[3]], columns: ["total"] } }),
+        }),
+      },
+    };
+  }
+
+  async function appForAddress(address: string, access: ReturnType<typeof createCountingAccess>) {
+    const store = createMockStore();
+    const cache = createMockCache();
+    await store.store(address, "stored-delegation", {
+      expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      policyHash: backendDelegationPolicyHash(BACKEND_DID, ownerDidFromAddress(address)),
+    });
+    cache.set(address, access);
+    const app = express();
+    app.use(express.json());
+    app.use(
+      "/api/workspace-state",
+      createWorkspaceStateRouter({
+        node: { useDelegation: mock(async () => access) } as any,
+        did: BACKEND_DID,
+        store: store as any,
+        cache: cache as any,
+        authMiddleware: (req: Request, _res: Response, next: NextFunction) => {
+          req.user = { sub: "s", address } as any;
+          next();
+        },
+      }),
+    );
+    const { server: srv, port } = await startServer(app);
+    servers.push(srv);
+    return { port };
+  }
+
+  it("serves a cached readability hint without re-probing within the TTL", async () => {
+    const address = "0xCACHE_A";
+    bustWorkspaceSecretsCache(address);
+    const access = createCountingAccess();
+    const { port } = await appForAddress(address, access);
+
+    const first = await fetch(`http://localhost:${port}/api/workspace-state`);
+    expect(first.status).toBe(200);
+    expect(access._getCalls.length).toBe(8);
+
+    const second = await fetch(`http://localhost:${port}/api/workspace-state`);
+    expect(second.status).toBe(200);
+    // Second request within the TTL performs zero secret probes.
+    expect(access._getCalls.length).toBe(8);
+  });
+
+  it("re-probes when ?fresh=1 is set", async () => {
+    const address = "0xCACHE_B";
+    bustWorkspaceSecretsCache(address);
+    const access = createCountingAccess();
+    const { port } = await appForAddress(address, access);
+
+    await fetch(`http://localhost:${port}/api/workspace-state`);
+    expect(access._getCalls.length).toBe(8);
+
+    await fetch(`http://localhost:${port}/api/workspace-state?fresh=1`);
+    expect(access._getCalls.length).toBe(16);
+  });
+
+  it("re-probes after the cache entry is busted", async () => {
+    const address = "0xCACHE_C";
+    bustWorkspaceSecretsCache(address);
+    const access = createCountingAccess();
+    const { port } = await appForAddress(address, access);
+
+    await fetch(`http://localhost:${port}/api/workspace-state`);
+    expect(access._getCalls.length).toBe(8);
+
+    bustWorkspaceSecretsCache(address);
+    await fetch(`http://localhost:${port}/api/workspace-state`);
+    expect(access._getCalls.length).toBe(16);
+  });
+
+  it("does not share cache entries across addresses", async () => {
+    const addressA = "0xCACHE_D1";
+    const addressB = "0xCACHE_D2";
+    bustWorkspaceSecretsCache(addressA);
+    bustWorkspaceSecretsCache(addressB);
+    const accessA = createCountingAccess();
+    const accessB = createCountingAccess();
+    const a = await appForAddress(addressA, accessA);
+    const b = await appForAddress(addressB, accessB);
+
+    await fetch(`http://localhost:${a.port}/api/workspace-state`);
+    await fetch(`http://localhost:${b.port}/api/workspace-state`);
+
+    // Each address probed independently; neither served the other's cache.
+    expect(accessA._getCalls.length).toBe(8);
+    expect(accessB._getCalls.length).toBe(8);
   });
 });

@@ -16,6 +16,7 @@ import {
   portableDelegations,
   type PortableDelegationSet,
 } from "../delegation-activation.js";
+import { bustWorkspaceSecretsCache } from "./workspace-state.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -95,6 +96,10 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
         resources,
         policyHash: backendDelegationPolicyHash(config.did, ownerDid),
       });
+
+      // A fresh delegation may grant new secret-read scope; drop the cached
+      // readability hint so the next workspace-state fetch re-probes.
+      bustWorkspaceSecretsCache(address);
 
       try {
         // Cache the active DelegatedAccess keyed by address when activation is available now.

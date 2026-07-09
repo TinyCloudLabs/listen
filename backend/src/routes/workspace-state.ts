@@ -21,6 +21,27 @@ interface WorkspaceStateRoutesConfig {
 }
 
 const ACTIVATION_TIMEOUT_MS = 5_000;
+
+// `readable` is an existence/READ hint from the backend's delegated view;
+// decryptability of the payload is not re-verified on every request, and results
+// may be up to WORKSPACE_SECRETS_CACHE_MS stale. The UI treats this as a hint only.
+// Bottom of the 2–5 min allowed range because Batch A's onboarding gate consumes
+// this hint — a stale readable:false right after connecting a source is the risk to
+// minimize. Key saves bust the entry (see bustWorkspaceSecretsCache) and callers can
+// force a fresh probe with ?fresh=1.
+export const WORKSPACE_SECRETS_CACHE_MS = 2 * 60 * 1000;
+const WORKSPACE_SECRETS_CACHE_MAX = 1000;
+
+const workspaceSecretsCache = new Map<
+  string,
+  { at: number; value: WorkspaceStateResponse["backendReadableSecrets"] }
+>();
+
+/** Invalidate the cached secret-readability hint for an address (call on key save). */
+export function bustWorkspaceSecretsCache(address: string): void {
+  workspaceSecretsCache.delete(address.toLowerCase());
+}
+
 const WORKSPACE_SECRET_NAMES: Record<WorkspaceSecretKey, string> = {
   fireflies: "FIREFLIES_API_KEY",
   granola: "GRANOLA_API_KEY",
@@ -48,6 +69,7 @@ export function createWorkspaceStateRouter(config: WorkspaceStateRoutesConfig) {
 
     const { address } = req.user;
     const ownerDid = ownerDidFromAddress(address);
+    const fresh = req.query.fresh === "1";
     const base: WorkspaceStateResponse = {
       delegation: {
         status: "none",
@@ -158,7 +180,7 @@ export function createWorkspaceStateRouter(config: WorkspaceStateRoutesConfig) {
       }
 
       const [secrets, googleMeet, conversations] = await Promise.all([
-        readBackendSecrets(access),
+        readBackendSecrets(address, access, fresh),
         readGoogleMeetState(access),
         readConversationState(access),
       ]);
@@ -185,8 +207,18 @@ export function createWorkspaceStateRouter(config: WorkspaceStateRoutesConfig) {
 }
 
 async function readBackendSecrets(
+  address: string,
   access: DelegatedAccess,
+  fresh: boolean,
 ): Promise<WorkspaceStateResponse["backendReadableSecrets"]> {
+  const cacheKey = address.toLowerCase();
+  if (!fresh) {
+    const cached = workspaceSecretsCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < WORKSPACE_SECRETS_CACHE_MS) {
+      return cached.value;
+    }
+  }
+
   const entries = await Promise.all(
     (Object.keys(WORKSPACE_SECRET_NAMES) as WorkspaceSecretKey[]).map(async (key) => {
       const result = await readSecret(access, WORKSPACE_SECRET_NAMES[key]);
@@ -194,7 +226,17 @@ async function readBackendSecrets(
     }),
   );
 
-  return Object.fromEntries(entries) as WorkspaceStateResponse["backendReadableSecrets"];
+  const value = Object.fromEntries(entries) as WorkspaceStateResponse["backendReadableSecrets"];
+
+  // Bounded LRU (delete + re-insert to move to end; evict oldest over cap).
+  workspaceSecretsCache.delete(cacheKey);
+  if (workspaceSecretsCache.size >= WORKSPACE_SECRETS_CACHE_MAX) {
+    const oldest = workspaceSecretsCache.keys().next().value;
+    if (oldest !== undefined) workspaceSecretsCache.delete(oldest);
+  }
+  workspaceSecretsCache.set(cacheKey, { at: Date.now(), value });
+
+  return value;
 }
 
 async function readSecret(

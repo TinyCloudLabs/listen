@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
 import { GranolaApiError, GranolaClient } from "../services/granola-client.js";
 import { readGranolaApiKeyResult } from "../services/granola-secret.js";
+import { bustWorkspaceSecretsCache } from "./workspace-state.js";
 
 interface GranolaRoutesConfig {
   authMiddleware: RequestHandler;
@@ -19,6 +20,10 @@ export function createGranolaRouter(config: GranolaRoutesConfig) {
 
   router.get("/status", async (req: Request, res: Response) => {
     const secret = await readGranolaApiKeyResult(req.delegatedAccess);
+
+    // Frontend hits this connection test right after saving a key; bust the
+    // workspace-state readability hint so the next fetch reflects it immediately.
+    if (secret.ok && req.user?.address) bustWorkspaceSecretsCache(req.user.address);
 
     if (!secret.ok) {
       const prefix = secret.error.code ? `${secret.error.code}: ` : "";

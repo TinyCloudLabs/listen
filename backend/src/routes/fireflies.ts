@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
 import { FirefliesClient } from "../services/fireflies-client.js";
 import { readFirefliesApiKeyResult } from "../services/fireflies-secret.js";
+import { bustWorkspaceSecretsCache } from "./workspace-state.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -26,6 +27,10 @@ export function createFirefliesRouter(config: FirefliesRoutesConfig) {
   // ── GET /api/fireflies/user — connection test ───────────────────
   router.get("/user", async (req: Request, res: Response) => {
     const secret = await readFirefliesApiKeyResult(req.delegatedAccess);
+
+    // Frontend hits this connection test right after saving a key; bust the
+    // workspace-state readability hint so the next fetch reflects it immediately.
+    if (secret.ok && req.user?.address) bustWorkspaceSecretsCache(req.user.address);
 
     if (!secret.ok) {
       const prefix = secret.error.code ? `${secret.error.code}: ` : "";
