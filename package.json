@@ -32,6 +32,7 @@
     "dev:portless:backend": "cd backend && FRONTEND_URL=https://listen.localhost:1355 bun --env-file=../.env run dev:portless",
     "generate-key": "cd packages/server && bun run generate-key",
     "test": "turbo run test",
+    "demo:m1-owner": "bun ./test/m1-owner-runner.ts",
     "test:app:install": "bun run --cwd test install:browsers",
     "test:app:install:ci": "bun run --cwd test install:browsers:ci",
     "test:app": "bunx turbo run build --filter=@listen/client... && bun run --cwd test app:smoke",
