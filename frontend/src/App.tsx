@@ -30,6 +30,8 @@ import { ConnectionsScreen } from "./components/ConnectionsScreen";
 import { LiveWriteEvents } from "./components/LiveWriteEvents";
 import { ConnectAgentButton } from "./components/ConnectAgentButton";
 import { ConversationShareDialog } from "./components/ConversationShareDialog";
+import { ListenOwnerShareDialog } from "./components/ListenOwnerShareDialog";
+import { ListenOwnerPublishedShares } from "./components/ListenOwnerPublishedShares";
 import { GlobalSyncIndicator } from "./components/GlobalSyncIndicator";
 import { AddTranscriptHub } from "./components/AddTranscriptHub";
 import { SharedWithMe } from "./components/SharedWithMe";
@@ -929,6 +931,8 @@ export function App() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [shareConversationId, setShareConversationId] = useState<string | null>(null);
+  const [ownerShareConversationIds, setOwnerShareConversationIds] = useState<string[]>([]);
+  const [ownerShareRefreshKey, setOwnerShareRefreshKey] = useState(0);
   const [showAddHub, setShowAddHub] = useState(false);
   const [searchFocusKey, setSearchFocusKey] = useState(0);
   const [pendingBanner, setPendingBanner] = useState<string | null>(null);
@@ -2494,11 +2498,13 @@ export function App() {
               onWrite={() => setRefreshKey((k) => k + 1)}
             />
           )}
+          <ListenOwnerPublishedShares tcw={tcw} refreshKey={ownerShareRefreshKey} />
           <ConversationList
             focusSearchKey={searchFocusKey}
             api={activeConversationApi}
             onSelectConversation={setSelectedConversationId}
             onShareConversation={setShareConversationId}
+            onShareSelectedConversations={setOwnerShareConversationIds}
             refreshKey={refreshKey}
           />
         </>
@@ -2559,6 +2565,16 @@ export function App() {
           tcw={tcw}
           conversationId={shareConversationId}
           onClose={() => setShareConversationId(null)}
+        />
+      )}
+
+      {ownerShareConversationIds.length > 0 && (
+        <ListenOwnerShareDialog
+          api={activeConversationApi}
+          tcw={tcw}
+          conversationIds={ownerShareConversationIds}
+          onPublished={() => setOwnerShareRefreshKey((key) => key + 1)}
+          onClose={() => setOwnerShareConversationIds([])}
         />
       )}
 
