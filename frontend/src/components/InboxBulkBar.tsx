@@ -4,6 +4,7 @@ interface InboxBulkBarProps {
   selectedCount: number;
   hasSummaries: boolean;
   onCopySummaries: () => void;
+  onCredentialedShare?: () => void;
   onClear: () => void;
 }
 
@@ -11,6 +12,7 @@ export const InboxBulkBar: FC<InboxBulkBarProps> = ({
   selectedCount,
   hasSummaries,
   onCopySummaries,
+  onCredentialedShare,
   onClear,
 }) => (
   <div style={s.wrap} role="region" aria-label="Bulk actions">
@@ -25,6 +27,11 @@ export const InboxBulkBar: FC<InboxBulkBarProps> = ({
     >
       Copy summaries
     </button>
+    {onCredentialedShare && (
+      <button type="button" style={s.btn} onClick={onCredentialedShare}>
+        Credentialed share
+      </button>
+    )}
     <span style={s.spacer} />
     <button type="button" style={s.iconBtn} onClick={onClear} aria-label="Clear selection">
       ×

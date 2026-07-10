@@ -4,7 +4,17 @@
     "jsx": "react-jsx",
     "outDir": "./dist",
     "rootDir": "./src",
-    "noEmit": true
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@tinycloud/sdk-core": ["./node_modules/@tinycloud/sdk-core-m1/dist/index.d.ts"],
+      "@tinycloud/sdk-core/bootstrap": [
+        "./node_modules/@tinycloud/sdk-core-m1/dist/bootstrap/index.d.ts"
+      ],
+      "@tinycloud/sdk-core/policy": [
+        "./node_modules/@tinycloud/sdk-core-m1/dist/policy/index.d.ts"
+      ]
+    }
   },
   "include": ["src"],
   "exclude": ["src/__tests__", "src/**/*.test.tsx", "src/**/*.test.ts"]

@@ -32,6 +32,7 @@ interface ConversationListProps {
   api: ApiClient;
   onSelectConversation: (id: string) => void;
   onShareConversation?: (id: string) => void;
+  onShareSelectedConversations?: (ids: string[]) => void;
   refreshKey?: number;
   focusSearchKey?: number;
 }
@@ -84,6 +85,7 @@ export const ConversationList: FC<ConversationListProps> = ({
   api,
   onSelectConversation,
   onShareConversation,
+  onShareSelectedConversations,
   refreshKey,
   focusSearchKey,
 }) => {
@@ -367,6 +369,14 @@ export const ConversationList: FC<ConversationListProps> = ({
           selectedCount={selected.size}
           hasSummaries={selectedSummaries.length > 0}
           onCopySummaries={copySelectedSummaries}
+          onCredentialedShare={
+            onShareSelectedConversations
+              ? () =>
+                  onShareSelectedConversations(
+                    selectedConversations.map((conversation) => conversation.id),
+                  )
+              : undefined
+          }
           onClear={clearSelection}
         />
       )}
