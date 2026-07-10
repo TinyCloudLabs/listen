@@ -1014,6 +1014,10 @@ export function App() {
           await sendDelegation(BACKEND_URL, serialized, token);
         },
         onRenewed: () => {
+          // Ignore results from a renewer that has been superseded (sign-out
+          // nulls the ref): a renewal already in flight at sign-out must not
+          // erase the listen:revoked-at marker or mutate signed-out UI state.
+          if (backendRenewerRef.current !== renewer) return;
           clearBackendWorkspaceCache(addr, bDid);
           recordBackendDelegationGrant(addr, bDid);
           setHasBackendDelegation(true);
@@ -1638,8 +1642,11 @@ export function App() {
   const handleSignOut = useCallback(async () => {
     const token = sessionStoreRef.current.getToken();
     // Null the renewer BEFORE awaiting revoke so an in-flight gated request
-    // cannot silently re-grant the delegation we are revoking.
+    // cannot silently re-grant the delegation we are revoking. Also set the
+    // revoke marker now so other same-browser tabs' renewers are blocked
+    // during the revoke window (purge clears it; it is re-set after purge).
     backendRenewerRef.current = null;
+    recordDelegationRevoked();
     let revokeError: string | null = null;
     if (token) {
       try {

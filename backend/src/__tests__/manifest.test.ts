@@ -142,12 +142,12 @@ describe("manifest", () => {
 
       expect(sortedManifestActions(grant.name)).toEqual([...grant.actions].sort());
 
-      const grantScope = "scope" in grant ? grant.scope : undefined;
-      if (grantScope !== undefined) {
-        // A scoped grant must use the manifest object form with a matching scope.
-        expect(Array.isArray(manifestEntry)).toBe(false);
-        expect((manifestEntry as { scope?: string }).scope).toBe(grantScope);
-      }
+      // Scope must match in both directions: a scoped grant requires the
+      // manifest object form with the same scope, and an object-form manifest
+      // scope requires the grant to carry it (a dropped grant scope is drift).
+      const grantScope: string | undefined = "scope" in grant ? grant.scope : undefined;
+      const manifestScope = Array.isArray(manifestEntry) ? undefined : manifestEntry.scope;
+      expect(grantScope).toBe(manifestScope);
     }
 
     // Every manifest secret is requested by exactly one grant (no drift either way).
