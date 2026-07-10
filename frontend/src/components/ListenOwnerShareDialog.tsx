@@ -192,6 +192,9 @@ export const ListenOwnerShareDialog: FC<ListenOwnerShareDialogProps> = ({
                           : "none listed"}
                       </span>
                       <span>Transcript fields: {conversation.transcriptFields.join(", ")}</span>
+                      {conversation.transcriptFields.includes("transcript_text") && (
+                        <span>Transcript body text is included.</span>
+                      )}
                       <span>Participant fields: {conversation.participantFields.join(", ")}</span>
                       <span>Audio is not included.</span>
                     </div>
