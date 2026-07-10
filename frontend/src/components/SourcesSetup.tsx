@@ -1,4 +1,4 @@
-import { useEffect, useState, type FC } from "react";
+import { useEffect, useRef, useState, type FC } from "react";
 import type { ApiClient } from "@listen/client";
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
 import { MAX_TRANSCRIPTION_FILE_BYTES, fileToBase64, formatFileSize } from "../lib/fileEncoding";
@@ -179,6 +179,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   const [urlCopied, setUrlCopied] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [googleError, setGoogleError] = useState<string | null>(null);
+  const googlePopupPollRef = useRef<number | null>(null);
   const [importTitle, setImportTitle] = useState("");
   const [importStartedAt, setImportStartedAt] = useState(() => toDatetimeLocal(new Date()));
   const [importParticipants, setImportParticipants] = useState("");
@@ -243,6 +244,15 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
     hasGoogleMeet === true,
   ].filter(Boolean).length;
 
+  const clearGooglePopupPoll = () => {
+    if (googlePopupPollRef.current !== null) {
+      window.clearInterval(googlePopupPollRef.current);
+      googlePopupPollRef.current = null;
+    }
+  };
+
+  useEffect(() => () => clearGooglePopupPoll(), []);
+
   useEffect(() => {
     setStep(initialStep);
   }, [initialStep]);
@@ -258,10 +268,13 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
 
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.type === "google-auth-success") {
+        clearGooglePopupPoll();
+        setGoogleError(null);
         setStep("google-success");
         setConnecting(false);
         onGoogleMeetComplete?.();
       } else if (event.data?.type === "google-auth-error") {
+        clearGooglePopupPoll();
         setGoogleError(event.data.message || "Authentication failed");
         setConnecting(false);
       }
@@ -452,7 +465,17 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
         await onEnsureBackendAccess();
       }
       const { authUrl } = await api.get<{ authUrl: string }>("/api/auth/google");
-      window.open(authUrl, "google-auth", "width=500,height=600,popup=yes");
+      const popup = window.open(authUrl, "google-auth", "width=500,height=600,popup=yes");
+      if (!popup) {
+        throw new Error("Popup blocked. Allow popups for this site and try again.");
+      }
+      googlePopupPollRef.current = window.setInterval(() => {
+        if (popup.closed) {
+          clearGooglePopupPoll();
+          setConnecting(false);
+          setGoogleError("The Google sign-in window was closed before finishing. Try again.");
+        }
+      }, 500);
     } catch (err) {
       setGoogleError(err instanceof Error ? err.message : String(err));
       setConnecting(false);
