@@ -238,11 +238,7 @@ export const ListenOwnerShareDialog: FC<ListenOwnerShareDialogProps> = ({
             {revokeState === "failed" && (
               <div style={s.error}>
                 Revoke failed. This share is still active.
-                <button
-                  type="button"
-                  style={s.inlineRetry}
-                  onClick={() => void revoke()}
-                >
+                <button type="button" style={s.inlineRetry} onClick={() => void revoke()}>
                   Retry revoke
                 </button>
               </div>

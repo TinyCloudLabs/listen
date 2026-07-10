@@ -31,10 +31,7 @@ vi.mock("../lib/listenOwnerShares", async () => {
     ),
     listPublishedListenOwnerShares: vi.fn(() => []),
     composeListenOwnerShareDraft: vi.fn(
-      (
-        details: ShareableConversationDetail[],
-        input: { conversationIds: string[] },
-      ) => {
+      (details: ShareableConversationDetail[], input: { conversationIds: string[] }) => {
         return {
           shareId: "share-1",
           conversationIds: input.conversationIds,

@@ -11,9 +11,7 @@
       "@tinycloud/sdk-core/bootstrap": [
         "./node_modules/@tinycloud/sdk-core-m1/dist/bootstrap/index.d.ts"
       ],
-      "@tinycloud/sdk-core/policy": [
-        "./node_modules/@tinycloud/sdk-core-m1/dist/policy/index.d.ts"
-      ]
+      "@tinycloud/sdk-core/policy": ["./node_modules/@tinycloud/sdk-core-m1/dist/policy/index.d.ts"]
     }
   },
   "include": ["src"],

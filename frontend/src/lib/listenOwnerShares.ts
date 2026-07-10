@@ -308,11 +308,7 @@ export function assertServiceNativeCaveats(capability: unknown): void {
 }
 
 export function validateOwnerShareInput(input: unknown): ListenOwnerShareInput {
-  const object = assertExactKeys(
-    input,
-    ["conversationIds", "createdAt", "expiresAt"],
-    "$",
-  );
+  const object = assertExactKeys(input, ["conversationIds", "createdAt", "expiresAt"], "$");
   const ids = object.conversationIds;
   if (
     !Array.isArray(ids) ||
