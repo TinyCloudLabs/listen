@@ -1,37 +1,10 @@
-import { J as JsonValue, P as PolicyEngineRecord, S as SignedObjectSigner, a as Policy, U as UnsignedPolicyEngineRecord } from '../signed-object-CPfSG1iS.js';
-export { E as ED25519_JCS_SIGNATURE_SUITE, b as EIP191_JCS_SIGNATURE_SUITE, c as JsonObject, d as POLICY_ENGINE_RECORD_SCHEMA, e as POLICY_SCHEMA, f as POLICY_STATUS_SCHEMA, g as PolicyStatus, h as SignatureMaterialError, i as SignatureSuite, j as SignatureVerificationError, k as SignedObjectCanonicalizationError, l as SignedObjectDigestError, m as SignedObjectErrorCode, n as SignedObjectIdError, o as SignedObjectKind, p as SignedObjectMaterial, q as SignedObjectProfileError, r as SignedObjectSchemaError, s as SignedObjectSignature, t as SignedObjectVerificationResult, u as SignedPolicyObject, v as SigningKeyBindingError, w as UnsignedPolicy, x as UnsignedPolicyObject, y as UnsignedPolicyStatus, z as UnsupportedSignatureSuiteError, A as canonicalizeSignedObjectUnsigned, B as createAndSignPolicy, C as createAndSignPolicyEngineRecord, D as createAndSignPolicyStatus, F as createAndSignSignedObject, G as deriveSignedObjectMaterial, H as jcsCanonicalize, I as normalizeJson, K as serializeJcsJson, L as signedObjectIdFor, M as toSignedObjectError, N as validatePolicyEngineRecordSigned, O as validatePolicyEngineRecordSignedShape, Q as validatePolicyEngineRecordUnsigned, R as validatePolicySigned, T as validatePolicySignedShape, V as validatePolicyStatusSigned, W as validatePolicyStatusSignedShape, X as validatePolicyStatusUnsigned, Y as validatePolicyUnsigned, Z as verifyPolicy, _ as verifyPolicyEngineRecord, $ as verifyPolicyStatus, a0 as verifySignedObject } from '../signed-object-CPfSG1iS.js';
-
-type PolicyCapabilityErrorCode = "policy-capability-malformed" | "policy-capability-unknown-key" | "policy-capability-malformed-service" | "policy-capability-malformed-space" | "policy-capability-malformed-path" | "policy-capability-malformed-action" | "policy-capability-empty-actions" | "policy-capability-malformed-caveats";
-declare class PolicyCapabilityError extends Error {
-    readonly code: PolicyCapabilityErrorCode;
-    constructor(code: PolicyCapabilityErrorCode, message: string);
-}
-interface PolicyCapability {
-    readonly service: "tinycloud.kv" | "tinycloud.sql" | "tinycloud.vfs";
-    readonly space: string;
-    readonly path: string;
-    readonly actions: readonly string[];
-    readonly caveats?: JsonObject;
-}
-type JsonObject = {
-    readonly [key: string]: JsonValue;
-};
-/**
- * Strict authoring validator for resolved Listen-adapter PolicyCapability JSON.
- * It accepts only concrete service/space/path/action/caveat forms and rejects
- * manifest-shaped permission payloads before any Policy is signed.
- */
-declare function normalizePolicyCapability(input: unknown): PolicyCapability;
-/**
- * Frozen-vector canonicalizer for the m1-b-01a policy-capability vectors.
- * Prefix paths are allowed here only to preserve behavioral conformance with
- * the vendored engine vectors; authoring uses normalizePolicyCapability.
- */
-declare function canonicalizePolicyCapability(input: unknown): PolicyCapability;
-declare function policyCapabilityDigestHex(input: unknown): string;
-declare function policyCapabilityContains(authority: unknown, request: unknown): boolean;
+import { P as PolicyEngineRecord, S as SignedObjectSigner, a as Policy, U as UnsignedPolicyEngineRecord } from '../signed-object-BHkLbCXI.js';
+export { E as ED25519_JCS_SIGNATURE_SUITE, b as EIP191_JCS_SIGNATURE_SUITE, J as JsonObject, c as POLICY_ENGINE_RECORD_SCHEMA, d as POLICY_SCHEMA, e as POLICY_STATUS_SCHEMA, f as PolicyStatus, g as SignatureMaterialError, h as SignatureSuite, i as SignatureVerificationError, j as SignedObjectCanonicalizationError, k as SignedObjectDigestError, l as SignedObjectErrorCode, m as SignedObjectIdError, n as SignedObjectKind, o as SignedObjectMaterial, p as SignedObjectProfileError, q as SignedObjectSchemaError, r as SignedObjectSignature, s as SignedObjectVerificationResult, t as SignedPolicyObject, u as SigningKeyBindingError, v as UnsignedPolicy, w as UnsignedPolicyObject, x as UnsignedPolicyStatus, y as UnsupportedSignatureSuiteError, z as canonicalizeSignedObjectUnsigned, A as createAndSignPolicy, B as createAndSignPolicyEngineRecord, C as createAndSignPolicyStatus, D as createAndSignSignedObject, F as deriveSignedObjectMaterial, G as signedObjectIdFor, H as toSignedObjectError, I as validatePolicyEngineRecordSigned, K as validatePolicyEngineRecordSignedShape, L as validatePolicyEngineRecordUnsigned, M as validatePolicySigned, N as validatePolicySignedShape, O as validatePolicyStatusSigned, Q as validatePolicyStatusSignedShape, R as validatePolicyStatusUnsigned, T as validatePolicyUnsigned, V as verifyPolicy, W as verifyPolicyEngineRecord, X as verifyPolicyStatus, Y as verifySignedObject } from '../signed-object-BHkLbCXI.js';
+import { J as JsonObject, a as PolicyCapabilityError } from '../capability-DpdAwc1W.js';
+export { b as JsonValue, P as PolicyCapability, c as PolicyCapabilityErrorCode, d as canonicalizePolicyCapability, j as jcsCanonicalize, n as normalizeJson, e as normalizePolicyCapability, p as policyCapabilityContains, f as policyCapabilityDigestHex, s as serializeJcsJson } from '../capability-DpdAwc1W.js';
 
 declare const TRANSCRIPT_SHARE_BOOTSTRAP_SCHEMA: "xyz.tinycloud.exchange/transcript-bootstrap/v0";
+declare const OWNER_NODE_ENDPOINT_SCHEMA: "xyz.tinycloud.exchange/owner-node-endpoint/v1";
 declare const POLICY_VERSION_V0: "v0";
 declare const W3C_VC_CREDENTIAL_VERIFIER: "w3c.vc/credential/v1";
 type PolicyAuthoringErrorCode = PolicyCapabilityError["code"] | "policy-authoring-malformed" | "policy-authoring-unknown-key" | "policy-engine-record-absent" | "policy-engine-record-date-invalid" | "policy-engine-record-signature-invalid" | "policy-engine-record-audience-mismatch" | "policy-engine-record-expired" | "policy-engine-record-owner-mismatch" | "policy-engine-record-grant-issuer-mismatch" | "policy-engine-record-policy-version-unsupported" | "policy-engine-record-evidence-verifier-unsupported" | "transcript-share-bootstrap-malformed";
@@ -61,11 +34,19 @@ interface TranscriptShareBootstrap {
         readonly supportedEvidenceVerifiers: readonly [typeof W3C_VC_CREDENTIAL_VERIFIER];
         readonly signedRecord: PolicyEngineRecord;
     };
+    /** Untrusted routing hint. Authority comes only from delegation/invocation validation. */
+    readonly ownerNode: {
+        readonly schema: typeof OWNER_NODE_ENDPOINT_SCHEMA;
+        readonly endpoint: string;
+        readonly spaceId: string;
+    };
     readonly resourceHint: JsonObject;
 }
 interface ComposeTranscriptShareBootstrapInput {
     readonly policyId: string;
     readonly policyEngineRecord: PolicyEngineRecord;
+    readonly ownerNodeEndpoint: string;
+    readonly ownerSpaceId: string;
     readonly resourceHint: JsonObject;
 }
 interface CreatePolicyEngineRecordInput {
@@ -108,4 +89,4 @@ declare function composeTranscriptShareBootstrap(input: ComposeTranscriptShareBo
  */
 declare function verifyPolicyEngineRecordForRequester(options: VerifyPolicyEngineRecordOptions): Promise<PolicyEngineRecord>;
 
-export { type ComposeTranscriptShareBootstrapInput, type CreatePolicyEngineRecordInput, type CreateTranscriptSharePolicyInput, JsonValue, POLICY_VERSION_V0, Policy, PolicyAuthoringError, type PolicyAuthoringErrorCode, type PolicyCapability, PolicyCapabilityError, type PolicyCapabilityErrorCode, PolicyEngineRecord, SignedObjectSigner, TRANSCRIPT_SHARE_BOOTSTRAP_SCHEMA, type TranscriptShareBootstrap, UnsignedPolicyEngineRecord, type VerifyPolicyEngineRecordOptions, W3C_VC_CREDENTIAL_VERIFIER, canonicalizePolicyCapability, composeTranscriptShareBootstrap, createAndSignRequesterPolicyEngineRecord, createAndSignTranscriptSharePolicy, createUnsignedPolicyEngineRecord, normalizePolicyCapability, policyCapabilityContains, policyCapabilityDigestHex, verifyPolicyEngineRecordForRequester };
+export { type ComposeTranscriptShareBootstrapInput, type CreatePolicyEngineRecordInput, type CreateTranscriptSharePolicyInput, OWNER_NODE_ENDPOINT_SCHEMA, POLICY_VERSION_V0, Policy, PolicyAuthoringError, type PolicyAuthoringErrorCode, PolicyCapabilityError, PolicyEngineRecord, SignedObjectSigner, TRANSCRIPT_SHARE_BOOTSTRAP_SCHEMA, type TranscriptShareBootstrap, UnsignedPolicyEngineRecord, type VerifyPolicyEngineRecordOptions, W3C_VC_CREDENTIAL_VERIFIER, composeTranscriptShareBootstrap, createAndSignRequesterPolicyEngineRecord, createAndSignTranscriptSharePolicy, createUnsignedPolicyEngineRecord, verifyPolicyEngineRecordForRequester };

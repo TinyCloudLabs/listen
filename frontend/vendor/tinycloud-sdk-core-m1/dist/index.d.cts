@@ -1,8 +1,10 @@
 import { z } from 'zod';
 import { InvokeFunction, InvokeAnyFunction, ParsedNetworkId, ServiceError, Result as Result$1, ServiceSession, FetchFunction, ServiceConstructor, RetryPolicy, TelemetryConfig, IServiceContext, IService, IKVService, ISQLService, IDuckDbService, IHooksService, IDataVaultService, IEncryptionService, ISecretsService, IDatabaseHandle, SqlValue, QueryResponse } from '@tinycloud/sdk-services';
 export { BatchOptions, BatchResponse, BuildCanonicalDecryptRequestInput, BuildDecryptFactsInput, BuildDecryptInvocationInput, BuiltDecryptInvocation, CanonicalDecryptRequest, CanonicalJson, ColumnInfo, DECRYPT_ACTION, DECRYPT_FACT_TYPE, DECRYPT_RESULT_TYPE, DEFAULT_ENCRYPTION_ALG, DEFAULT_KEY_VERSION, DataVaultConfig, DataVaultService, DatabaseHandle, DecryptCapabilityProof, DecryptEnvelopeOptions, DecryptInvocationFact, DecryptInvocationSigner, DecryptRequestBody, DecryptResponseBody, DecryptTransport, DiscoverNetworkInput, DiscoveredNetwork, DiscoverySource, DuckDbAction, DuckDbActionType, DuckDbBatchOptions, DuckDbBatchResponse, DuckDbDatabaseHandle, DuckDbExecuteOptions, DuckDbExecuteResponse, DuckDbOptions, DuckDbQueryOptions, DuckDbQueryResponse, DuckDbService, DuckDbServiceConfig, DuckDbStatement, DuckDbValue, ENCRYPTION_NETWORK_URN_PREFIX, ENCRYPTION_SERVICE, ENCRYPTION_SERVICE_SHORT, ENVELOPE_VERSION, EncryptToNetworkInput, EncryptToNetworkOptions, EncryptToNetworkResult, EncryptionCrypto, EncryptionError, EncryptionErrorInput, EncryptionService, EncryptionServiceConfig, ErrorCode, ErrorCodes, ExecuteOptions, ExecuteResponse, FetchFunction, HookEvent, HookServiceName, HookStreamEvent, HookSubscription, HookWebhookListOptions, HookWebhookRecord, HookWebhookRegistration, HookWebhookScope, HookWebhookUnregisterOptions, HooksService, HooksServiceConfig, IDataVaultService, IDatabaseHandle, IDuckDbDatabaseHandle, IDuckDbService, IEncryptionService, IHooksService, IKVService, IPrefixedKVService, ISQLService, ISecretsService, IService, IServiceContext, InlineEncryptedEnvelope, InvokeAnyEntry, InvokeAnyFunction, InvokeFunction, KVCreateSignedReadUrlOptions, KVDeleteOptions, KVGetOptions, KVHeadOptions, KVListOptions, KVListResponse, KVPutOptions, KVResponse, KVResponseHeaders, KVService, KVServiceConfig, KVSignedReadUrlResponse, NETWORK_NAME_PATTERN, NetworkDescriptor, NetworkIdError, NodeDescriptorFetcher, ParsedNetworkId, PrefixedKVService, QueryOptions, QueryResponse, RandomReceiverKeyInput, ReceiverKeyPair, ReceiverKeySigner, ResolvedSecretPath, Result, RetryPolicy, SECRET_NAME_RE, SQLAction, SQLActionType, SQLService, SQLServiceConfig, SchemaInfo, SecretPayload, SecretScopeOptions, SecretsError, SecretsService, ServiceContext, ServiceContextConfig, ServiceError, ServiceSession, SignedReceiverKeyInput, SqlStatement, SqlValue, SubscribeOptions, TableInfo, TelemetryConfig, TelemetryEventHandler, TinyCloudDebugEnableOptions, TinyCloudDebugEvent, TinyCloudDebugLevel, TinyCloudDebugLogger, TinyCloudDebugTimer, VaultCrypto, VaultEntry, VaultError, VaultGetOptions, VaultGrantOptions, VaultHeaders, VaultListOptions, VaultPublicSpaceKVActions, VaultPutOptions, VerifyDecryptResponseInput, ViewInfo, WasmVaultFunctions, WellKnownDescriptorFetcher, buildCanonicalDecryptRequest, buildDecryptAttenuation, buildDecryptFacts, buildDecryptInvocation, buildNetworkId, canonicalHashHex, canonicalSignedResponse, canonicalizeEncryptionJson, canonicalizeSecretScope, checkDecryptInvocationInput, clearTinyCloudDebugLogs, createVaultCrypto, decryptEnvelopeWithKey, defaultRetryPolicy, deriveSignedReceiverKey, disableTinyCloudDebug, discoverNetwork, enableTinyCloudDebug, encryptToNetwork, base64Decode as encryptionBase64Decode, base64Encode as encryptionBase64Encode, encryptionError, utf8Decode as encryptionUtf8Decode, utf8Encode as encryptionUtf8Encode, ensureNetworkUsableForDecrypt, err, generateRandomReceiverKey, getTinyCloudDebugLogs, hexDecode, hexEncode, installTinyCloudDebugGlobals, isNetworkId, networkDiscoveryKey, ok, openWrappedKey, parseNetworkId, resolveSecretListPrefix, resolveSecretPath, serviceError, tinyCloudDebugLogger, validateEnvelope, verifyDecryptResponse } from '@tinycloud/sdk-services';
+export { HOLDER_KEY_BINDING_PRESENTATION_SCHEMA, HolderKeyBindingPresentation, LISTEN_SQL_STATEMENT_CATALOG, ListenSqlStatementName, POLICY_ENGINE_CHALLENGE_REQUEST_SCHEMA, POLICY_ENGINE_CHALLENGE_RESPONSE_SCHEMA, POLICY_ENGINE_DENIAL_SCHEMA, POLICY_ENGINE_GRANT_PRESENTATION_DENIAL_CODES, POLICY_ENGINE_RESOLVE_REQUEST_SCHEMA, PORTABLE_DELEGATION_SCHEMA, PolicyEngineGrantPresentationDenialCode, PortableDelegation, REQUESTER_ENGINE_RETRY_ATTEMPTS, REQUESTER_ENGINE_RETRY_MAX_DELAY_MS, REQUESTER_NEAR_EXPIRY_SECONDS, RequesterEndpointResolution, RequesterHttpRequest, RequesterHttpResponse, RequesterInvocationCapability, RequesterSigningCapability, RequesterTransport, TranscriptRequester, TranscriptRequesterError, TranscriptRequesterErrorCode, TranscriptRequesterErrorState, TranscriptRequesterOptions, TranscriptRequesterReadKvResult, TranscriptRequesterReadSqlResult, createTranscriptRequester, deriveDelegationCid } from './requester/index.cjs';
 export { ACCOUNT_INDEX_SCHEMA, BOOTSTRAP_ALLOWLIST, BOOTSTRAP_DEFAULT_SPACE, BOOTSTRAP_ENCRYPTION_NETWORK_NAME, BOOTSTRAP_ENCRYPTION_NETWORK_RESOURCE_TEMPLATE, BOOTSTRAP_MANIFEST, BOOTSTRAP_PERSISTED_APPLICATION_MANIFESTS, BOOTSTRAP_PUBLIC_SPACE, BOOTSTRAP_SESSION_REQUESTS, BOOTSTRAP_SPACE_MANIFESTS, BOOTSTRAP_SPACE_NAMES, BootstrapAllowlistEntry, BootstrapAllowlistKind, BootstrapEncryptionNetworkStep, BootstrapManifest, BootstrapRawAbilityAllowlistEntry, BootstrapSchemaStep, BootstrapSeedApplicationsStep, BootstrapSeedSpacesStep, BootstrapSpaceDescriptor, BootstrapSpaceName, BootstrapSpaceStep, BootstrapStep, BootstrapStepKind, CAPABILITIES, CAPABILITY_REGISTRY, CapabilityRegistryEntry, CapabilityStatus, DUCKDB, ENCRYPTION, HOOKS, KV, SECRET_RECORDS_SCHEMA, SPACE, SQL, TINYCLOUD_ACCOUNT_SPACE_MANIFEST, TINYCLOUD_APPLICATIONS_SPACE_MANIFEST, TINYCLOUD_DEFAULT_SPACE_MANIFEST, TINYCLOUD_PUBLIC_SPACE_MANIFEST, TINYCLOUD_SECRETS_BOOTSTRAP_MANIFEST, bootstrapEncryptionNetworkId, bootstrapSpaceId, bootstrapSteps, composeBootstrapSpaceManifest } from '@tinycloud/bootstrap';
-export { E as ED25519_JCS_SIGNATURE_SUITE, b as EIP191_JCS_SIGNATURE_SUITE, c as JsonObject, J as JsonValue, d as POLICY_ENGINE_RECORD_SCHEMA, e as POLICY_SCHEMA, f as POLICY_STATUS_SCHEMA, a as Policy, P as PolicyEngineRecord, g as PolicyStatus, h as SignatureMaterialError, i as SignatureSuite, j as SignatureVerificationError, k as SignedObjectCanonicalizationError, l as SignedObjectDigestError, m as SignedObjectErrorCode, n as SignedObjectIdError, o as SignedObjectKind, p as SignedObjectMaterial, q as SignedObjectProfileError, r as SignedObjectSchemaError, s as SignedObjectSignature, S as SignedObjectSigner, t as SignedObjectVerificationResult, u as SignedPolicyObject, v as SigningKeyBindingError, w as UnsignedPolicy, U as UnsignedPolicyEngineRecord, x as UnsignedPolicyObject, y as UnsignedPolicyStatus, z as UnsupportedSignatureSuiteError, A as canonicalizeSignedObjectUnsigned, B as createAndSignPolicy, C as createAndSignPolicyEngineRecord, D as createAndSignPolicyStatus, F as createAndSignSignedObject, G as deriveSignedObjectMaterial, H as jcsCanonicalize, I as normalizeJson, K as serializeJcsJson, L as signedObjectIdFor, M as toSignedObjectError, N as validatePolicyEngineRecordSigned, O as validatePolicyEngineRecordSignedShape, Q as validatePolicyEngineRecordUnsigned, R as validatePolicySigned, T as validatePolicySignedShape, V as validatePolicyStatusSigned, W as validatePolicyStatusSignedShape, X as validatePolicyStatusUnsigned, Y as validatePolicyUnsigned, Z as verifyPolicy, _ as verifyPolicyEngineRecord, $ as verifyPolicyStatus, a0 as verifySignedObject } from './signed-object-CPfSG1iS.cjs';
+export { E as ED25519_JCS_SIGNATURE_SUITE, b as EIP191_JCS_SIGNATURE_SUITE, J as JsonObject, c as POLICY_ENGINE_RECORD_SCHEMA, d as POLICY_SCHEMA, e as POLICY_STATUS_SCHEMA, a as Policy, P as PolicyEngineRecord, f as PolicyStatus, g as SignatureMaterialError, h as SignatureSuite, i as SignatureVerificationError, j as SignedObjectCanonicalizationError, k as SignedObjectDigestError, l as SignedObjectErrorCode, m as SignedObjectIdError, n as SignedObjectKind, o as SignedObjectMaterial, p as SignedObjectProfileError, q as SignedObjectSchemaError, r as SignedObjectSignature, S as SignedObjectSigner, s as SignedObjectVerificationResult, t as SignedPolicyObject, u as SigningKeyBindingError, v as UnsignedPolicy, U as UnsignedPolicyEngineRecord, w as UnsignedPolicyObject, x as UnsignedPolicyStatus, y as UnsupportedSignatureSuiteError, z as canonicalizeSignedObjectUnsigned, A as createAndSignPolicy, B as createAndSignPolicyEngineRecord, C as createAndSignPolicyStatus, D as createAndSignSignedObject, F as deriveSignedObjectMaterial, G as signedObjectIdFor, H as toSignedObjectError, I as validatePolicyEngineRecordSigned, K as validatePolicyEngineRecordSignedShape, L as validatePolicyEngineRecordUnsigned, M as validatePolicySigned, N as validatePolicySignedShape, O as validatePolicyStatusSigned, Q as validatePolicyStatusSignedShape, R as validatePolicyStatusUnsigned, T as validatePolicyUnsigned, V as verifyPolicy, W as verifyPolicyEngineRecord, X as verifyPolicyStatus, Y as verifySignedObject } from './signed-object-CpXNKC4d.cjs';
+export { b as JsonValue, j as jcsCanonicalize, n as normalizeJson, s as serializeJcsJson } from './capability-DpdAwc1W.cjs';
 export { SiweMessage } from 'siwe';
 
 /**
@@ -892,19 +894,19 @@ declare const PersistedTinyCloudSessionSchema: z.ZodObject<{
     /** The verification method DID */
     verificationMethod: z.ZodString;
 }, "strip", z.ZodTypeAny, {
+    spaceId: string;
     delegationHeader: {
         Authorization: string;
     };
     delegationCid: string;
-    spaceId: string;
     verificationMethod: string;
     spaces?: Record<string, string> | undefined;
 }, {
+    spaceId: string;
     delegationHeader: {
         Authorization: string;
     };
     delegationCid: string;
-    spaceId: string;
     verificationMethod: string;
     spaces?: Record<string, string> | undefined;
 }>;
@@ -944,19 +946,19 @@ declare const PersistedSessionDataSchema: z.ZodObject<{
         /** The verification method DID */
         verificationMethod: z.ZodString;
     }, "strip", z.ZodTypeAny, {
+        spaceId: string;
         delegationHeader: {
             Authorization: string;
         };
         delegationCid: string;
-        spaceId: string;
         verificationMethod: string;
         spaces?: Record<string, string> | undefined;
     }, {
+        spaceId: string;
         delegationHeader: {
             Authorization: string;
         };
         delegationCid: string;
-        spaceId: string;
         verificationMethod: string;
         spaces?: Record<string, string> | undefined;
     }>>;
@@ -993,19 +995,19 @@ declare const PersistedSessionDataSchema: z.ZodObject<{
     sessionKey: string;
     siwe: string;
     signature: string;
-    expiresAt: string;
     createdAt: string;
+    expiresAt: string;
     version: string;
     ens?: {
         domain?: string | null | undefined;
         avatarUrl?: string | null | undefined;
     } | undefined;
     tinycloudSession?: {
+        spaceId: string;
         delegationHeader: {
             Authorization: string;
         };
         delegationCid: string;
-        spaceId: string;
         verificationMethod: string;
         spaces?: Record<string, string> | undefined;
     } | undefined;
@@ -1016,19 +1018,19 @@ declare const PersistedSessionDataSchema: z.ZodObject<{
     sessionKey: string;
     siwe: string;
     signature: string;
-    expiresAt: string;
     createdAt: string;
+    expiresAt: string;
     version: string;
     ens?: {
         domain?: string | null | undefined;
         avatarUrl?: string | null | undefined;
     } | undefined;
     tinycloudSession?: {
+        spaceId: string;
         delegationHeader: {
             Authorization: string;
         };
         delegationCid: string;
-        spaceId: string;
         verificationMethod: string;
         spaces?: Record<string, string> | undefined;
     } | undefined;
@@ -1075,11 +1077,11 @@ declare const TinyCloudSessionSchema: z.ZodObject<{
     sessionKey: string;
     siwe: string;
     signature: string;
+    spaceId: string;
     delegationHeader: {
         Authorization: string;
     };
     delegationCid: string;
-    spaceId: string;
     verificationMethod: string;
     jwk: {} & {
         [k: string]: unknown;
@@ -1091,11 +1093,11 @@ declare const TinyCloudSessionSchema: z.ZodObject<{
     sessionKey: string;
     siwe: string;
     signature: string;
+    spaceId: string;
     delegationHeader: {
         Authorization: string;
     };
     delegationCid: string;
-    spaceId: string;
     verificationMethod: string;
     jwk: {} & {
         [k: string]: unknown;
@@ -1639,6 +1641,7 @@ declare const CapabilityEntrySchema: z.ZodObject<{
             key_ops?: string[] | undefined;
         } | undefined;
     }[];
+    resource: string;
     delegation: {
         path: string;
         expiry: Date;
@@ -1653,7 +1656,6 @@ declare const CapabilityEntrySchema: z.ZodObject<{
         allowSubDelegation?: boolean | undefined;
         authHeader?: string | undefined;
     };
-    resource: string;
     action: string;
     expiresAt?: Date | undefined;
 }, {
@@ -1676,6 +1678,7 @@ declare const CapabilityEntrySchema: z.ZodObject<{
             key_ops?: string[] | undefined;
         } | undefined;
     }[];
+    resource: string;
     delegation: {
         path: string;
         expiry: Date;
@@ -1690,7 +1693,6 @@ declare const CapabilityEntrySchema: z.ZodObject<{
         allowSubDelegation?: boolean | undefined;
         authHeader?: string | undefined;
     };
-    resource: string;
     action: string;
     expiresAt?: Date | undefined;
 }>;
@@ -1726,8 +1728,8 @@ declare const DelegationRecordSchema: z.ZodObject<{
 }, "strip", z.ZodTypeAny, {
     path: string;
     actions: string[];
-    spaceId: string;
     createdAt: Date;
+    spaceId: string;
     cid: string;
     isRevoked: boolean;
     delegator: string;
@@ -1739,8 +1741,8 @@ declare const DelegationRecordSchema: z.ZodObject<{
 }, {
     path: string;
     actions: string[];
-    spaceId: string;
     createdAt: Date;
+    spaceId: string;
     cid: string;
     isRevoked: boolean;
     delegator: string;
@@ -2250,7 +2252,6 @@ declare const ShareLinkSchema: z.ZodObject<{
     description: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
     schema: "base64" | "compact" | "ipfs";
-    url: string;
     delegation: {
         path: string;
         expiry: Date;
@@ -2265,12 +2266,12 @@ declare const ShareLinkSchema: z.ZodObject<{
         allowSubDelegation?: boolean | undefined;
         authHeader?: string | undefined;
     };
+    url: string;
     token: string;
     description?: string | undefined;
     expiresAt?: Date | undefined;
 }, {
     schema: "base64" | "compact" | "ipfs";
-    url: string;
     delegation: {
         path: string;
         expiry: Date;
@@ -2285,6 +2286,7 @@ declare const ShareLinkSchema: z.ZodObject<{
         allowSubDelegation?: boolean | undefined;
         authHeader?: string | undefined;
     };
+    url: string;
     token: string;
     description?: string | undefined;
     expiresAt?: Date | undefined;
@@ -2501,15 +2503,15 @@ declare const CreateDelegationWasmParamsSchema: z.ZodObject<{
     notBeforeSecs: z.ZodOptional<z.ZodNumber>;
 }, "strip", z.ZodTypeAny, {
     spaceId: string;
+    abilities: Record<string, Record<string, string[]>>;
     session: ServiceSession;
     delegateDID: string;
-    abilities: Record<string, Record<string, string[]>>;
     expirationSecs: number;
     notBeforeSecs?: number | undefined;
 }, {
     spaceId: string;
-    delegateDID: string;
     abilities: Record<string, Record<string, string[]>>;
+    delegateDID: string;
     expirationSecs: number;
     session?: unknown;
     notBeforeSecs?: number | undefined;
@@ -4749,6 +4751,8 @@ interface SpaceHostResult {
     activated?: string[];
     /** Space IDs that were skipped (e.g., space doesn't exist yet) */
     skipped?: string[];
+    /** Raw node receipt CID. This identifies the commit event, not the delegation. */
+    commitEventCid?: string;
 }
 /**
  * Fetch the peer ID from TinyCloud server for space hosting.

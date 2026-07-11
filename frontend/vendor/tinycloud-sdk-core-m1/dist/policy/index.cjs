@@ -22,6 +22,7 @@ var policy_exports = {};
 __export(policy_exports, {
   ED25519_JCS_SIGNATURE_SUITE: () => ED25519_JCS_SIGNATURE_SUITE,
   EIP191_JCS_SIGNATURE_SUITE: () => EIP191_JCS_SIGNATURE_SUITE,
+  OWNER_NODE_ENDPOINT_SCHEMA: () => OWNER_NODE_ENDPOINT_SCHEMA,
   POLICY_ENGINE_RECORD_SCHEMA: () => POLICY_ENGINE_RECORD_SCHEMA,
   POLICY_SCHEMA: () => POLICY_SCHEMA,
   POLICY_STATUS_SCHEMA: () => POLICY_STATUS_SCHEMA,
@@ -1598,6 +1599,7 @@ function hexToBytes(value) {
 
 // src/policy/authoring.ts
 var TRANSCRIPT_SHARE_BOOTSTRAP_SCHEMA = "xyz.tinycloud.exchange/transcript-bootstrap/v0";
+var OWNER_NODE_ENDPOINT_SCHEMA = "xyz.tinycloud.exchange/owner-node-endpoint/v1";
 var POLICY_VERSION_V0 = "v0";
 var W3C_VC_CREDENTIAL_VERIFIER = "w3c.vc/credential/v1";
 var PolicyAuthoringError = class extends Error {
@@ -1708,7 +1710,7 @@ async function createAndSignRequesterPolicyEngineRecord(input, signer) {
 }
 function composeTranscriptShareBootstrap(input) {
   const normalized = expectObject2(input, "$", "transcript-share-bootstrap-malformed");
-  assertExactKeys3(normalized, ["policyId", "policyEngineRecord", "resourceHint"], "$");
+  assertExactKeys3(normalized, ["policyId", "policyEngineRecord", "ownerNodeEndpoint", "ownerSpaceId", "resourceHint"], "$");
   const signedRecord = expectPolicyEngineRecord(
     requiredValue3(normalized, "policyEngineRecord", "$")
   );
@@ -1727,8 +1729,28 @@ function composeTranscriptShareBootstrap(input) {
       supportedEvidenceVerifiers: [W3C_VC_CREDENTIAL_VERIFIER],
       signedRecord
     },
+    ownerNode: {
+      schema: OWNER_NODE_ENDPOINT_SCHEMA,
+      endpoint: validateOwnerNodeEndpoint(requiredString3(normalized, "ownerNodeEndpoint", "$")),
+      spaceId: requiredString3(normalized, "ownerSpaceId", "$")
+    },
     resourceHint: requiredObject(normalized, "resourceHint", "$")
   };
+}
+function validateOwnerNodeEndpoint(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new PolicyAuthoringError("transcript-share-bootstrap-malformed", "$.ownerNodeEndpoint must be a URL");
+  }
+  if (url.protocol !== "https:" || url.username !== "" || url.password !== "" || url.hash !== "") {
+    throw new PolicyAuthoringError(
+      "transcript-share-bootstrap-malformed",
+      "$.ownerNodeEndpoint must be an HTTPS URL without credentials or a fragment"
+    );
+  }
+  return url.toString().replace(/\/$/, "");
 }
 async function verifyPolicyEngineRecordForRequester(options) {
   const normalized = expectObject2(options, "$", "policy-authoring-malformed");
@@ -1992,6 +2014,7 @@ function hasOwn3(object, key) {
 0 && (module.exports = {
   ED25519_JCS_SIGNATURE_SUITE,
   EIP191_JCS_SIGNATURE_SUITE,
+  OWNER_NODE_ENDPOINT_SCHEMA,
   POLICY_ENGINE_RECORD_SCHEMA,
   POLICY_SCHEMA,
   POLICY_STATUS_SCHEMA,

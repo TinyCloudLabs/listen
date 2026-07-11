@@ -1,20 +1,19 @@
-# PM base-prep: vendored @tinycloud/sdk-core for M1-F (m1-wave-6)
+# Vendored TinyCloud SDK artifacts for M1-F
 
-Flagged PM commit (Data Exchange v0, session 14, 2026-07-09) on the m1-f-01
-wave base — NOT builder output. Provenance:
+The original wave-6 SDK artifact has been retired. M1-F-02 pins the merged
+m1-e-02 output used by the owner live driver. Provenance:
 
-- `tinycloud-sdk-core-2.6.0-m1-46754ef.tgz`
-  - sha256 `37949c214b238581484367c359718a565a03ee67174230aa2b487b535da90cf0`
-  - packed (`npm pack`) from `packages/sdk-core` of TinyCloudLabs/js-sdk at
-    commit `46754eff508ffaeb61074c7fc6c69b64557f2703`
-    (`smithers/data-exchange/m1-wave-2-5/m1-integration` — the M1 js-sdk
-    promotion surface containing the merged m1-b-01a signed-object core and
-    m1-b-01b share-authoring/bootstrap/engine-record surface), dist built and
-    verified green by the whole-repo verify proof of 2026-07-09.
-- Purpose: the m1-f-01 owner share flow consumes the REAL pinned merged SDK
-  share surface (`@tinycloud/sdk-core@file:vendor/...` with subpath exports
-  `/policy`, `/bootstrap`) per the vector-consumption rule (consumer tickets
-  pin the producer's merged SHA). It is replaced by the published SDK release
-  at the milestone-gate promotion; this vendored artifact must not outlive M1.
-- The builder must consume this surface, never re-implement or copy SDK logic
-  into listen.
+- `tinycloud-sdk-core-2.6.0-m1-5a42dd6.tgz`
+  - sha256 `7f7c9213ae5732dd63b4c5076f16f8b32f1fa5579c4d1b9cef1feb12a3edbebe`
+  - packed with `npm pack` from `packages/sdk-core` at js-sdk commit
+    `5a42dd6` on `smithers/data-exchange/m1-direct/m1-integration`.
+- `tinycloud-node-sdk-2.6.0-m1-5a42dd6.tgz`
+  - sha256 `7ec4e3c0a89dce064f52f99f0a078b9fc3b81244f736ebb1edba9c1692fbe483`
+  - packed with `npm pack` from `packages/node-sdk` at the same branch and
+    commit.
+- Purpose: the M1 owner share flow consumes the real pinned merged SDK
+  policy-authoring and wallet-rooted external-DID delegation surfaces per the
+  vector-consumption rule. These artifacts are replaced by the published SDK
+  release at milestone-gate promotion and must not outlive M1.
+- The builder must consume these surfaces, never reimplement or copy SDK logic
+  into Listen.
