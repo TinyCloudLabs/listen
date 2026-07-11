@@ -1,12 +1,24 @@
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { composeListenOwnerShareDraft } from "../frontend/src/lib/listenOwnerShares";
-import { canonicalJson, dryRunInput, runOwnerDemo } from "./m1-owner-demo";
+import {
+  canonicalJson,
+  dryRunInput,
+  parseState,
+  runCli,
+  runOwnerPublish,
+  runOwnerRevoke,
+} from "./m1-owner-demo";
 
-describe("m1 owner demo driver", () => {
-  it("emits a deterministic canonical artifact matching library composition", async () => {
+describe("m1 owner split-phase demo driver", () => {
+  it("emits a deterministic publish artifact matching library composition", async () => {
     const input = dryRunInput();
-    const artifact = await runOwnerDemo({ input, mode: "dry-run" });
+    const first = await runOwnerPublish({ input, mode: "dry-run" });
+    const second = await runOwnerPublish({ input, mode: "dry-run" });
     const libraryDraft = {
       ...composeListenOwnerShareDraft(input.conversations, {
         conversationIds: input.selectedTranscriptIds,
@@ -16,8 +28,8 @@ describe("m1 owner demo driver", () => {
       shareId: input.shareId!,
     };
 
-    expect(artifact).toMatchObject({
-      schema: "xyz.tinycloud.listen/m1-owner-demo-artifact/v1",
+    expect(first.artifact).toMatchObject({
+      schema: "xyz.tinycloud.listen/m1-owner-publish-artifact/v1",
       mode: "dry-run",
       input: {
         selectedTranscriptIds: ["conversation-a", "conversation-b"],
@@ -28,32 +40,79 @@ describe("m1 owner demo driver", () => {
       publish: {
         shareId: "share-m1-owner-dry-run",
         bootstrapPath: "xyz.tinycloud.listen/owner-shares/share-m1-owner-dry-run/bootstrap.json",
-      },
-      revoke: {
-        disposition: "revoked",
-        receipt: {
-          status: "revoked",
-          updatedAt: "2026-05-14T14:05:00Z",
+        bootstrap: {
+          ownerNode: {
+            endpoint: "https://node.tinycloud.xyz",
+            spaceId:
+              "tinycloud:pkh:eip155:1:0x0000000000000000000000000000000000000abc:applications",
+          },
         },
       },
     });
-    expect(artifact.composition).toEqual({
+    expect(first.artifact.composition).toEqual({
       capabilities: libraryDraft.capabilities,
       disclosure: libraryDraft.disclosure,
     });
-    expect(artifact.publish.writeSet.map((write) => write.path).sort()).toEqual(
+    expect(first.artifact.publish.writeSet.map((write) => write.path).sort()).toEqual(
       [
-        artifact.publish.policyPath,
-        artifact.publish.statusPath,
-        artifact.publish.bootstrapPath,
-        artifact.publish.engineRecordPath,
+        first.artifact.publish.policyPath,
+        first.artifact.publish.statusPath,
+        first.artifact.publish.bootstrapPath,
+        first.artifact.publish.engineRecordPath,
       ].sort(),
     );
-    expect(artifact.publish.activeStatusId).toMatch(/^polst_/);
-    expect(artifact.revoke.revokedStatusId).toMatch(/^polst_/);
-    expect(canonicalJson(artifact)).toBe(
-      canonicalJson(await runOwnerDemo({ input, mode: "dry-run" })),
+    expect(first.artifact.publish.activeStatusId).toMatch(/^polst_/);
+    expect(canonicalJson(first.artifact)).toBe(canonicalJson(second.artifact));
+    expect(canonicalJson(first)).not.toMatch(/privateKey|private_key|secretKey|secret_key/i);
+  });
+
+  it("round-trips public state between separate publish and revoke phases", async () => {
+    const input = dryRunInput();
+    const published = await runOwnerPublish({ input, mode: "dry-run" });
+    const state = parseState(JSON.parse(canonicalJson(published.state)));
+    const revoked = await runOwnerRevoke({ input, mode: "dry-run", state });
+
+    expect(state.published.status).toBe("active");
+    expect(revoked).toMatchObject({
+      schema: "xyz.tinycloud.listen/m1-owner-revoke-artifact/v1",
+      mode: "dry-run",
+      revoke: {
+        shareId: state.published.shareId,
+        policyId: state.published.policyId,
+        disposition: "revoked",
+        receipt: { status: "revoked", updatedAt: "2026-05-14T14:05:00Z" },
+      },
+    });
+    expect(revoked.revoke.revokedStatusId).toMatch(/^polst_/);
+    expect(revoked.revoke.writeSet).toHaveLength(1);
+    expect(revoked.revoke.writeSet[0]?.path).toBe(state.published.statusPath);
+    expect(canonicalJson(revoked)).toBe(
+      canonicalJson(await runOwnerRevoke({ input, mode: "dry-run", state })),
     );
-    expect(canonicalJson(artifact)).not.toMatch(/private|secret|audio_data_kv_key/i);
+  });
+
+  it("round-trips a --state file across separate CLI invocations", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "listen-m1-owner-"));
+    const statePath = join(directory, "owner-state.json");
+    const publishPath = join(directory, "publish.json");
+    const revokePath = join(directory, "revoke.json");
+    try {
+      await runCli(["publish", "--dry-run", "--state", statePath, "--out", publishPath]);
+      const state = parseState(JSON.parse(readFileSync(statePath, "utf8")));
+      await runCli(["revoke", "--dry-run", "--state", statePath, "--out", revokePath]);
+
+      expect(JSON.parse(readFileSync(publishPath, "utf8"))).toMatchObject({
+        schema: "xyz.tinycloud.listen/m1-owner-publish-artifact/v1",
+      });
+      expect(JSON.parse(readFileSync(revokePath, "utf8"))).toMatchObject({
+        schema: "xyz.tinycloud.listen/m1-owner-revoke-artifact/v1",
+        revoke: { shareId: state.published.shareId, disposition: "revoked" },
+      });
+      expect(readFileSync(statePath, "utf8")).not.toMatch(
+        /privateKey|private_key|secretKey|secret_key/i,
+      );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });
