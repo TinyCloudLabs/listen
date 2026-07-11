@@ -635,7 +635,9 @@ async function composeWriteSet(
         grant: {
           output: "portable-delegation",
           maxTtlSeconds: 300,
-          delegationMode: "attenuable",
+          // m1-g-06 grant-output contract (approved 2026-07-10): issued grants are
+          // never re-delegable; the production GrantIssuer rejects non-terminal policies.
+          delegationMode: "terminal",
           revocation: "refresh_only",
         },
         disclosure: {

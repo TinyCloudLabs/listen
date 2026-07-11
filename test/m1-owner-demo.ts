@@ -116,7 +116,7 @@ const DRY_RUN_OWNER_SPACE =
 const DRY_RUN_NODE_ENDPOINT = "https://node.tinycloud.xyz";
 const DRY_RUN_SIGNATURE = `0x${"11".repeat(64)}1b`;
 const PARENT_PATH = "xyz.tinycloud.listen/conversations";
-const PARENT_ACTIONS = ["tinycloud.sql/read"] as const;
+const PARENT_ACTIONS = ["tinycloud.sql/read", "tinycloud.kv/get"] as const;
 
 export function dryRunInput(): OwnerDemoInput {
   return {
