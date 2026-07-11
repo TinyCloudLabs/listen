@@ -1,3 +1,5 @@
+import { b as JsonValue } from './capability-DpdAwc1W.cjs';
+
 type SignedObjectErrorCode = "schema-invalid" | "canonicalization-mismatch" | "digest-mismatch" | "id-mismatch" | "signing-key-binding" | "signature-material-invalid" | "signature-suite-unsupported" | "signature-invalid";
 declare class SignedObjectProfileError extends Error {
     readonly code: SignedObjectErrorCode;
@@ -28,21 +30,6 @@ declare class SignatureVerificationError extends SignedObjectProfileError {
     constructor(message: string);
 }
 declare function toSignedObjectError(error: unknown): SignedObjectProfileError;
-
-type JsonValue = null | boolean | number | string | JsonValue[] | {
-    readonly [key: string]: JsonValue;
-};
-/**
- * RFC 8785 JSON Canonicalization Scheme encoder for the signed-object profile.
- *
- * This local encoder is intentionally stricter than JSON.stringify:
- * it rejects non-plain JSON inputs, sparse arrays, undefined/functions/symbols,
- * non-finite numbers, BigInt, dangerous prototype keys, and lone surrogates.
- * Object keys are sorted by Unicode code point before serialization.
- */
-declare function jcsCanonicalize(input: unknown): string;
-declare function normalizeJson(input: unknown, path?: string): JsonValue;
-declare function serialize(value: JsonValue): string;
 
 declare const POLICY_SCHEMA = "xyz.tinycloud.policy/policy/v0";
 declare const POLICY_STATUS_SCHEMA = "xyz.tinycloud.policy/status/v0";
@@ -159,4 +146,4 @@ declare function validatePolicySignedShape(input: unknown): Policy;
 declare function validatePolicyStatusSignedShape(input: unknown): PolicyStatus;
 declare function validatePolicyEngineRecordSignedShape(input: unknown): PolicyEngineRecord;
 
-export { verifyPolicyStatus as $, canonicalizeSignedObjectUnsigned as A, createAndSignPolicy as B, createAndSignPolicyEngineRecord as C, createAndSignPolicyStatus as D, ED25519_JCS_SIGNATURE_SUITE as E, createAndSignSignedObject as F, deriveSignedObjectMaterial as G, jcsCanonicalize as H, normalizeJson as I, type JsonValue as J, serialize as K, signedObjectIdFor as L, toSignedObjectError as M, validatePolicyEngineRecordSigned as N, validatePolicyEngineRecordSignedShape as O, type PolicyEngineRecord as P, validatePolicyEngineRecordUnsigned as Q, validatePolicySigned as R, type SignedObjectSigner as S, validatePolicySignedShape as T, type UnsignedPolicyEngineRecord as U, validatePolicyStatusSigned as V, validatePolicyStatusSignedShape as W, validatePolicyStatusUnsigned as X, validatePolicyUnsigned as Y, verifyPolicy as Z, verifyPolicyEngineRecord as _, type Policy as a, verifySignedObject as a0, EIP191_JCS_SIGNATURE_SUITE as b, type JsonObject as c, POLICY_ENGINE_RECORD_SCHEMA as d, POLICY_SCHEMA as e, POLICY_STATUS_SCHEMA as f, type PolicyStatus as g, SignatureMaterialError as h, type SignatureSuite as i, SignatureVerificationError as j, SignedObjectCanonicalizationError as k, SignedObjectDigestError as l, type SignedObjectErrorCode as m, SignedObjectIdError as n, type SignedObjectKind as o, type SignedObjectMaterial as p, SignedObjectProfileError as q, SignedObjectSchemaError as r, type SignedObjectSignature as s, type SignedObjectVerificationResult as t, type SignedPolicyObject as u, SigningKeyBindingError as v, type UnsignedPolicy as w, type UnsignedPolicyObject as x, type UnsignedPolicyStatus as y, UnsupportedSignatureSuiteError as z };
+export { createAndSignPolicy as A, createAndSignPolicyEngineRecord as B, createAndSignPolicyStatus as C, createAndSignSignedObject as D, ED25519_JCS_SIGNATURE_SUITE as E, deriveSignedObjectMaterial as F, signedObjectIdFor as G, toSignedObjectError as H, validatePolicyEngineRecordSigned as I, type JsonObject as J, validatePolicyEngineRecordSignedShape as K, validatePolicyEngineRecordUnsigned as L, validatePolicySigned as M, validatePolicySignedShape as N, validatePolicyStatusSigned as O, type PolicyEngineRecord as P, validatePolicyStatusSignedShape as Q, validatePolicyStatusUnsigned as R, type SignedObjectSigner as S, validatePolicyUnsigned as T, type UnsignedPolicyEngineRecord as U, verifyPolicy as V, verifyPolicyEngineRecord as W, verifyPolicyStatus as X, verifySignedObject as Y, type Policy as a, EIP191_JCS_SIGNATURE_SUITE as b, POLICY_ENGINE_RECORD_SCHEMA as c, POLICY_SCHEMA as d, POLICY_STATUS_SCHEMA as e, type PolicyStatus as f, SignatureMaterialError as g, type SignatureSuite as h, SignatureVerificationError as i, SignedObjectCanonicalizationError as j, SignedObjectDigestError as k, type SignedObjectErrorCode as l, SignedObjectIdError as m, type SignedObjectKind as n, type SignedObjectMaterial as o, SignedObjectProfileError as p, SignedObjectSchemaError as q, type SignedObjectSignature as r, type SignedObjectVerificationResult as s, type SignedPolicyObject as t, SigningKeyBindingError as u, type UnsignedPolicy as v, type UnsignedPolicyObject as w, type UnsignedPolicyStatus as x, UnsupportedSignatureSuiteError as y, canonicalizeSignedObjectUnsigned as z };

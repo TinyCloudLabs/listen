@@ -1,5 +1,5 @@
 {
-  "name": "@tinycloud/sdk-core-m1",
+  "name": "@tinycloud/sdk-core",
   "version": "2.6.0",
   "description": "Core TinyCloud SDK - shared interfaces and TinyCloud class",
   "author": "TinyCloud, Inc.",

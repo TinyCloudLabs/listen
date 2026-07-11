@@ -50,6 +50,8 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@tinycloud/node-sdk": "2.4.0",
+    "@tinycloud/node-sdk-m1": "file:./test/vendor/tinycloud-node-sdk-m1",
+    "ethers": "^5.7.2",
     "eslint": "^10.1.0",
     "husky": "^9.1.7",
     "portless": "^0.13.0",

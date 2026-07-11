@@ -1,6 +1,7 @@
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
 import {
   EIP191_JCS_SIGNATURE_SUITE,
+  OWNER_NODE_ENDPOINT_SCHEMA,
   POLICY_ENGINE_RECORD_SCHEMA,
   POLICY_STATUS_SCHEMA,
   TRANSCRIPT_SHARE_BOOTSTRAP_SCHEMA,
@@ -37,6 +38,7 @@ export const REVOKE_COPY =
   "Access usually ends within 5 minutes. Anything already opened, downloaded, copied, or cached cannot be recalled.";
 export const DEFAULT_POLICY_ENGINE_ENDPOINT = "https://node.tinycloud.xyz/policy-engine";
 export const DEFAULT_POLICY_ENGINE_AUDIENCE = "urn:tinycloud:policy-engine:listen:m1";
+export const DEFAULT_OWNER_NODE_ENDPOINT = "https://node.tinycloud.xyz";
 export const OWNER_SHARE_TTL_DAYS = 30;
 
 const SHARE_STORE_KEY = "listen:owner-transcript-shares:v1";
@@ -130,6 +132,12 @@ interface OwnerShareWriteSet {
   policyStatus: PolicyStatus;
   engineRecord: PolicyEngineRecord;
   bootstrap: TranscriptShareBootstrap;
+}
+
+export interface ListenOwnerSharePublicationContext {
+  grantIssuerDid?: string;
+  ownerNodeEndpoint?: string;
+  ownerSpaceId?: string;
 }
 
 type TinyCloudKvWriter = {
@@ -583,9 +591,10 @@ async function composeWriteSet(
   draft: ListenOwnerShareDraft,
   ownerDid: string,
   signer: SignedObjectSigner,
+  context: ListenOwnerSharePublicationContext,
 ): Promise<OwnerShareWriteSet> {
   try {
-    const grantIssuerDid = `${ownerDid}#listen-grant-issuer`;
+    const grantIssuerDid = context.grantIssuerDid ?? `${ownerDid}#listen-grant-issuer`;
     const engineRecord = await createAndSignRequesterPolicyEngineRecord(
       {
         ownerDid,
@@ -653,6 +662,8 @@ async function composeWriteSet(
     const bootstrap = composeTranscriptShareBootstrap({
       policyId: policy.policyId,
       policyEngineRecord: engineRecord,
+      ownerNodeEndpoint: context.ownerNodeEndpoint ?? DEFAULT_OWNER_NODE_ENDPOINT,
+      ownerSpaceId: context.ownerSpaceId ?? ownerDid,
       resourceHint: resourceHintJson(draft),
     });
     return { policy, policyStatus, engineRecord, bootstrap };
@@ -855,7 +866,7 @@ function parseResourceHint(input: unknown): JsonObject {
 function parseTranscriptShareBootstrap(input: unknown): TranscriptShareBootstrap {
   const object = assertExactKeys(
     input,
-    ["schema", "policyId", "policyEngine", "resourceHint"],
+    ["schema", "policyId", "policyEngine", "ownerNode", "resourceHint"],
     "$.bootstrap",
   );
   if (object.schema !== TRANSCRIPT_SHARE_BOOTSTRAP_SCHEMA || typeof object.policyId !== "string") {
@@ -883,6 +894,18 @@ function parseTranscriptShareBootstrap(input: unknown): TranscriptShareBootstrap
   if (signedRecord.schema !== POLICY_ENGINE_RECORD_SCHEMA) {
     throw typedError("invalid-input", "$.bootstrap.policyEngine.signedRecord is malformed");
   }
+  const ownerNode = assertExactKeys(
+    object.ownerNode,
+    ["schema", "endpoint", "spaceId"],
+    "$.bootstrap.ownerNode",
+  );
+  if (
+    ownerNode.schema !== OWNER_NODE_ENDPOINT_SCHEMA ||
+    typeof ownerNode.endpoint !== "string" ||
+    typeof ownerNode.spaceId !== "string"
+  ) {
+    throw typedError("invalid-input", "$.bootstrap.ownerNode is malformed");
+  }
   return {
     schema: TRANSCRIPT_SHARE_BOOTSTRAP_SCHEMA,
     policyId: object.policyId,
@@ -892,6 +915,11 @@ function parseTranscriptShareBootstrap(input: unknown): TranscriptShareBootstrap
       supportedEvidenceVerifiers: [W3C_VC_CREDENTIAL_VERIFIER],
       signedRecord,
     },
+    ownerNode: {
+      schema: OWNER_NODE_ENDPOINT_SCHEMA,
+      endpoint: ownerNode.endpoint,
+      spaceId: ownerNode.spaceId,
+    },
     resourceHint: parseResourceHint(object.resourceHint),
   };
 }
@@ -899,11 +927,12 @@ function parseTranscriptShareBootstrap(input: unknown): TranscriptShareBootstrap
 export async function publishListenOwnerShare(
   tcw: TinyCloudWeb,
   draft: ListenOwnerShareDraft,
+  context: ListenOwnerSharePublicationContext = {},
 ): Promise<PublishedListenOwnerShare> {
   const ownerDid = ownerDidFromSession(tcw);
   const signer = signerFromTinyCloud(tcw, ownerDid);
   const writer = writerFromTinyCloud(tcw);
-  const writeSet = await composeWriteSet(draft, ownerDid, signer);
+  const writeSet = await composeWriteSet(draft, ownerDid, signer, context);
   const paths = sharePaths(
     draft.shareId,
     writeSet.policy.policyId,
