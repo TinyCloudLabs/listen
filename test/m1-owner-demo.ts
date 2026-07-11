@@ -1,6 +1,6 @@
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 
-import { TinyCloudNode, type OwnerDelegationReceipt } from "@tinycloud/node-sdk";
+import { TinyCloudNode, type OwnerDelegationReceipt } from "@tinycloud/node-sdk-m1";
 import { Wallet } from "ethers";
 
 import {

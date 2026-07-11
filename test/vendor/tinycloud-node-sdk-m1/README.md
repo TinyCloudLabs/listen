@@ -7,5 +7,5 @@ The source tarball sha256 is:
 
 7ec4e3c0a89dce064f52f99f0a078b9fc3b81244f736ebb1edba9c1692fbe483
 
-Only package.json's sdk-core dependency is redirected to the adjacent pinned
-2.6.0 package. Do not hand-edit files under dist/.
+Only package.json's name and sdk-core dependency are changed so Bun can install
+the M1 surface beside repository-wide SDK 2.5.x. Do not hand-edit `dist/`.

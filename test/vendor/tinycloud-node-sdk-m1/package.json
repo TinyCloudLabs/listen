@@ -1,5 +1,5 @@
 {
-  "name": "@tinycloud/node-sdk",
+  "name": "@tinycloud/node-sdk-m1",
   "version": "2.6.0",
   "description": "TinyCloud SDK for Node.js with configurable authorization strategies",
   "author": "TinyCloud, Inc.",
