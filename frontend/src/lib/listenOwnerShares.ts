@@ -378,7 +378,7 @@ function signerFromTinyCloud(tcw: TinyCloudWeb, ownerDid: string): SignedObjectS
   return {
     suite: EIP191_JCS_SIGNATURE_SUITE,
     signerDid: ownerDid,
-    signDigest: (digest) => providerSigner.signMessage(Uint8Array.from(digest)),
+    signDigest: (digest: Uint8Array) => providerSigner.signMessage(Uint8Array.from(digest)),
   };
 }
 
