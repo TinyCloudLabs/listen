@@ -4,3 +4,5 @@ bun.lock
 *.md
 frontend/public/_headers
 frontend/public/importer
+.bun-cache/
+.bun-tmp/
