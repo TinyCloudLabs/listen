@@ -578,7 +578,7 @@ function credentialRuleJson(rule: ListenOwnerShareCredentialRule): JsonObject {
 
 function resourceHintJson(
   draft: ListenOwnerShareDraft,
-  requestedCapabilities: readonly PolicyCapability[],
+  requestedCapabilities: JsonValue[],
 ): JsonObject {
   return {
     resourceType: LISTEN_TRANSCRIPT_RESOURCE_TYPE,
@@ -661,15 +661,21 @@ async function composeWriteSet(
       },
       signer,
     );
+    // The bootstrap advertises exactly the SIGNED policy's normalized
+    // ceiling; the requester hashes these and rejects grants outside them.
+    const permissionsCeiling: unknown = policy.resource.permissionsCeiling;
+    if (!Array.isArray(permissionsCeiling) || permissionsCeiling.length === 0) {
+      throw typedError(
+        "invalid-input",
+        "signed policy permissionsCeiling must be a non-empty array",
+      );
+    }
     const bootstrap = composeTranscriptShareBootstrap({
       policyId: policy.policyId,
       policyEngineRecord: engineRecord,
       ownerNodeEndpoint: context.ownerNodeEndpoint ?? DEFAULT_OWNER_NODE_ENDPOINT,
       ownerSpaceId: context.ownerSpaceId ?? ownerDid,
-      resourceHint: resourceHintJson(
-        draft,
-        policy.resource.permissionsCeiling as readonly PolicyCapability[],
-      ),
+      resourceHint: resourceHintJson(draft, [...permissionsCeiling]),
     });
     return { policy, policyStatus, engineRecord, bootstrap };
   } catch (err) {
