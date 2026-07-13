@@ -36,6 +36,13 @@ describe("manifest", () => {
     expect("backend" in manifest).toBe(false);
     expect(manifest.permissions).toEqual([
       {
+        service: "tinycloud.sql",
+        path: "conversations",
+        actions: ["read", "write", "schema"],
+        description:
+          "Create and migrate the conversations schema so the browser can seed it on first read when the backend seeder is unavailable.",
+      },
+      {
         service: "tinycloud.hooks",
         path: "sql/conversations/conversation",
         actions: ["subscribe"],

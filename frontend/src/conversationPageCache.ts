@@ -13,11 +13,22 @@ export interface ConversationDetailCacheEntry<T> {
 export const CONVERSATION_PAGE_CACHE_PREFIX = "listen:conversation-page:v1:";
 export const CONVERSATION_DETAIL_CACHE_PREFIX = "listen:conversation-detail:v1:";
 
-export function conversationPageCacheKey(path: string): string {
+export type ConversationCacheScope = string | null | undefined;
+
+function normalizeCacheScope(scope: ConversationCacheScope): string | null {
+  const normalized = scope?.trim().toLowerCase();
+  return normalized ? encodeURIComponent(normalized) : null;
+}
+
+export function conversationPageCacheKey(path: string, scope?: ConversationCacheScope): string {
+  const normalizedScope = normalizeCacheScope(scope);
+  if (normalizedScope) return `${CONVERSATION_PAGE_CACHE_PREFIX}${normalizedScope}:${path}`;
   return `${CONVERSATION_PAGE_CACHE_PREFIX}${path}`;
 }
 
-export function conversationDetailCacheKey(id: string): string {
+export function conversationDetailCacheKey(id: string, scope?: ConversationCacheScope): string {
+  const normalizedScope = normalizeCacheScope(scope);
+  if (normalizedScope) return `${CONVERSATION_DETAIL_CACHE_PREFIX}${normalizedScope}:${id}`;
   return `${CONVERSATION_DETAIL_CACHE_PREFIX}${id}`;
 }
 
@@ -30,17 +41,21 @@ function getStorage(): Storage | null {
   }
 }
 
-export function readConversationPageCache<T>(path: string): ConversationPageCacheEntry<T> | null {
+export function readConversationPageCache<T>(
+  path: string,
+  scope?: ConversationCacheScope,
+): ConversationPageCacheEntry<T> | null {
   const storage = getStorage();
   if (!storage) return null;
+  const key = conversationPageCacheKey(path, scope);
 
   try {
-    const raw = storage.getItem(conversationPageCacheKey(path));
+    const raw = storage.getItem(key);
     if (!raw) return null;
 
     const parsed = JSON.parse(raw) as Partial<ConversationPageCacheEntry<T>>;
     if (!Array.isArray(parsed.conversations) || typeof parsed.total !== "number") {
-      storage.removeItem(conversationPageCacheKey(path));
+      storage.removeItem(key);
       return null;
     }
 
@@ -51,7 +66,7 @@ export function readConversationPageCache<T>(path: string): ConversationPageCach
       cachedAt: typeof parsed.cachedAt === "string" ? parsed.cachedAt : "",
     };
   } catch {
-    storage.removeItem(conversationPageCacheKey(path));
+    storage.removeItem(key);
     return null;
   }
 }
@@ -63,13 +78,14 @@ export function writeConversationPageCache<T>(
     total: number;
     source_counts?: Array<{ source: string; total: number }>;
   },
+  scope?: ConversationCacheScope,
 ): void {
   const storage = getStorage();
   if (!storage) return;
 
   try {
     storage.setItem(
-      conversationPageCacheKey(path),
+      conversationPageCacheKey(path, scope),
       JSON.stringify({
         conversations: data.conversations,
         total: data.total,
@@ -82,17 +98,21 @@ export function writeConversationPageCache<T>(
   }
 }
 
-export function readConversationDetailCache<T>(id: string): ConversationDetailCacheEntry<T> | null {
+export function readConversationDetailCache<T>(
+  id: string,
+  scope?: ConversationCacheScope,
+): ConversationDetailCacheEntry<T> | null {
   const storage = getStorage();
   if (!storage) return null;
+  const key = conversationDetailCacheKey(id, scope);
 
   try {
-    const raw = storage.getItem(conversationDetailCacheKey(id));
+    const raw = storage.getItem(key);
     if (!raw) return null;
 
     const parsed = JSON.parse(raw) as Partial<ConversationDetailCacheEntry<T>>;
     if (!parsed || typeof parsed !== "object" || !("data" in parsed)) {
-      storage.removeItem(conversationDetailCacheKey(id));
+      storage.removeItem(key);
       return null;
     }
 
@@ -101,18 +121,22 @@ export function readConversationDetailCache<T>(id: string): ConversationDetailCa
       cachedAt: typeof parsed.cachedAt === "string" ? parsed.cachedAt : "",
     };
   } catch {
-    storage.removeItem(conversationDetailCacheKey(id));
+    storage.removeItem(key);
     return null;
   }
 }
 
-export function writeConversationDetailCache<T>(id: string, data: T): void {
+export function writeConversationDetailCache<T>(
+  id: string,
+  data: T,
+  scope?: ConversationCacheScope,
+): void {
   const storage = getStorage();
   if (!storage) return;
 
   try {
     storage.setItem(
-      conversationDetailCacheKey(id),
+      conversationDetailCacheKey(id, scope),
       JSON.stringify({
         data,
         cachedAt: new Date().toISOString(),

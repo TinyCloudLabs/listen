@@ -1,5 +1,11 @@
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
 import type { ApiClient } from "@listen/client";
+import {
+  MIGRATION_NAMESPACE,
+  SCHEMA_STATEMENTS,
+  COLUMN_MIGRATION_STATEMENTS,
+  COLUMN_MIGRATION_ALREADY_APPLIED_STATEMENTS,
+} from "@listen/core";
 import { normalizeAppRelativeKvKey, resolveAppKvPath, resolveAppSqlPath } from "./appManifest";
 
 export const DATABASE_NAME = resolveAppSqlPath("conversations");
@@ -19,6 +25,25 @@ export interface NormalizedTranscriptSentence {
 
 export interface TinyCloudSql {
   query(sql: string, params?: unknown[]): Promise<unknown>;
+}
+
+type SchemaMigrationResult = { ok: boolean; error?: { message?: string } };
+
+/**
+ * The subset of the web-sdk SQL database handle used to seed the schema.
+ * `sql.db(name)` returns a handle exposing `migrations.apply`; the fallback
+ * mirrors the backend for handles (e.g. test doubles) that only expose
+ * `execute`.
+ */
+interface SchemaSeedSql {
+  query(sql: string, params?: unknown[]): Promise<unknown>;
+  execute?(sql: string, params?: unknown[]): Promise<SchemaMigrationResult>;
+  migrations?: {
+    apply(options: {
+      namespace: string;
+      migrations: Array<{ id: string; sql: string[] }>;
+    }): Promise<SchemaMigrationResult>;
+  };
 }
 
 export interface TinyCloudKv {
@@ -150,6 +175,148 @@ function conversationKv(tcw: TinyCloudWeb): TinyCloudKv {
   const kv = (tcw as TinyCloudWeb & { kv?: TinyCloudKv }).kv;
   if (!kv) throw new Error("TinyCloud KV is not available");
   return kv;
+}
+
+/**
+ * Resolve the SQL database handle used to seed the conversations schema.
+ * The web-sdk's `sql.db(name)` handle exposes `migrations.apply`; the
+ * fallback replays statements via `execute()` for handles that lack it
+ * (mirroring the backend's `withMigrationFallback`).
+ */
+function seedSql(tcw: TinyCloudWeb): SchemaSeedSql {
+  const sql = (
+    tcw as TinyCloudWeb & { sql?: SchemaSeedSql & { db?: (name: string) => SchemaSeedSql } }
+  ).sql;
+  if (!sql) throw new Error("TinyCloud SQL is not available");
+
+  const scoped = typeof sql.db === "function" ? sql.db(DATABASE_NAME) : sql;
+  return withMigrationFallback(scoped);
+}
+
+function withMigrationFallback(sqlDb: SchemaSeedSql): SchemaSeedSql {
+  if (sqlDb.migrations?.apply) return sqlDb;
+  const execute = sqlDb.execute?.bind(sqlDb);
+
+  return {
+    query: sqlDb.query.bind(sqlDb),
+    migrations: {
+      apply: async (options) => {
+        if (!execute) {
+          return {
+            ok: false,
+            error: { message: "SQL execute is unavailable on this access handle" },
+          };
+        }
+        for (const migration of options.migrations) {
+          for (const sql of migration.sql) {
+            const result = await execute(sql);
+            if (!result.ok) return result;
+          }
+        }
+        return { ok: true };
+      },
+    },
+  };
+}
+
+function seedErrorMessage(result: unknown): string {
+  const message = (result as { error?: { message?: unknown } } | null)?.error?.message;
+  return typeof message === "string" && message.length > 0 ? message : "unknown error";
+}
+
+function thrownSeedErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Track schema initialization per TinyCloudWeb instance. Holds the in-flight
+ * promise so concurrent first reads (App.tsx fires the exists-probe and the
+ * ConversationList query concurrently) await a single seeding pass.
+ */
+const schemaSeeded = new WeakMap<object, Promise<void>>();
+
+/**
+ * Ensure the conversations schema exists before the first direct-TinyCloud
+ * read. Hybrid seeding: the backend is the primary seeder (it owns the
+ * canonical `ensureSchema` path), and the browser session seeds directly as a
+ * fallback when the backend is unavailable or its call fails. Runs at most once
+ * per TinyCloudWeb instance; a failed pass is not memoized so a later read can
+ * retry.
+ */
+export function ensureSchema(api: ApiClient | null, tcw: TinyCloudWeb): Promise<void> {
+  const existing = schemaSeeded.get(tcw);
+  if (existing) return existing;
+
+  const pending = seedSchemaViaBackendThenFallback(api, tcw).catch((error) => {
+    // Allow a later read to retry rather than pinning a permanent failure.
+    schemaSeeded.delete(tcw);
+    throw error;
+  });
+  schemaSeeded.set(tcw, pending);
+  return pending;
+}
+
+/**
+ * Try the backend seeder first, then fall back to seeding via the browser
+ * session. Only throws if BOTH fail, surfacing both failures.
+ */
+async function seedSchemaViaBackendThenFallback(
+  api: ApiClient | null,
+  tcw: TinyCloudWeb,
+): Promise<void> {
+  let backendError: string | null = null;
+  if (api) {
+    try {
+      await api.post("/api/schema/ensure");
+      return;
+    } catch (error) {
+      backendError = thrownSeedErrorMessage(error);
+    }
+  } else {
+    backendError = "backend unavailable (no api client)";
+  }
+
+  try {
+    await seedSchema(tcw);
+  } catch (fallbackError) {
+    throw new Error(
+      `Failed to seed conversations schema. Backend seeder: ${backendError}. ` +
+        `Browser fallback: ${thrownSeedErrorMessage(fallbackError)}`,
+    );
+  }
+}
+
+async function seedSchema(tcw: TinyCloudWeb): Promise<void> {
+  const sqlDb = seedSql(tcw);
+  const created = await sqlDb
+    .migrations!.apply({
+      namespace: MIGRATION_NAMESPACE,
+      migrations: [{ id: "001_initial", sql: SCHEMA_STATEMENTS }],
+    })
+    .catch((error) => ({ ok: false as const, error: { message: thrownSeedErrorMessage(error) } }));
+  if (!created.ok) {
+    throw new Error(`Failed to initialize conversations schema: ${seedErrorMessage(created)}`);
+  }
+
+  const columnCheck = (await sqlDb.query(
+    "SELECT transcript_json, transcript_text FROM conversation LIMIT 1",
+  )) as { ok?: boolean } | null;
+  const updated = await sqlDb
+    .migrations!.apply({
+      namespace: MIGRATION_NAMESPACE,
+      migrations: [
+        {
+          id: "002_transcript_columns",
+          sql: columnCheck?.ok
+            ? COLUMN_MIGRATION_ALREADY_APPLIED_STATEMENTS
+            : COLUMN_MIGRATION_STATEMENTS,
+        },
+      ],
+    })
+    .catch((error) => ({ ok: false as const, error: { message: thrownSeedErrorMessage(error) } }));
+  if (!updated.ok) {
+    throw new Error(`Failed to update conversations schema: ${seedErrorMessage(updated)}`);
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -465,13 +632,19 @@ export async function getConversationDetailFromAccess(
   return getConversationDetail(access, { id });
 }
 
-async function getFromTinyCloud(tcw: TinyCloudWeb | null, path: string): Promise<unknown> {
+async function getFromTinyCloud(
+  api: ApiClient | null,
+  tcw: TinyCloudWeb | null,
+  path: string,
+): Promise<unknown> {
   const listPath = parseListPath(path);
   const detailPath = listPath ? null : parseDetailPath(path);
   if (!listPath && !detailPath) throw new Error("No TinyCloud conversation handler for path");
 
   const access = tinycloudAccess(tcw);
   if (!access) throw new Error("TinyCloud conversation access is not available");
+
+  await ensureSchema(api, tcw!);
 
   return listPath
     ? listConversations(access, listPath)
@@ -490,7 +663,7 @@ export function createTinyCloudConversationApi(
   return {
     async get<T>(path: string): Promise<T> {
       if (parseListPath(path) || parseDetailPath(path)) {
-        if (tcw) return (await getFromTinyCloud(tcw, path)) as T;
+        if (tcw) return (await getFromTinyCloud(api, tcw, path)) as T;
         return requireApi().get<T>(path);
       }
 

@@ -4,6 +4,7 @@ import { TranscriptPane, speakerColor, type TranscriptSentence } from "./Transcr
 import { NotesPane } from "./NotesPane";
 import {
   readConversationDetailCache,
+  type ConversationCacheScope,
   writeConversationDetailCache,
 } from "../conversationPageCache";
 import { normalizeConversationMetadata, normalizeTranscript } from "../lib/tinycloudConversations";
@@ -51,6 +52,7 @@ interface ConversationDetailProps {
   backLabel?: string;
   onShare?: (id: string) => void;
   cacheMode?: "default" | "disabled";
+  cacheScope?: ConversationCacheScope;
   onUpdated?: () => void;
 }
 
@@ -345,6 +347,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
   backLabel = "Library",
   onShare,
   cacheMode = "default",
+  cacheScope,
   onUpdated,
 }) => {
   const [data, setData] = useState<DetailResponse | null>(null);
@@ -375,7 +378,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
       };
       setData(next);
       if (useCache) {
-        writeConversationDetailCache(conversationId, next);
+        writeConversationDetailCache(conversationId, next, cacheScope);
       }
       setEditingTitle(false);
       setNotice("Title updated");
@@ -388,7 +391,9 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
   };
 
   useEffect(() => {
-    const cached = useCache ? readConversationDetailCache<DetailResponse>(conversationId) : null;
+    const cached = useCache
+      ? readConversationDetailCache<DetailResponse>(conversationId, cacheScope)
+      : null;
     let cancelled = false;
     const path = `/api/conversations/${conversationId}`;
     const started = Date.now();
@@ -417,7 +422,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
         const normalized = normalizeDetailResponse(res);
         setData(normalized);
         if (useCache) {
-          writeConversationDetailCache(conversationId, normalized);
+          writeConversationDetailCache(conversationId, normalized, cacheScope);
         }
         console.info("[conversation-detail] loaded", {
           conversationId,
@@ -448,7 +453,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [api, conversationId, useCache]);
+  }, [api, cacheScope, conversationId, useCache]);
 
   useEffect(() => {
     if (!notice) return;
@@ -514,7 +519,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
       });
       setData(next);
       if (useCache) {
-        writeConversationDetailCache(conversation.id, next);
+        writeConversationDetailCache(conversation.id, next, cacheScope);
       }
       setNotice("Transcript recovered");
     } catch (err) {

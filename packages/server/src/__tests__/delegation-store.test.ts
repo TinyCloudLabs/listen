@@ -180,6 +180,28 @@ describe("DelegationStore", () => {
       const [key] = mockNode.kv.delete.mock.calls[0];
       expect(key).toBe("delegations/0xAbC123");
     });
+
+    test("logs but does not throw when kv.delete reports failure", async () => {
+      mockNode.kv.delete = mock(() =>
+        Promise.resolve({ ok: false, error: { code: "kv_delete_failed", message: "boom" } }),
+      );
+      const originalError = console.error;
+      const errorCalls: unknown[][] = [];
+      console.error = (...args: unknown[]) => {
+        errorCalls.push(args);
+      };
+
+      try {
+        await store.remove("0xAbC123");
+      } finally {
+        console.error = originalError;
+      }
+
+      expect(mockNode.kv.delete).toHaveBeenCalledTimes(1);
+      expect(errorCalls.length).toBe(1);
+      expect(String(errorCalls[0]![0])).toContain("[DelegationStore]");
+      expect(JSON.stringify(errorCalls[0])).toContain("kv_delete_failed");
+    });
   });
 
   describe("isActive", () => {

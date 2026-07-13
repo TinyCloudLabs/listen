@@ -60,7 +60,7 @@ export { requestNonce, verifySession, type VerifyResponse } from "./auth.js";
 
 export { SessionStore, type StoredSession } from "./tokens.js";
 
-export { createApiClient, type ApiClient, type ApiClientConfig } from "./api.js";
+export { createApiClient, ApiRequestError, type ApiClient, type ApiClientConfig } from "./api.js";
 
 export {
   isListenDebugEnabled,

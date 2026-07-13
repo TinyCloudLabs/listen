@@ -12,6 +12,7 @@ import {
   createPermissionDelegation,
   sendDelegation,
   revokeDelegation,
+  checkDelegationStatus,
   SessionStore,
   loadPersistedSession,
   clearPersistedSession,
@@ -49,6 +50,13 @@ import {
   workspaceStateFromCache,
   writeBackendWorkspaceCache,
 } from "./lib/backendWorkspaceCache";
+import {
+  createBackendDelegationRenewer,
+  hasBackendDelegationGrantRecord,
+  recordBackendDelegationGrant,
+  withDelegationAutoRenewal,
+  type BackendDelegationRenewer,
+} from "./lib/backendDelegationRenewal";
 
 // ── Environment ─────────────────────────────────────────────────────
 
@@ -946,6 +954,7 @@ export function App() {
   const [serverGoogleMeetAvailable, setServerGoogleMeetAvailable] = useState<boolean | null>(null);
 
   const sessionStoreRef = useRef(new SessionStore());
+  const backendRenewerRef = useRef<BackendDelegationRenewer | null>(null);
   const isMobile = useIsMobile();
   const chatEnabled = isChatEnabled();
   const [shareToken, setShareToken] = useState(() => readShareTokenFromLocation());
@@ -953,13 +962,14 @@ export function App() {
     () => (api || tcw ? createTinyCloudConversationApi(api, tcw) : null),
     [api, tcw],
   );
+  const conversationCacheScope = address?.toLowerCase() ?? did ?? null;
 
   const createBackendApiClient = useCallback((addr: string, bDid: string): ApiClient => {
     const baseClient = createApiClient(BACKEND_URL, {
       sessionStore: sessionStoreRef.current,
     });
 
-    return withBackendWorkspaceCacheInvalidation(baseClient, (err) => {
+    const invalidatingClient = withBackendWorkspaceCacheInvalidation(baseClient, (err) => {
       clearBackendWorkspaceCache(addr, bDid);
       debugLog("workspace-state.cache", "cleared", {
         reason: err instanceof Error ? err.message : String(err),
@@ -970,7 +980,55 @@ export function App() {
       setHasTranscriptionBackendAccess(EMPTY_TRANSCRIPTION_STATUS);
       setHasGoogleMeet(false);
     });
+
+    // Reactive renewal: 401 delegation_expired / 403 no_delegation trigger a
+    // silent re-delegation and a single retry of the failed request.
+    return withDelegationAutoRenewal(invalidatingClient, () => backendRenewerRef.current);
   }, []);
+
+  /**
+   * Install the silent backend-delegation renewer for the current session.
+   *
+   * Captures the freshly created TinyCloud instance / backend DID / composed
+   * capability request as locals (React state is not committed yet when this
+   * runs inside sign-in/restore). Renewal creates a real newly signed UCAN
+   * via the SDK's session-key path — `delegateTo` throws instead of prompting
+   * when the session cannot derive the delegation, so this can never surface
+   * a wallet prompt.
+   */
+  const installBackendDelegationRenewer = useCallback(
+    (
+      addr: string,
+      tcwInstance: TinyCloudWeb,
+      bDid: string,
+      composedRequest: ComposedManifestRequest,
+    ): BackendDelegationRenewer => {
+      const renewer = createBackendDelegationRenewer({
+        checkStatus: () => {
+          const token = sessionStoreRef.current.getToken();
+          if (!token) return Promise.reject(new Error("Missing backend session token"));
+          return checkDelegationStatus(BACKEND_URL, token);
+        },
+        hasPriorGrant: () => hasBackendDelegationGrantRecord(addr, bDid),
+        renew: async () => {
+          const token = sessionStoreRef.current.getToken();
+          if (!token) throw new Error("Missing backend session token");
+          const { serialized } = await createManifestDelegation(tcwInstance, bDid, composedRequest);
+          await sendDelegation(BACKEND_URL, serialized, token);
+        },
+        onRenewed: () => {
+          clearBackendWorkspaceCache(addr, bDid);
+          recordBackendDelegationGrant(addr, bDid);
+          setHasBackendDelegation(true);
+          setRefreshKey((k) => k + 1);
+        },
+        log: (event, detail) => debugLog("delegation.auto-renew", event, detail),
+      });
+      backendRenewerRef.current = renewer;
+      return renewer;
+    },
+    [],
+  );
 
   useEffect(() => {
     const acceptShareFromLocation = () => {
@@ -987,6 +1045,7 @@ export function App() {
 
   const applyDirectTinyCloudSession = useCallback((addr: string, tcwInstance: TinyCloudWeb) => {
     clearBackendWorkspaceCache(addr);
+    backendRenewerRef.current = null;
     sessionStoreRef.current.clear();
     setAddress(addr);
     setDid(tcwInstance.did ?? null);
@@ -1011,6 +1070,8 @@ export function App() {
     setHasTranscriptionBackendAccess(EMPTY_TRANSCRIPTION_STATUS);
     setHasGoogleMeet(null);
     setWorkspaceActionError(null);
+    setSelectedConversationId(null);
+    setShareConversationId(null);
   }, []);
 
   const signInDirectTinyCloud = useCallback(
@@ -1081,6 +1142,22 @@ export function App() {
 
       const apiClient = createBackendApiClient(addr, info.did);
 
+      // Ensure the backend still holds a non-expired delegation before the
+      // workspace-state fetch runs, so its delegation.status reflects the
+      // renewed grant. Requires a restored TinyCloud session; without one the
+      // existing re-grant UI handles it.
+      backendRenewerRef.current = null;
+      let delegationRenewed = false;
+      if (restoredTinyCloud) {
+        const renewer = installBackendDelegationRenewer(
+          addr,
+          restoredTinyCloud.tcw,
+          info.did,
+          composedRequest,
+        );
+        delegationRenewed = await renewer.ensureFreshDelegation();
+      }
+
       setAddress(addr);
       setDid(restoredTinyCloud?.tcw.did ?? persistedSession?.did ?? null);
       setTcw(restoredTinyCloud?.tcw ?? null);
@@ -1093,16 +1170,19 @@ export function App() {
       setLiveWritePathPrefix(conversationEventPathPrefix);
       setLiveWriteHost(restoredTinyCloud?.tcw.hosts[0] ?? null);
       setLiveWriteSpaceId(restoredTinyCloud?.tcw.spaceId ?? persistedSession?.spaceId ?? null);
+      setSelectedConversationId(null);
+      setShareConversationId(null);
       step.complete({
         restored: true,
         hasPersistedTinyCloud: Boolean(persistedSession),
         restoredTinyCloud: restoredTinyCloud !== null,
         backendDid: info.did,
         agentDid: agent?.did ?? null,
+        delegationRenewed,
       });
       return true;
     },
-    [createBackendApiClient],
+    [createBackendApiClient, installBackendDelegationRenewer],
   );
 
   const renewBackendDelegation = useCallback(async () => {
@@ -1125,13 +1205,14 @@ export function App() {
     try {
       const { serialized } = await createManifestDelegation(tcw, backendDid, capabilityRequest);
       await sendDelegation(BACKEND_URL, serialized, token);
+      if (address) recordBackendDelegationGrant(address, backendDid);
       setHasBackendDelegation(true);
       step.complete({ ok: true, backendDid });
     } catch (err) {
       step.fail(err);
       throw err;
     }
-  }, [backendDid, capabilityRequest, tcw]);
+  }, [address, backendDid, capabilityRequest, tcw]);
 
   const renewBackendDelegationWithSecrets = useCallback(
     async (secretNames: readonly string[]) => {
@@ -1168,6 +1249,7 @@ export function App() {
           ...secretPermissions,
         ]);
         await sendDelegation(BACKEND_URL, serialized, token);
+        if (address) recordBackendDelegationGrant(address, backendDid);
         setHasBackendDelegation(true);
         step.complete({ ok: true, backendDid, secretCount: secretNames.length });
       } catch (err) {
@@ -1175,7 +1257,7 @@ export function App() {
         throw err;
       }
     },
-    [backendDid, capabilityRequest, did, tcw],
+    [address, backendDid, capabilityRequest, did, tcw],
   );
 
   useEffect(() => {
@@ -1259,6 +1341,10 @@ export function App() {
         });
         if (address && backendDid && state.delegation.status === "active") {
           writeBackendWorkspaceCache(address, backendDid, state);
+          // Persist evidence of the grant so silent renewal stays available
+          // after the backend deletes an expired row (covers grants made
+          // before renewal shipped).
+          recordBackendDelegationGrant(address, backendDid);
           debugLog("workspace-state.cache", "stored", {
             backendDid,
             expiresAt: state.delegation.expiresAt,
@@ -1502,6 +1588,19 @@ export function App() {
 
         sessionStoreRef.current.setSession(verified.token, verified.expiresIn, addr);
         const apiClient = createBackendApiClient(addr, info.did);
+
+        // Silently re-send the backend delegation when a previous grant
+        // expired or its expired row was already cleaned up. Uses the LOCAL
+        // sign-in results (state is not committed yet). Never renews for a
+        // user who never granted — that stays behind the explicit setup UI.
+        const renewer = installBackendDelegationRenewer(
+          addr,
+          tcwInstance,
+          info.did,
+          composedRequest,
+        );
+        const delegationRenewed = await renewer.ensureFreshDelegation();
+
         setAddress(addr);
         setDid(tcwInstance.did ?? null);
         setTcw(tcwInstance);
@@ -1514,12 +1613,15 @@ export function App() {
         setLiveWritePathPrefix(conversationEventPathPrefix);
         setLiveWriteHost(tcwInstance.hosts[0] ?? null);
         setLiveWriteSpaceId(tcwInstance.spaceId ?? null);
+        setSelectedConversationId(null);
+        setShareConversationId(null);
         step.complete({
           mode: "backend",
           backendDid: info.did,
           agentDid: agent?.did ?? null,
           did: tcwInstance.did ?? null,
           spaceId: tcwInstance.spaceId ?? null,
+          delegationRenewed,
         });
       } catch (err) {
         step.fail(err);
@@ -1528,7 +1630,12 @@ export function App() {
         setAuthLoading(false);
       }
     },
-    [createBackendApiClient, restoreStoredSession, signInDirectTinyCloud],
+    [
+      createBackendApiClient,
+      installBackendDelegationRenewer,
+      restoreStoredSession,
+      signInDirectTinyCloud,
+    ],
   );
 
   const handleSignOut = useCallback(async () => {
@@ -1538,6 +1645,7 @@ export function App() {
     if (address) clearBackendWorkspaceCache(address, backendDid ?? undefined);
     if (address) clearPersistedSession(address);
     purgeListenLocalData();
+    backendRenewerRef.current = null;
     sessionStoreRef.current.clear();
     setAddress(null);
     setDid(null);
@@ -1566,6 +1674,8 @@ export function App() {
     setWorkspaceActionError(null);
     setWorkspaceActionLoading(false);
     setActivePage("inbox");
+    setSelectedConversationId(null);
+    setShareConversationId(null);
     setGmLapsedBanner(false);
   }, [address, backendDid, tcw]);
 
@@ -2174,6 +2284,7 @@ export function App() {
           activeRoute={activePage}
           selectedConversationId={selectedConversationId}
           refreshKey={refreshKey}
+          cacheScope={conversationCacheScope}
           hasFireflies={firefliesConnected}
           hasGranola={granolaConnected}
           hasSoundcore={soundcoreConnected}
@@ -2445,6 +2556,7 @@ export function App() {
           conversationId={selectedConversationId}
           onBack={() => setSelectedConversationId(null)}
           onShare={setShareConversationId}
+          cacheScope={conversationCacheScope}
           onUpdated={() => setRefreshKey((k) => k + 1)}
         />
       )}
@@ -2506,6 +2618,7 @@ export function App() {
             onShareConversation={setShareConversationId}
             onShareSelectedConversations={setOwnerShareConversationIds}
             refreshKey={refreshKey}
+            cacheScope={conversationCacheScope}
           />
         </>
       )}
@@ -2519,6 +2632,7 @@ export function App() {
           <ChatScreen
             api={activeConversationApi}
             refreshKey={refreshKey}
+            cacheScope={conversationCacheScope}
             onOpenConversation={(id) => {
               setSelectedConversationId(id);
               setActivePage("inbox");
