@@ -409,6 +409,43 @@ describe("listen owner share publish and revoke", () => {
     expect(statusWrite).toMatchObject({ disposition: "revoked", sequence: 2 });
   });
 
+  it("quarantines persisted shares with unsupported credential rules", async () => {
+    const put = vi.fn(async () => ({ ok: true }));
+    const { getPublishedListenOwnerShareProjection, publishListenOwnerShare } =
+      await importPublishModule();
+    await publishListenOwnerShare(tcw(put), draft());
+
+    const key = "listen:owner-transcript-shares:v1";
+    const baseline = JSON.parse(window.localStorage.getItem(key)!) as Array<{
+      credentialRule: Record<string, unknown>;
+    }>;
+    const invalidRules: Array<(rule: Record<string, unknown>) => void> = [
+      (rule) => delete rule.credentialType,
+      (rule) => {
+        rule.credentialType = "opencredentials.profile/v1";
+      },
+      (rule) => {
+        rule.acceptedIssuers = ["did:web:untrusted.example"];
+      },
+      (rule) => {
+        rule.emailDomains = ["Issuer.Credentials.org"];
+      },
+      (rule) => {
+        rule.emailDomains = ["not a domain"];
+      },
+    ];
+
+    for (const mutateRule of invalidRules) {
+      const stored = structuredClone(baseline);
+      mutateRule(stored[0]!.credentialRule);
+      window.localStorage.setItem(key, JSON.stringify(stored));
+      expect(getPublishedListenOwnerShareProjection()).toMatchObject({
+        quarantined: true,
+        shares: [],
+      });
+    }
+  });
+
   it("quarantines persisted share projections with unknown bootstrap fields", async () => {
     const put = vi.fn(async () => ({ ok: true }));
     const {
