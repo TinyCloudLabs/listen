@@ -44,7 +44,9 @@ export interface ListenTranscriptSqlStatementTemplate {
   sql: string;
 }
 
-export interface ListenTranscriptSqlStatement extends ListenTranscriptSqlStatementTemplate {
+export interface ListenTranscriptSqlStatement {
+  name: string;
+  sql: string;
   fixedParams: SqlFixedParam[];
 }
 
@@ -95,7 +97,26 @@ export function createListenTranscriptCapability(
   conversationId: string,
   options: { space?: string } = {},
 ): ListenTranscriptSqlCapability {
-  const fixedConversationParam = (): SqlFixedParam[] => [{ index: 0, value: conversationId }];
+  return createListenTranscriptSelectionCapability([conversationId], options);
+}
+
+export function listenTranscriptScopedStatementName(
+  name: ListenTranscriptStatementName,
+  conversationId: string,
+): string {
+  if (conversationId.length === 0) throw new Error("conversationId is required");
+  return `${name}@${encodeURIComponent(conversationId)}`;
+}
+
+export function createListenTranscriptSelectionCapability(
+  conversationIds: readonly string[],
+  options: { space?: string } = {},
+): ListenTranscriptSqlCapability {
+  const selected = [...new Set(conversationIds)].sort();
+  if (selected.length === 0 || selected.some((conversationId) => conversationId.length === 0)) {
+    throw new Error("At least one conversationId is required");
+  }
+  const scoped = selected.length > 1;
 
   return {
     service: "tinycloud.sql",
@@ -105,10 +126,15 @@ export function createListenTranscriptCapability(
     caveats: {
       mode: "constrained-statements",
       readOnly: true,
-      statements: LISTEN_TRANSCRIPT_SQL_STATEMENT_TEMPLATES.map((statement) => ({
-        ...statement,
-        fixedParams: fixedConversationParam(),
-      })),
+      statements: selected.flatMap((conversationId) =>
+        LISTEN_TRANSCRIPT_SQL_STATEMENT_TEMPLATES.map((statement) => ({
+          ...statement,
+          name: scoped
+            ? listenTranscriptScopedStatementName(statement.name, conversationId)
+            : statement.name,
+          fixedParams: [{ index: 0, value: conversationId }],
+        })),
+      ),
     },
   };
 }

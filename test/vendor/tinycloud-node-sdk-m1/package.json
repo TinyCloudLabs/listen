@@ -1,0 +1,49 @@
+{
+  "name": "@tinycloud/node-sdk-m1",
+  "version": "2.6.0",
+  "description": "TinyCloud SDK for Node.js with configurable authorization strategies",
+  "author": "TinyCloud, Inc.",
+  "license": "EGPL",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./core": {
+      "types": "./dist/core.d.ts",
+      "import": "./dist/core.js",
+      "require": "./dist/core.cjs"
+    }
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "clean": "rm -rf dist",
+    "test": "bun test src/",
+    "test:integration": "echo 'Integration tests live in tests/node-sdk workspace'"
+  },
+  "dependencies": {
+    "@tinycloud/sdk-core": "file:../tinycloud-sdk-core-m1",
+    "@tinycloud/node-sdk-wasm": "1.7.4",
+    "siwe": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "tsup": "^8.0.0",
+    "typescript": "^5.9.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tinycloudlabs/web-sdk"
+  }
+}

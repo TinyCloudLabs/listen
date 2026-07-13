@@ -1,0 +1,66 @@
+{
+  "name": "@tinycloud/sdk-core",
+  "version": "2.6.0",
+  "description": "Core TinyCloud SDK - shared interfaces and TinyCloud class",
+  "author": "TinyCloud, Inc.",
+  "license": "EGPL",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./bootstrap": {
+      "types": "./dist/bootstrap/index.d.ts",
+      "import": "./dist/bootstrap/index.js",
+      "require": "./dist/bootstrap/index.cjs"
+    },
+    "./policy": {
+      "types": "./dist/policy/index.d.ts",
+      "import": "./dist/policy/index.js",
+      "require": "./dist/policy/index.cjs"
+    },
+    "./requester": {
+      "types": "./dist/requester/index.d.ts",
+      "import": "./dist/requester/index.js",
+      "require": "./dist/requester/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "clean": "rm -rf dist",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@noble/hashes": "1.8.0",
+    "@multiformats/multiaddr": "^13.0.1",
+    "@multiformats/multiaddr-to-uri": "^12.0.0",
+    "@multiformats/uri-to-multiaddr": "^10.0.0",
+    "@noble/curves": "^1.9.7",
+    "@tinycloud/bootstrap": "2.5.0",
+    "@tinycloud/sdk-services": "2.6.0",
+    "multiformats": "^13.4.1",
+    "ms": "^2.1.3",
+    "siwe": "^3.0.0",
+    "viem": "^2.21.53",
+    "zod": "^3.22.0",
+    "zod-to-json-schema": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/ms": "^0.7.34",
+    "@types/node": "^20",
+    "tsup": "^8.0.0",
+    "typescript": "^5.9.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tinycloudlabs/web-sdk"
+  }
+}

@@ -263,9 +263,9 @@ describe("backend delegation grant records", () => {
 
   it("uses a listen: prefixed key so sign-out purge removes it", () => {
     recordBackendDelegationGrant("0xabc", "did:key:backend");
-    const keys = Object.keys(localStorage).filter((key) =>
-      key.includes("backend-delegation-grant"),
-    );
+    const keys = Array.from({ length: localStorage.length }, (_, index) =>
+      localStorage.key(index),
+    ).filter((key): key is string => key?.includes("backend-delegation-grant") === true);
     expect(keys).toHaveLength(1);
     expect(keys[0]!.startsWith("listen:")).toBe(true);
   });
