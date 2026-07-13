@@ -1678,11 +1678,20 @@ var ROOT_DELEGATION_ACTIONS = [
 ];
 var DEFAULT_SESSION_EXPIRATION_MS = import_sdk_core8.EXPIRY.SESSION_MS;
 function decodeAuthorizationBytes(authorization) {
-  const encoded = authorization.replace(/^Bearer\s+/i, "");
-  if (!/^[A-Za-z0-9_-]+$/.test(encoded)) {
+  const encoded = authorization.replace(/^Bearer /i, "");
+  const match = /^([A-Za-z0-9_-]+)(={1,2})?$/.exec(encoded);
+  const unpadded = match?.[1];
+  const paddingLength = match?.[2]?.length ?? 0;
+  const remainder = unpadded === void 0 ? 1 : unpadded.length % 4;
+  const expectedPaddingLength = remainder === 2 ? 2 : remainder === 3 ? 1 : 0;
+  if (unpadded === void 0 || remainder === 1 || paddingLength !== 0 && paddingLength !== expectedPaddingLength) {
     throw new Error("Delegation Authorization is not canonical base64url DAG-CBOR");
   }
-  return Uint8Array.from(Buffer.from(encoded, "base64url"));
+  const decoded = Uint8Array.from(Buffer.from(unpadded, "base64url"));
+  if (Buffer.from(decoded).toString("base64url") !== unpadded) {
+    throw new Error("Delegation Authorization is not canonical base64url DAG-CBOR");
+  }
+  return decoded;
 }
 function isOpenKeyAutoSignStrategy(strategy) {
   return strategy?.openKeyAutoSign === true;
