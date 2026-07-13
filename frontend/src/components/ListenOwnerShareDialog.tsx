@@ -50,6 +50,7 @@ export const ListenOwnerShareDialog: FC<ListenOwnerShareDialogProps> = ({
   const [revokeState, setRevokeState] = useState<RevokeState>("idle");
   const [published, setPublished] = useState<PublishedListenOwnerShare | null>(null);
   const [draft, setDraft] = useState<ListenOwnerShareDraft | null>(null);
+  const [emailDomain, setEmailDomain] = useState("");
   const [revokeCopy, setRevokeCopy] = useState("");
 
   useEffect(() => {
@@ -79,14 +80,16 @@ export const ListenOwnerShareDialog: FC<ListenOwnerShareDialogProps> = ({
 
   useEffect(() => {
     let cancelled = false;
-    if (details.length === 0) {
+    if (details.length === 0 || emailDomain.trim().length === 0) {
       setDraft(null);
       return;
     }
+    setError(null);
     ownerShareModule()
       .then((module) => {
         const nextDraft = module.composeListenOwnerShareDraft(details, {
           conversationIds,
+          emailDomain,
         });
         if (!cancelled) {
           setRevokeCopy(module.REVOKE_COPY);
@@ -102,7 +105,7 @@ export const ListenOwnerShareDialog: FC<ListenOwnerShareDialogProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [details, conversationIds]);
+  }, [details, conversationIds, emailDomain]);
 
   const canPublish = Boolean(tcw && draft && !loading && publishState !== "publishing");
 
@@ -164,6 +167,30 @@ export const ListenOwnerShareDialog: FC<ListenOwnerShareDialogProps> = ({
         {loading && <div style={s.muted}>Loading selected transcripts...</div>}
         {error && <div style={s.error}>{error}</div>}
 
+        {!loading && details.length > 0 && (
+          <section style={s.domainSection}>
+            <h3 style={s.sectionTitle}>Who can request access</h3>
+            <label style={s.domainLabel}>
+              Verified email domain
+              <input
+                type="text"
+                value={emailDomain}
+                onChange={(event) => setEmailDomain(event.target.value)}
+                placeholder="acme.com"
+                aria-label="Verified email domain"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                style={s.domainInput}
+              />
+            </label>
+            <span style={s.historyNote}>
+              Anyone with a valid OpenCredentials email credential for this domain can request this
+              share.
+            </span>
+          </section>
+        )}
+
         {draft && (
           <div style={s.body}>
             <section style={s.section}>
@@ -207,6 +234,7 @@ export const ListenOwnerShareDialog: FC<ListenOwnerShareDialogProps> = ({
               <h3 style={s.sectionTitle}>Credential rule</h3>
               <div style={s.ruleBox}>
                 <strong>OpenCredentials email credential</strong>
+                <span>Email domain: @{draft.credentialRule.emailDomains.join(", @")}</span>
                 <span>Verifier: {draft.credentialRule.credentialClass}</span>
                 <span>Accepted issuer: {draft.credentialRule.acceptedIssuers.join(", ")}</span>
               </div>
@@ -346,6 +374,26 @@ const s: Record<string, React.CSSProperties> = {
   section: {
     display: "grid",
     gap: 10,
+  },
+  domainSection: {
+    display: "grid",
+    gap: 10,
+    margin: "18px 24px 0",
+  },
+  domainLabel: {
+    display: "grid",
+    gap: 6,
+    fontSize: 13,
+  },
+  domainInput: {
+    width: "100%",
+    boxSizing: "border-box",
+    border: "var(--lst-border)",
+    background: "var(--lst-bg)",
+    color: "var(--lst-ink)",
+    fontFamily: MONO,
+    fontSize: 16,
+    padding: "9px 10px",
   },
   sectionTitle: {
     margin: 0,

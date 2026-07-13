@@ -22,6 +22,7 @@ describe("m1 owner split-phase demo driver", () => {
     const libraryDraft = {
       ...composeListenOwnerShareDraft(input.conversations, {
         conversationIds: input.selectedTranscriptIds,
+        emailDomain: input.emailDomain,
         createdAt: input.createdAt,
         expiresAt: input.expiresAt,
       }),

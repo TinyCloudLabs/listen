@@ -31,7 +31,10 @@ vi.mock("../lib/listenOwnerShares", async () => {
     ),
     listPublishedListenOwnerShares: vi.fn(() => []),
     composeListenOwnerShareDraft: vi.fn(
-      (details: ShareableConversationDetail[], input: { conversationIds: string[] }) => {
+      (
+        details: ShareableConversationDetail[],
+        input: { conversationIds: string[]; emailDomain: string },
+      ) => {
         return {
           shareId: "share-1",
           conversationIds: input.conversationIds,
@@ -56,7 +59,9 @@ vi.mock("../lib/listenOwnerShares", async () => {
           },
           credentialRule: {
             credentialClass: "w3c.vc/credential/v1",
+            credentialType: "opencredentials.email/v1",
             acceptedIssuers: ["did:web:issuer.credentials.org"],
+            emailDomains: [input.emailDomain.trim().replace(/^@/, "").toLowerCase()],
           },
           createdAt: "2026-05-14T14:00:00.000Z",
           expiresAt: "2026-06-13T14:00:00.000Z",
@@ -73,9 +78,15 @@ import { REVOKE_COPY, type PublishedListenOwnerShare } from "../lib/listenOwnerS
 import type { ShareableConversationDetail } from "../lib/listenShareLinks";
 
 async function enabledPublishButton() {
+  await enterEmailDomain();
   const button = await screen.findByRole("button", { name: /Publish share/i });
   await waitFor(() => expect(button).not.toBeDisabled());
   return button;
+}
+
+async function enterEmailDomain() {
+  const input = await screen.findByRole("textbox", { name: /Verified email domain/i });
+  fireEvent.change(input, { target: { value: "issuer.credentials.org" } });
 }
 
 function detail(
@@ -138,7 +149,9 @@ function published(overrides: Partial<PublishedListenOwnerShare> = {}): Publishe
     conversationIds: ["conversation-a"],
     credentialRule: {
       credentialClass: "w3c.vc/credential/v1",
+      credentialType: "opencredentials.email/v1",
       acceptedIssuers: ["did:web:issuer.credentials.org"],
+      emailDomains: ["issuer.credentials.org"],
     },
     disclosure: { conversations: [] },
     bootstrap: {
@@ -205,9 +218,11 @@ describe("ListenOwnerShareDialog", () => {
       />,
     );
 
+    await enterEmailDomain();
+
     expect(await screen.findAllByText("Planning")).toHaveLength(2);
     expect(screen.getAllByText("Retro")).toHaveLength(2);
-    expect(screen.getByText(/OpenCredentials email credential/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/OpenCredentials email credential/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/did:web:issuer.credentials.org/i)).toBeInTheDocument();
     expect(screen.queryByText(/future/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/all future/i)).not.toBeInTheDocument();
@@ -230,6 +245,8 @@ describe("ListenOwnerShareDialog", () => {
         onClose={vi.fn()}
       />,
     );
+
+    await enterEmailDomain();
 
     expect(await screen.findAllByText("With Audio")).toHaveLength(2);
     expect(screen.getAllByText(/Participants:/i)[0]).toHaveTextContent("Ada, Grace");

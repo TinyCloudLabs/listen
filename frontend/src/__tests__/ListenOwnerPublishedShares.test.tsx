@@ -61,6 +61,7 @@ async function publishStoredShare() {
   const draft = {
     ...composeListenOwnerShareDraft([detail("conversation-a", "Planning")], {
       conversationIds: ["conversation-a"],
+      emailDomain: "issuer.credentials.org",
       createdAt: "2026-05-14T14:00:00Z",
       expiresAt: "2026-06-13T14:00:00Z",
     }),

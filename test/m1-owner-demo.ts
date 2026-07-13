@@ -16,6 +16,7 @@ type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
 interface OwnerDemoInput {
   selectedTranscriptIds: string[];
+  emailDomain: string;
   conversations: ShareableConversationDetail[];
   grantIssuerDid?: string;
   ownerAddress?: string;
@@ -63,6 +64,7 @@ export interface OwnerPublishArtifact {
   mode: "dry-run" | "live";
   input: {
     selectedTranscriptIds: string[];
+    emailDomain: string;
     ownerDid: string;
     createdAt: string;
     expiresAt: string;
@@ -125,6 +127,7 @@ const PARENT_ACTIONS = ["tinycloud.sql/read", "tinycloud.kv/get"] as const;
 export function dryRunInput(): OwnerDemoInput {
   return {
     selectedTranscriptIds: ["conversation-a", "conversation-b"],
+    emailDomain: "issuer.credentials.org",
     grantIssuerDid: "did:key:z6MkM1GrantIssuer",
     ownerAddress: DRY_RUN_OWNER_ADDRESS,
     chainId: 1,
@@ -217,6 +220,7 @@ function findWrite(writes: readonly CapturedWrite[], suffix: string): CapturedWr
 function draftFrom(input: OwnerDemoInput): ListenOwnerShareDraft {
   const draft = composeListenOwnerShareDraft(input.conversations, {
     conversationIds: input.selectedTranscriptIds,
+    emailDomain: input.emailDomain,
     createdAt: input.createdAt ?? DRY_RUN_CREATED_AT,
     expiresAt: input.expiresAt ?? DRY_RUN_EXPIRES_AT,
   });
@@ -358,6 +362,7 @@ export async function runOwnerPublish(options: PhaseOptions): Promise<{
     mode: options.mode,
     input: {
       selectedTranscriptIds: [...options.input.selectedTranscriptIds],
+      emailDomain: draft.credentialRule.emailDomains[0],
       ownerDid: ownerDid(address, chainId),
       createdAt: draft.createdAt,
       expiresAt: draft.expiresAt,

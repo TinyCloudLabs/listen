@@ -125,6 +125,10 @@ describe("listen owner share validation", () => {
       () => validateOwnerShareInput({ conversationIds: ["01ABC"], futureTranscripts: true }),
       "unknown-field",
     );
+    expectCode(
+      () => validateOwnerShareInput({ conversationIds: ["01ABC"], emailDomain: "not a domain" }),
+      "invalid-input",
+    );
   });
 });
 
@@ -138,6 +142,7 @@ describe("listen owner share draft composition", () => {
       [detail("conversation-a", "A"), detail("conversation-b", "B")],
       {
         conversationIds: ["conversation-b", "conversation-a", "conversation-b"],
+        emailDomain: "Issuer.Credentials.org",
         createdAt: "2026-05-14T14:00:00Z",
       },
     );
@@ -162,6 +167,7 @@ describe("listen owner share draft composition", () => {
       ],
       {
         conversationIds: ["conversation-a", "conversation-b"],
+        emailDomain: "issuer.credentials.org",
         createdAt: "2026-05-14T14:00:00Z",
       },
     );
@@ -200,6 +206,7 @@ describe("listen owner share draft composition", () => {
         [detail(`conversation-${index}`, `Variant ${index}`, metadata)],
         {
           conversationIds: [`conversation-${index}`],
+          emailDomain: "issuer.credentials.org",
           createdAt: "2026-05-14T14:00:00Z",
         },
       );
@@ -247,6 +254,7 @@ describe("listen owner share publish and revoke", () => {
   function draft() {
     const composed = composeListenOwnerShareDraft([detail("conversation-a", "A")], {
       conversationIds: ["conversation-a"],
+      emailDomain: "issuer.credentials.org",
       createdAt: "2026-05-14T14:00:00.000Z",
       expiresAt: "2026-06-13T14:00:00.000Z",
     });
@@ -267,6 +275,18 @@ describe("listen owner share publish and revoke", () => {
     expect(published.policyId).toMatch(/^pol_/);
     expect(published.bootstrap.policyId).toBe(published.policyId);
     expect(published.bootstrap.policyEngine.signedRecord.engineRecordId).toMatch(/^peng_/);
+    const policyWrite = put.mock.calls.find(([path]) => path === published.policyPath);
+    const policy = JSON.parse(String(policyWrite?.[1])) as {
+      when: {
+        evidence: {
+          requirements: unknown;
+        };
+      };
+    };
+    expect(policy.when.evidence.requirements).toEqual({
+      type: "opencredentials.email/v1",
+      emailDomains: ["issuer.credentials.org"],
+    });
     expect(listPublishedListenOwnerShares()).toHaveLength(1);
   });
 
@@ -366,7 +386,9 @@ describe("listen owner share publish and revoke", () => {
       conversationIds: ["conversation-a"],
       credentialRule: {
         credentialClass: "w3c.vc/credential/v1",
+        credentialType: "opencredentials.email/v1",
         acceptedIssuers: ["did:web:issuer.credentials.org"],
+        emailDomains: ["issuer.credentials.org"],
       },
       disclosure: { conversations: [] },
       bootstrap: { policyId: "pol_1" } as PublishedListenOwnerShare["bootstrap"],

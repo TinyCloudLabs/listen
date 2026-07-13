@@ -33,6 +33,7 @@ import { resolveAppKvPath } from "./appManifest";
 import type { ShareableConversationDetail } from "./listenShareLinks";
 
 export const OPEN_CREDENTIALS_WITNESS_DID = "did:web:issuer.credentials.org";
+export const OPEN_CREDENTIALS_EMAIL_CREDENTIAL_TYPE = "opencredentials.email/v1";
 export const REVOKE_COPY =
   "Access usually ends within 5 minutes. Anything already opened, downloaded, copied, or cached cannot be recalled.";
 export const DEFAULT_POLICY_ENGINE_ENDPOINT = "https://node.tinycloud.xyz/policy-engine";
@@ -45,6 +46,8 @@ const DATE_TIME_RE =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/;
 const ACTION_URN_RE = /^tinycloud\.(?:kv|sql|vfs)\/[A-Za-z][A-Za-z0-9._-]*$/;
 const RAW_TRAVERSAL_RE = /(?:^|\/)\.\.?(?:\/|$)|\/\/|%2e|%2f|%5c/i;
+const EMAIL_DOMAIN_RE =
+  /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
 
 export type ListenOwnerShareErrorCode =
   | "invalid-date-time"
@@ -73,11 +76,14 @@ export class ListenOwnerShareError extends Error {
 
 export interface ListenOwnerShareCredentialRule {
   credentialClass: "w3c.vc/credential/v1";
+  credentialType: typeof OPEN_CREDENTIALS_EMAIL_CREDENTIAL_TYPE;
   acceptedIssuers: readonly [typeof OPEN_CREDENTIALS_WITNESS_DID];
+  emailDomains: readonly [string];
 }
 
 export interface ListenOwnerShareInput {
   conversationIds: readonly string[];
+  emailDomain: string;
   createdAt?: string;
   expiresAt?: string;
 }
@@ -315,7 +321,11 @@ export function assertServiceNativeCaveats(capability: unknown): void {
 }
 
 export function validateOwnerShareInput(input: unknown): ListenOwnerShareInput {
-  const object = assertExactKeys(input, ["conversationIds", "createdAt", "expiresAt"], "$");
+  const object = assertExactKeys(
+    input,
+    ["conversationIds", "emailDomain", "createdAt", "expiresAt"],
+    "$",
+  );
   const ids = object.conversationIds;
   if (
     !Array.isArray(ids) ||
@@ -326,6 +336,7 @@ export function validateOwnerShareInput(input: unknown): ListenOwnerShareInput {
   }
   return {
     conversationIds: [...new Set(ids)],
+    emailDomain: normalizeEmailDomain(object.emailDomain),
     ...(object.createdAt !== undefined
       ? { createdAt: assertStrictRfc3339DateTime(object.createdAt, "$.createdAt") }
       : {}),
@@ -333,6 +344,17 @@ export function validateOwnerShareInput(input: unknown): ListenOwnerShareInput {
       ? { expiresAt: assertStrictRfc3339DateTime(object.expiresAt, "$.expiresAt") }
       : {}),
   };
+}
+
+function normalizeEmailDomain(value: unknown): string {
+  if (typeof value !== "string") {
+    throw typedError("invalid-input", "$.emailDomain must be a DNS domain");
+  }
+  const domain = value.trim().replace(/^@/, "").toLowerCase();
+  if (!EMAIL_DOMAIN_RE.test(domain)) {
+    throw typedError("invalid-input", "$.emailDomain must be a DNS domain such as acme.com");
+  }
+  return domain;
 }
 
 function ownerDidFromSession(tcw: TinyCloudWeb): string {
@@ -559,7 +581,9 @@ export function composeListenOwnerShareDraft(
       },
       credentialRule: {
         credentialClass: W3C_VC_CREDENTIAL_VERIFIER,
+        credentialType: OPEN_CREDENTIALS_EMAIL_CREDENTIAL_TYPE,
         acceptedIssuers: [OPEN_CREDENTIALS_WITNESS_DID],
+        emailDomains: [validated.emailDomain],
       },
       createdAt,
       expiresAt,
@@ -572,7 +596,9 @@ export function composeListenOwnerShareDraft(
 function credentialRuleJson(rule: ListenOwnerShareCredentialRule): JsonObject {
   return {
     verifier: rule.credentialClass,
+    credentialType: rule.credentialType,
     acceptedIssuers: [...rule.acceptedIssuers],
+    emailDomains: [...rule.emailDomains],
   };
 }
 
@@ -622,7 +648,8 @@ async function composeWriteSet(
             requirementId: "opencredentials-email",
             verifier: W3C_VC_CREDENTIAL_VERIFIER,
             requirements: {
-              credentialClass: draft.credentialRule.credentialClass,
+              type: draft.credentialRule.credentialType,
+              emailDomains: [...draft.credentialRule.emailDomains],
             },
             authority: {
               acceptedIssuers: [...draft.credentialRule.acceptedIssuers],
@@ -784,17 +811,31 @@ function stringArray(value: unknown, path: string): string[] {
 }
 
 function parseCredentialRule(input: unknown): ListenOwnerShareCredentialRule {
-  const object = assertExactKeys(input, ["credentialClass", "acceptedIssuers"], "$.credentialRule");
+  const object = assertExactKeys(
+    input,
+    ["credentialClass", "credentialType", "acceptedIssuers", "emailDomains"],
+    "$.credentialRule",
+  );
   if (object.credentialClass !== W3C_VC_CREDENTIAL_VERIFIER) {
     throw typedError("invalid-input", "$.credentialRule.credentialClass is not supported");
+  }
+  if (object.credentialType !== OPEN_CREDENTIALS_EMAIL_CREDENTIAL_TYPE) {
+    throw typedError("invalid-input", "$.credentialRule.credentialType is not supported");
   }
   const issuers = stringArray(object.acceptedIssuers, "$.credentialRule.acceptedIssuers");
   if (issuers.length !== 1 || issuers[0] !== OPEN_CREDENTIALS_WITNESS_DID) {
     throw typedError("invalid-input", "$.credentialRule.acceptedIssuers is not supported");
   }
+  const domains = stringArray(object.emailDomains, "$.credentialRule.emailDomains");
+  const domain = domains[0];
+  if (domains.length !== 1 || domain === undefined || normalizeEmailDomain(domain) !== domain) {
+    throw typedError("invalid-input", "$.credentialRule.emailDomains is not supported");
+  }
   return {
     credentialClass: W3C_VC_CREDENTIAL_VERIFIER,
+    credentialType: OPEN_CREDENTIALS_EMAIL_CREDENTIAL_TYPE,
     acceptedIssuers: [OPEN_CREDENTIALS_WITNESS_DID],
+    emailDomains: [domain],
   };
 }
 

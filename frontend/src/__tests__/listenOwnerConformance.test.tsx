@@ -124,6 +124,7 @@ function fixedDraft(
   return {
     ...composeListenOwnerShareDraft(details, {
       conversationIds,
+      emailDomain: "issuer.credentials.org",
       createdAt: "2026-05-14T14:00:00Z",
       expiresAt: "2026-06-13T14:00:00Z",
     }),
@@ -171,9 +172,15 @@ function writeBySuffix(writes: readonly CapturedWrite[], suffix: string): Captur
 }
 
 async function enabledPublishButton() {
+  await enterEmailDomain();
   const button = await screen.findByRole("button", { name: /Publish share/i });
   await waitFor(() => expect(button).not.toBeDisabled());
   return button;
+}
+
+async function enterEmailDomain() {
+  const input = await screen.findByRole("textbox", { name: /Verified email domain/i });
+  fireEvent.change(input, { target: { value: "issuer.credentials.org" } });
 }
 
 function OwnerShareSelectionHarness({
@@ -232,10 +239,14 @@ describe("listen owner M1-G conformance", () => {
     expect(
       await screen.findByRole("dialog", { name: /Credentialed transcript share/i }),
     ).toBeInTheDocument();
+    await enterEmailDomain();
     await waitFor(() => {
       expect(composeSpy).toHaveBeenCalledWith(
         expect.any(Array),
-        expect.objectContaining({ conversationIds: ["conversation-a", "conversation-b"] }),
+        expect.objectContaining({
+          conversationIds: ["conversation-a", "conversation-b"],
+          emailDomain: "issuer.credentials.org",
+        }),
       );
     });
     const lastCall = composeSpy.mock.calls.at(-1);
@@ -257,6 +268,7 @@ describe("listen owner M1-G conformance", () => {
       />,
     );
 
+    await enterEmailDomain();
     expect(await screen.findAllByText("Catalog Exactness")).toHaveLength(2);
     expect(
       screen.getByText(`Transcript fields: ${LISTEN_TRANSCRIPT_CONVERSATION_COLUMNS.join(", ")}`),
