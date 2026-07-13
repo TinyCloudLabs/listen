@@ -7,6 +7,7 @@ import {
   LISTEN_TRANSCRIPT_CONVERSATION_COLUMNS,
   LISTEN_TRANSCRIPT_PARTICIPANT_COLUMNS,
   createListenTranscriptCapability,
+  createListenTranscriptSelectionCapability,
   listenTranscriptResourceId,
   listenTranscriptSqlInvokeRequests,
 } from "../transcript-binding.js";
@@ -49,6 +50,20 @@ describe("Listen transcript SQL binding", () => {
 
   test("allows callers to override the content space only", () => {
     expect(createListenTranscriptCapability("conv_456", { space: "shared" }).space).toBe("shared");
+  });
+
+  test("uses unique catalog-derived names for a multi-transcript fixed set", () => {
+    const capability = createListenTranscriptSelectionCapability([
+      "conversation-b",
+      "conversation-a",
+    ]);
+    expect(capability.caveats.statements.map((statement) => statement.name)).toEqual([
+      "listen.getConversation@conversation-a",
+      "listen.listParticipants@conversation-a",
+      "listen.getConversation@conversation-b",
+      "listen.listParticipants@conversation-b",
+    ]);
+    expect(new Set(capability.caveats.statements.map((statement) => statement.name)).size).toBe(4);
   });
 
   test("derives the transcript resource id", () => {

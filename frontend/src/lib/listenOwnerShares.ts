@@ -22,7 +22,7 @@ import {
   type SignedObjectSigner,
 } from "@tinycloud/sdk-core/policy";
 import {
-  createListenTranscriptCapability,
+  createListenTranscriptSelectionCapability,
   LISTEN_CONTENT_SPACE,
   LISTEN_TRANSCRIPT_RESOURCE_TYPE,
   listenTranscriptResourceId,
@@ -443,8 +443,8 @@ function normalizedCapability(input: unknown): PolicyCapability {
   }
 }
 
-function transcriptCapabilityFor(conversationId: string): PolicyCapability {
-  return normalizedCapability(createListenTranscriptCapability(conversationId));
+function transcriptCapabilityFor(conversationIds: readonly string[]): PolicyCapability {
+  return normalizedCapability(createListenTranscriptSelectionCapability(conversationIds));
 }
 
 function participantNames(detail: ShareableConversationDetail): string[] {
@@ -555,9 +555,7 @@ export function composeListenOwnerShareDraft(
       return detail;
     });
 
-    const capabilities = selectedDetails.map((detail) =>
-      transcriptCapabilityFor(detail.conversation.id),
-    );
+    const capabilities = [transcriptCapabilityFor(validated.conversationIds)];
 
     const disclosureConversations = selectedDetails.map((detail) => {
       const fields = sqlDisclosureFieldsFor(capabilities, detail.conversation.id);

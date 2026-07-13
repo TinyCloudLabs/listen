@@ -65,7 +65,7 @@ export interface ListenTranscriptSqlStatementTemplate {
 }
 
 export interface ListenTranscriptSqlStatement {
-  name: ListenTranscriptStatementName;
+  name: string;
   sql: string;
   fixedParams: SqlFixedParam[];
 }
@@ -152,7 +152,23 @@ export function createListenTranscriptCapability(
   conversationId: string,
   options: { space?: string } = {},
 ): ListenTranscriptSqlCapability {
+  return createListenTranscriptSelectionCapability([conversationId], options);
+}
+
+export function listenTranscriptScopedStatementName(
+  name: ListenTranscriptStatementName,
+  conversationId: string,
+): string {
   assertNonEmptyId(conversationId, "conversationId");
+  return `${name}@${encodeURIComponent(conversationId)}`;
+}
+
+export function createListenTranscriptSelectionCapability(
+  selectedConversationIds: readonly string[],
+  options: { space?: string } = {},
+): ListenTranscriptSqlCapability {
+  const conversationIds = normalizeConversationIds(selectedConversationIds);
+  const scoped = conversationIds.length > 1;
 
   return {
     service: "tinycloud.sql",
@@ -162,11 +178,15 @@ export function createListenTranscriptCapability(
     caveats: {
       mode: "constrained-statements",
       readOnly: true,
-      statements: LISTEN_TRANSCRIPT_SQL_STATEMENT_CATALOG.map((statement) => ({
-        name: statement.name,
-        sql: statement.sql,
-        fixedParams: [{ index: 0, value: conversationId }],
-      })),
+      statements: conversationIds.flatMap((conversationId) =>
+        LISTEN_TRANSCRIPT_SQL_STATEMENT_CATALOG.map((statement) => ({
+          name: scoped
+            ? listenTranscriptScopedStatementName(statement.name, conversationId)
+            : statement.name,
+          sql: statement.sql,
+          fixedParams: [{ index: 0, value: conversationId }],
+        })),
+      ),
     },
   };
 }
@@ -192,11 +212,11 @@ export function createListenTranscriptResourceCapabilities(
     throw new Error("Prefix KV capabilities are not supported by this exact-resource adapter");
   }
 
-  const capabilities: PolicyCapability[] = [];
+  const capabilities: PolicyCapability[] = [
+    createListenTranscriptSelectionCapability(conversationIds, { space }),
+  ];
 
   for (const conversationId of conversationIds) {
-    capabilities.push(createListenTranscriptCapability(conversationId, { space }));
-
     if (requestedKvBodyIds.includes(conversationId)) {
       capabilities.push(createTranscriptKvBodyCapability(conversationId, space));
     }

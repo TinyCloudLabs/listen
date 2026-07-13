@@ -1,5 +1,6 @@
 export {
   createListenTranscriptCapability,
+  createListenTranscriptSelectionCapability,
   LISTEN_CONTENT_SPACE,
   LISTEN_TRANSCRIPT_CONVERSATION_COLUMNS,
   LISTEN_TRANSCRIPT_PARTICIPANT_COLUMNS,

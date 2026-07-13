@@ -80,6 +80,18 @@ describe("m1 owner split-phase demo driver", () => {
     ).rejects.toThrow("live mode requires --owner-node-endpoint");
   });
 
+  it("requires a recovery state path before creating a live parent delegation", async () => {
+    await expect(
+      runOwnerPublish({
+        input: dryRunInput(),
+        mode: "live",
+        nodeEndpoint: "http://127.0.0.1:8787",
+        ownerNodeEndpoint: "https://owner.example.com",
+        privateKey: `0x${"01".repeat(32)}`,
+      }),
+    ).rejects.toThrow("live mode requires --state for parent recovery");
+  });
+
   it("composes the owner routing endpoint separately from the operational node", async () => {
     const published = await runOwnerPublish({
       input: dryRunInput(),

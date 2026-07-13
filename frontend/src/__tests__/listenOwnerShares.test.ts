@@ -148,7 +148,7 @@ describe("listen owner share draft composition", () => {
     );
 
     expect(draft.conversationIds).toEqual(["conversation-b", "conversation-a"]);
-    expect(draft.capabilities).toHaveLength(2);
+    expect(draft.capabilities).toHaveLength(1);
     expect(draft.capabilities.every((capability) => capability.service === "tinycloud.sql")).toBe(
       true,
     );

@@ -59,6 +59,16 @@ export interface OwnerDemoState {
   };
 }
 
+export interface OwnerDemoRecoveryState {
+  schema: "xyz.tinycloud.listen/m1-owner-recovery-state/v1";
+  phase: "parent-created" | "parent-revoked";
+  session: OwnerDemoState["session"];
+  parentDelegation: NonNullable<OwnerDemoState["parentDelegation"]>;
+  updatedAt: string;
+  publicationError?: string;
+  revocationError?: string;
+}
+
 export interface OwnerPublishArtifact {
   schema: "xyz.tinycloud.listen/m1-owner-publish-artifact/v1";
   mode: "dry-run" | "live";
@@ -122,7 +132,7 @@ const DRY_RUN_OWNER_SPACE =
 const DRY_RUN_NODE_ENDPOINT = "https://node.tinycloud.xyz";
 const DRY_RUN_SIGNATURE = `0x${"11".repeat(64)}1b`;
 const PARENT_PATH = "xyz.tinycloud.listen/conversations";
-const PARENT_ACTIONS = ["tinycloud.sql/read", "tinycloud.kv/get"] as const;
+const PARENT_ACTIONS = ["tinycloud.sql/read"] as const;
 
 export function dryRunInput(): OwnerDemoInput {
   return {
@@ -327,10 +337,13 @@ export async function runOwnerPublish(options: PhaseOptions): Promise<{
   let writes: CapturedWrite[] = [];
   let adapter = captureAdapter(address, chainId, writes, async () => DRY_RUN_SIGNATURE);
   let parentDelegation: OwnerDemoState["parentDelegation"];
+  let liveNode: TinyCloudNode | undefined;
 
   if (options.mode === "live") {
     if (!options.ownerNodeEndpoint) throw new Error("live mode requires --owner-node-endpoint");
+    if (!options.statePath) throw new Error("live mode requires --state for parent recovery");
     const live = await liveContext(options);
+    liveNode = live.node;
     address = live.session.address;
     chainId = live.session.chainId;
     spaceId = live.node.spaceId!;
@@ -349,13 +362,58 @@ export async function runOwnerPublish(options: PhaseOptions): Promise<{
     if (parentDelegation.delegateDid !== grantIssuerDid) {
       throw new Error("owner delegation delegatee does not match grant issuer");
     }
+    writeRecoveryState(options.statePath, {
+      schema: "xyz.tinycloud.listen/m1-owner-recovery-state/v1",
+      phase: "parent-created",
+      session: {
+        ownerDid: ownerDid(address, chainId),
+        ownerAddress: address,
+        chainId,
+        spaceId,
+        nodeEndpoint,
+        ownerNodeEndpoint,
+      },
+      parentDelegation,
+      updatedAt: isoTimestamp(),
+    });
   }
 
-  const published = await publishListenOwnerShare(adapter as never, draft, {
-    grantIssuerDid,
-    ownerNodeEndpoint,
-    ownerSpaceId: spaceId,
-  });
+  let published: PublishedListenOwnerShare;
+  try {
+    published = await publishListenOwnerShare(adapter as never, draft, {
+      grantIssuerDid,
+      ownerNodeEndpoint,
+      ownerSpaceId: spaceId,
+    });
+  } catch (error) {
+    if (liveNode && parentDelegation && options.statePath) {
+      const publicationError = error instanceof Error ? error.message : String(error);
+      const revoked = await liveNode.revokeDelegation(parentDelegation.delegationCid);
+      const recovery: OwnerDemoRecoveryState = {
+        schema: "xyz.tinycloud.listen/m1-owner-recovery-state/v1",
+        phase: revoked.ok ? "parent-revoked" : "parent-created",
+        session: {
+          ownerDid: ownerDid(address, chainId),
+          ownerAddress: address,
+          chainId,
+          spaceId,
+          nodeEndpoint,
+          ownerNodeEndpoint,
+        },
+        parentDelegation,
+        updatedAt: isoTimestamp(),
+        publicationError,
+        ...(!revoked.ok ? { revocationError: revoked.error.message } : {}),
+      };
+      writeRecoveryState(options.statePath, recovery);
+      if (!revoked.ok) {
+        throw new Error(
+          `${publicationError}; automatic parent revocation failed: ${revoked.error.message}; recovery state preserved at ${options.statePath}`,
+        );
+      }
+    }
+    throw error;
+  }
   const activeStatus = findWrite(writes, "/status.json").value;
   const artifact: OwnerPublishArtifact = {
     schema: "xyz.tinycloud.listen/m1-owner-publish-artifact/v1",
@@ -466,6 +524,36 @@ function writeState(path: string, state: OwnerDemoState): void {
   const temporary = `${path}.tmp-${process.pid}`;
   writeFileSync(temporary, `${canonicalJson(parseState(state))}\n`, { mode: 0o600 });
   renameSync(temporary, path);
+}
+
+export function parseRecoveryState(value: unknown): OwnerDemoRecoveryState {
+  if (!value || typeof value !== "object")
+    throw new Error("owner recovery state must be an object");
+  const state = value as OwnerDemoRecoveryState;
+  if (
+    state.schema !== "xyz.tinycloud.listen/m1-owner-recovery-state/v1" ||
+    (state.phase !== "parent-created" && state.phase !== "parent-revoked") ||
+    !state.session?.ownerDid ||
+    !state.session?.spaceId ||
+    !state.parentDelegation?.delegationCid
+  ) {
+    throw new Error("owner recovery state is malformed");
+  }
+  const serialized = canonicalJson(state);
+  if (/privateKey|private_key|secretKey|secret_key/i.test(serialized)) {
+    throw new Error("owner recovery state contains prohibited key material");
+  }
+  return state;
+}
+
+function writeRecoveryState(path: string, state: OwnerDemoRecoveryState): void {
+  const temporary = `${path}.tmp-${process.pid}`;
+  writeFileSync(temporary, `${canonicalJson(parseRecoveryState(state))}\n`, { mode: 0o600 });
+  renameSync(temporary, path);
+}
+
+function isoTimestamp(): string {
+  return new Date().toISOString().replace(".000Z", "Z");
 }
 
 export function canonicalJson(value: Json | unknown): string {

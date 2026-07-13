@@ -7,19 +7,19 @@ import {
   LISTEN_TRANSCRIPT_SQL_STATEMENT_CATALOG,
   createListenTranscriptCapability,
   createListenTranscriptResourceCapabilities,
+  createListenTranscriptSelectionCapability,
   getListenTranscriptSqlStatementTemplate,
   listenTranscriptResourceId,
 } from "../transcript-resource-adapter.js";
 
 describe("Listen transcript resource adapter", () => {
-  test("emits one constrained SQL capability per selected conversation ID in deterministic order", () => {
+  test("emits one conflict-free constrained SQL capability for the selected fixed set", () => {
     const capabilities = createListenTranscriptResourceCapabilities({
       conversationIds: ["conversation-b", "conversation-a", "conversation-b"],
     });
 
     expect(capabilities).toEqual([
-      createListenTranscriptCapability("conversation-a"),
-      createListenTranscriptCapability("conversation-b"),
+      createListenTranscriptSelectionCapability(["conversation-a", "conversation-b"]),
     ]);
 
     for (const capability of capabilities) {
@@ -82,8 +82,7 @@ describe("Listen transcript resource adapter", () => {
     });
 
     expect(capabilities).toEqual([
-      createListenTranscriptCapability("conversation-a"),
-      createListenTranscriptCapability("conversation-b"),
+      createListenTranscriptSelectionCapability(["conversation-a", "conversation-b"]),
       {
         service: "tinycloud.kv",
         space: LISTEN_CONTENT_SPACE,
