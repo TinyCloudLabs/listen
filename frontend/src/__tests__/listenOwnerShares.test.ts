@@ -1,6 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { Wallet } from "ethers";
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
 import { POLICY_STATUS_SCHEMA as ROOT_POLICY_STATUS_SCHEMA } from "@tinycloud/sdk-core";
+import { TranscriptRequester, createTranscriptRequester } from "@tinycloud/sdk-core-m1";
 import { POLICY_STATUS_SCHEMA as POLICY_POLICY_STATUS_SCHEMA } from "@tinycloud/sdk-core/policy";
 
 import {
@@ -210,6 +212,8 @@ describe("listen owner share draft composition", () => {
 });
 
 describe("listen owner share publish and revoke", () => {
+  const testWallet = new Wallet(`0x${"11".repeat(32)}`);
+
   beforeEach(() => {
     installLocalStorage();
     window.localStorage.clear();
@@ -225,6 +229,16 @@ describe("listen owner share publish and revoke", () => {
       session: () => ({ address: "0x0000000000000000000000000000000000000abc", chainId: 1 }),
       provider: {
         getSigner: () => ({ signMessage: vi.fn(async () => `0x${"11".repeat(64)}1b`) }),
+      },
+      kv: { put },
+    } as unknown as TinyCloudWeb;
+  }
+
+  function signedTcw(put = vi.fn(async () => ({ ok: true }))): TinyCloudWeb {
+    return {
+      session: () => ({ address: testWallet.address, chainId: 1 }),
+      provider: {
+        getSigner: () => ({ signMessage: (value: Uint8Array) => testWallet.signMessage(value) }),
       },
       kv: { put },
     } as unknown as TinyCloudWeb;
@@ -254,6 +268,77 @@ describe("listen owner share publish and revoke", () => {
     expect(published.bootstrap.policyId).toBe(published.policyId);
     expect(published.bootstrap.policyEngine.signedRecord.engineRecordId).toMatch(/^peng_/);
     expect(listPublishedListenOwnerShares()).toHaveLength(1);
+  });
+
+  it("produces a bootstrap accepted by the vendored requester with the signed policy ceiling", async () => {
+    const put = vi.fn(async () => ({ ok: true }));
+    const { publishListenOwnerShare } = await importPublishModule();
+    const published = await publishListenOwnerShare(signedTcw(put), draft());
+    const policyWrite = put.mock.calls.find(([path]) => path === published.policyPath);
+    const policy = JSON.parse(String(policyWrite?.[1])) as {
+      ownerDid: string;
+      resource: { permissionsCeiling: unknown[] };
+    };
+    const resourceHint = published.bootstrap.resourceHint as Record<string, unknown>;
+
+    expect(Object.keys(resourceHint)).toEqual([
+      "resourceType",
+      "resourceId",
+      "requestedCapabilities",
+    ]);
+    expect(resourceHint.requestedCapabilities).toEqual(policy.resource.permissionsCeiling);
+
+    const requester = await createTranscriptRequester({
+      bootstrap: published.bootstrap,
+      requesterDid: "did:key:zObviouslyFakeRequester",
+      ownerDid: policy.ownerDid,
+      audience: published.bootstrap.policyEngine.audience,
+      grantIssuerDid: published.bootstrap.policyEngine.signedRecord.grantIssuerDid,
+      transport: {
+        request: vi.fn(async () => {
+          throw new Error("construction must not make an HTTP request");
+        }),
+        resolveEndpoint: vi.fn(async () => ({ addresses: ["8.8.8.8"] })),
+      },
+      now: () => new Date("2026-05-15T00:00:00Z"),
+    });
+
+    expect(requester).toBeInstanceOf(TranscriptRequester);
+  });
+
+  it("quarantines empty, malformed, legacy, and extended resource hints", async () => {
+    const put = vi.fn(async () => ({ ok: true }));
+    const { getPublishedListenOwnerShareProjection, publishListenOwnerShare } =
+      await importPublishModule();
+    await publishListenOwnerShare(signedTcw(put), draft());
+
+    const key = "listen:owner-transcript-shares:v1";
+    const baseline = JSON.parse(window.localStorage.getItem(key)!) as Array<{
+      bootstrap: { resourceHint: Record<string, unknown> };
+    }>;
+    const validHint = baseline[0]!.bootstrap.resourceHint;
+    const invalidHints: Record<string, Record<string, unknown>> = {
+      empty: { ...validHint, requestedCapabilities: [] },
+      malformed: { ...validHint, requestedCapabilities: [{}] },
+      legacy: {
+        resourceType: validHint.resourceType,
+        resourceId: validHint.resourceId,
+        sqlDatabaseHint: "conversations",
+        sqlStatementHints: ["listen.getConversation"],
+        pathHints: [],
+      },
+      extended: { ...validHint, futureHint: true },
+    };
+
+    for (const resourceHint of Object.values(invalidHints)) {
+      const stored = structuredClone(baseline);
+      stored[0]!.bootstrap.resourceHint = resourceHint;
+      window.localStorage.setItem(key, JSON.stringify(stored));
+      expect(getPublishedListenOwnerShareProjection()).toMatchObject({
+        quarantined: true,
+        shares: [],
+      });
+    }
   });
 
   it("does not present a half-published share as live on write failure", async () => {

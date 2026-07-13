@@ -25,7 +25,6 @@ import {
   createListenTranscriptCapability,
   LISTEN_CONTENT_SPACE,
   LISTEN_TRANSCRIPT_RESOURCE_TYPE,
-  LISTEN_TRANSCRIPT_SQL_STATEMENT_TEMPLATES,
   listenTranscriptResourceId,
   type ApiClient,
 } from "@listen/client";
@@ -577,13 +576,14 @@ function credentialRuleJson(rule: ListenOwnerShareCredentialRule): JsonObject {
   };
 }
 
-function resourceHintJson(draft: ListenOwnerShareDraft): JsonObject {
+function resourceHintJson(
+  draft: ListenOwnerShareDraft,
+  requestedCapabilities: readonly PolicyCapability[],
+): JsonObject {
   return {
     resourceType: LISTEN_TRANSCRIPT_RESOURCE_TYPE,
     resourceId: draft.shareId,
-    sqlDatabaseHint: "conversations",
-    sqlStatementHints: LISTEN_TRANSCRIPT_SQL_STATEMENT_TEMPLATES.map((statement) => statement.name),
-    pathHints: [],
+    requestedCapabilities,
   };
 }
 
@@ -666,7 +666,10 @@ async function composeWriteSet(
       policyEngineRecord: engineRecord,
       ownerNodeEndpoint: context.ownerNodeEndpoint ?? DEFAULT_OWNER_NODE_ENDPOINT,
       ownerSpaceId: context.ownerSpaceId ?? ownerDid,
-      resourceHint: resourceHintJson(draft),
+      resourceHint: resourceHintJson(
+        draft,
+        policy.resource.permissionsCeiling as readonly PolicyCapability[],
+      ),
     });
     return { policy, policyStatus, engineRecord, bootstrap };
   } catch (err) {
@@ -850,19 +853,41 @@ function parseJsonObject(input: unknown, path: string): JsonObject {
 function parseResourceHint(input: unknown): JsonObject {
   const object = assertExactKeys(
     input,
-    ["resourceType", "resourceId", "sqlDatabaseHint", "sqlStatementHints", "pathHints"],
+    ["resourceType", "resourceId", "requestedCapabilities"],
     "$.bootstrap.resourceHint",
   );
   if (
     object.resourceType !== LISTEN_TRANSCRIPT_RESOURCE_TYPE ||
     typeof object.resourceId !== "string" ||
-    object.sqlDatabaseHint !== "conversations"
+    object.resourceId.length === 0
   ) {
     throw typedError("invalid-input", "$.bootstrap.resourceHint is malformed");
   }
-  stringArray(object.sqlStatementHints, "$.bootstrap.resourceHint.sqlStatementHints");
-  stringArray(object.pathHints, "$.bootstrap.resourceHint.pathHints");
-  return parseJsonObject(object, "$.bootstrap.resourceHint");
+  if (!Array.isArray(object.requestedCapabilities) || object.requestedCapabilities.length === 0) {
+    throw typedError(
+      "invalid-input",
+      "$.bootstrap.resourceHint.requestedCapabilities must be a non-empty array",
+    );
+  }
+  const requestedCapabilities = object.requestedCapabilities.map((capability, index) => {
+    try {
+      return normalizePolicyCapability(capability);
+    } catch (err) {
+      throw typedError(
+        "invalid-input",
+        `$.bootstrap.resourceHint.requestedCapabilities[${index}] is malformed`,
+        err,
+      );
+    }
+  });
+  return parseJsonObject(
+    {
+      resourceType: object.resourceType,
+      resourceId: object.resourceId,
+      requestedCapabilities,
+    },
+    "$.bootstrap.resourceHint",
+  );
 }
 
 function parseTranscriptShareBootstrap(input: unknown): TranscriptShareBootstrap {
