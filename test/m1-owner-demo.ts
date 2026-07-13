@@ -39,6 +39,7 @@ export interface OwnerDemoState {
     chainId: number;
     spaceId: string;
     nodeEndpoint: string;
+    ownerNodeEndpoint: string;
   };
   published: PublishedListenOwnerShare;
   parentDelegation?: {
@@ -65,6 +66,8 @@ export interface OwnerPublishArtifact {
     ownerDid: string;
     createdAt: string;
     expiresAt: string;
+    nodeEndpoint: string;
+    ownerNodeEndpoint: string;
   };
   composition: {
     capabilities: ListenOwnerShareDraft["capabilities"];
@@ -103,6 +106,7 @@ interface PhaseOptions {
   input: OwnerDemoInput;
   mode: "dry-run" | "live";
   nodeEndpoint?: string;
+  ownerNodeEndpoint?: string;
   privateKey?: string;
   statePath?: string;
 }
@@ -315,16 +319,19 @@ export async function runOwnerPublish(options: PhaseOptions): Promise<{
   let chainId = options.input.chainId ?? 1;
   let spaceId = DRY_RUN_OWNER_SPACE;
   let nodeEndpoint = options.nodeEndpoint ?? DRY_RUN_NODE_ENDPOINT;
+  let ownerNodeEndpoint = options.ownerNodeEndpoint ?? DRY_RUN_NODE_ENDPOINT;
   let writes: CapturedWrite[] = [];
   let adapter = captureAdapter(address, chainId, writes, async () => DRY_RUN_SIGNATURE);
   let parentDelegation: OwnerDemoState["parentDelegation"];
 
   if (options.mode === "live") {
+    if (!options.ownerNodeEndpoint) throw new Error("live mode requires --owner-node-endpoint");
     const live = await liveContext(options);
     address = live.session.address;
     chainId = live.session.chainId;
     spaceId = live.node.spaceId!;
     nodeEndpoint = options.nodeEndpoint!;
+    ownerNodeEndpoint = options.ownerNodeEndpoint;
     writes = live.writes;
     adapter = live.adapter;
     const receipt = await live.node.createOwnerDelegation({
@@ -342,7 +349,7 @@ export async function runOwnerPublish(options: PhaseOptions): Promise<{
 
   const published = await publishListenOwnerShare(adapter as never, draft, {
     grantIssuerDid,
-    ownerNodeEndpoint: nodeEndpoint,
+    ownerNodeEndpoint,
     ownerSpaceId: spaceId,
   });
   const activeStatus = findWrite(writes, "/status.json").value;
@@ -354,6 +361,8 @@ export async function runOwnerPublish(options: PhaseOptions): Promise<{
       ownerDid: ownerDid(address, chainId),
       createdAt: draft.createdAt,
       expiresAt: draft.expiresAt,
+      nodeEndpoint,
+      ownerNodeEndpoint,
     },
     composition: { capabilities: draft.capabilities, disclosure: draft.disclosure },
     publish: {
@@ -378,6 +387,7 @@ export async function runOwnerPublish(options: PhaseOptions): Promise<{
       chainId,
       spaceId,
       nodeEndpoint,
+      ownerNodeEndpoint,
     },
     published,
     ...(parentDelegation ? { parentDelegation } : {}),
@@ -494,6 +504,7 @@ function parseArgs(argv: string[]) {
     outPath: stringArg(args.get("out")),
     statePath: stringArg(args.get("state")),
     nodeEndpoint: stringArg(args.get("node-endpoint")),
+    ownerNodeEndpoint: stringArg(args.get("owner-node-endpoint")),
     privateKeyEnv: stringArg(args.get("private-key-env")) ?? "TC_OWNER_PRIVATE_KEY",
   } as const;
 }
@@ -514,6 +525,7 @@ export async function runCli(argv: string[] = process.argv.slice(2)) {
             input,
             mode: args.mode,
             nodeEndpoint: args.nodeEndpoint,
+            ownerNodeEndpoint: args.ownerNodeEndpoint,
             privateKey,
             statePath: args.statePath,
           })

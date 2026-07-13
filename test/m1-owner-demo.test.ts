@@ -36,6 +36,8 @@ describe("m1 owner split-phase demo driver", () => {
         ownerDid: "did:pkh:eip155:1:0x0000000000000000000000000000000000000abc",
         createdAt: "2026-05-14T14:00:00Z",
         expiresAt: "2026-06-13T14:00:00Z",
+        nodeEndpoint: "https://node.tinycloud.xyz",
+        ownerNodeEndpoint: "https://node.tinycloud.xyz",
       },
       publish: {
         shareId: "share-m1-owner-dry-run",
@@ -64,6 +66,38 @@ describe("m1 owner split-phase demo driver", () => {
     expect(first.artifact.publish.activeStatusId).toMatch(/^polst_/);
     expect(canonicalJson(first.artifact)).toBe(canonicalJson(second.artifact));
     expect(canonicalJson(first)).not.toMatch(/privateKey|private_key|secretKey|secret_key/i);
+  });
+
+  it("requires --owner-node-endpoint in live publish mode", async () => {
+    await expect(
+      runOwnerPublish({
+        input: dryRunInput(),
+        mode: "live",
+        nodeEndpoint: "http://127.0.0.1:8787",
+        privateKey: `0x${"01".repeat(32)}`,
+      }),
+    ).rejects.toThrow("live mode requires --owner-node-endpoint");
+  });
+
+  it("composes the owner routing endpoint separately from the operational node", async () => {
+    const published = await runOwnerPublish({
+      input: dryRunInput(),
+      mode: "dry-run",
+      nodeEndpoint: "http://127.0.0.1:8787",
+      ownerNodeEndpoint: "https://owner.example.com",
+    });
+
+    expect(published.artifact.input).toMatchObject({
+      nodeEndpoint: "http://127.0.0.1:8787",
+      ownerNodeEndpoint: "https://owner.example.com",
+    });
+    expect(published.artifact.publish.bootstrap).toMatchObject({
+      ownerNode: { endpoint: "https://owner.example.com" },
+    });
+    expect(published.state.session).toMatchObject({
+      nodeEndpoint: "http://127.0.0.1:8787",
+      ownerNodeEndpoint: "https://owner.example.com",
+    });
   });
 
   it("round-trips public state between separate publish and revoke phases", async () => {
