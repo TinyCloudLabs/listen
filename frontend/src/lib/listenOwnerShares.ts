@@ -627,9 +627,10 @@ async function composeWriteSet(
             authority: {
               acceptedIssuers: [...draft.credentialRule.acceptedIssuers],
             },
-            freshness: {
-              maxStatusAgeSeconds: 300,
-            },
+            // Launch credential profile (policy-engine spec/launch-credential-profile.md):
+            // "No launch policy sets maxStatusAgeSeconds" — the v0 evidence verifier is
+            // fail-closed expiry-only and MUST reject any freshness requirement
+            // (frozen reject vector freshness-unestablishable-status-required).
           },
         },
         grant: {
