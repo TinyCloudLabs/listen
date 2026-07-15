@@ -110,11 +110,26 @@ export function portableDelegationExpiry(input: PortableDelegationSet): Date | n
   return new Date(Math.min(...expiries.map((expiry) => expiry.getTime())));
 }
 
+/**
+ * Delegations minted in the browser can carry the node URL that was current
+ * at grant time in their `host` field — including ephemeral per-CVM dstack
+ * URLs (e.g. `<app-id>-8000.dstack-…phala.network`) that die on every node
+ * redeploy. `useDelegation` prefers `delegation.host` over the configured
+ * host, so activation then targets a dead origin (hangs while the old CVM
+ * drains, Cloudflare 525 after it's gone). The capability itself is
+ * host-independent; the backend's configured TINYCLOUD_HOST is
+ * authoritative, so drop the pinned host before activating.
+ */
+function withoutPinnedHost(delegation: PortableDelegation): PortableDelegation {
+  if (!(delegation as { host?: unknown }).host) return delegation;
+  return { ...delegation, host: undefined };
+}
+
 export async function activatePortableDelegation(
   node: TinyCloudNode,
   delegation: PortableDelegationSet,
 ): Promise<DelegatedAccess> {
-  const delegations = portableDelegations(delegation);
+  const delegations = portableDelegations(delegation).map(withoutPinnedHost);
   const resources = delegations.flatMap(extractPortableResources);
   const activatableResources = delegations.flatMap((entry) =>
     extractPortableResources(entry)
