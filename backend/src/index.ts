@@ -26,6 +26,7 @@ import { createAuthRouter } from "./routes/auth.js";
 import { createHealthRouter } from "./routes/health.js";
 import { createManifestRouter } from "./routes/manifest.js";
 import { createServerInfoRouter } from "./routes/server-info.js";
+import { createDebugProbeRouter } from "./routes/debug-probe.js";
 import { createDelegationRouter } from "./routes/delegations.js";
 import { createWorkspaceStateRouter } from "./routes/workspace-state.js";
 import { createConfigRouter } from "./routes/config.js";
@@ -303,6 +304,9 @@ async function main() {
   // 7. Mount routes
   app.use("/api/manifest", createManifestRouter(did));
   app.use("/api/server-info", createServerInfoRouter(did));
+
+  // Temporary incident diagnostics for tinycloud-node#115; remove after.
+  app.use("/api/debug/node-probe", createDebugProbeRouter({ node, authMiddleware }));
 
   app.use(
     "/api/auth",
