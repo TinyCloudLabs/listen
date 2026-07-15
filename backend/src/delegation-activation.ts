@@ -110,11 +110,26 @@ export function portableDelegationExpiry(input: PortableDelegationSet): Date | n
   return new Date(Math.min(...expiries.map((expiry) => expiry.getTime())));
 }
 
+/**
+ * Delegations minted in the browser can carry the node URL that was current
+ * at grant time in their `host` field — including ephemeral per-CVM dstack
+ * URLs (e.g. `<app-id>-8000.dstack-…phala.network`) that die on every node
+ * redeploy. `useDelegation` prefers `delegation.host` over the configured
+ * host, so activation then targets a dead origin (hangs while the old CVM
+ * drains, Cloudflare 525 after it's gone). The capability itself is
+ * host-independent; the backend's configured TINYCLOUD_HOST is
+ * authoritative, so drop the pinned host before activating.
+ */
+function withoutPinnedHost(delegation: PortableDelegation): PortableDelegation {
+  if (!(delegation as { host?: unknown }).host) return delegation;
+  return { ...delegation, host: undefined };
+}
+
 export async function activatePortableDelegation(
   node: TinyCloudNode,
   delegation: PortableDelegationSet,
 ): Promise<DelegatedAccess> {
-  const delegations = portableDelegations(delegation);
+  const delegations = portableDelegations(delegation).map(withoutPinnedHost);
   const resources = delegations.flatMap(extractPortableResources);
   const activatableResources = delegations.flatMap((entry) =>
     extractPortableResources(entry)
@@ -136,13 +151,18 @@ export async function activatePortableDelegation(
     return activateResourceWithContext(node, only.delegation, only.resource);
   }
 
-  const activated = await Promise.all(
-    activatableResources.map(async ({ delegation, resource }) => {
-      const service = normalizeResourceService(resource.service);
-      const access = await activateResourceWithContext(node, delegation, resource);
-      return { service, resource, access };
-    }),
-  );
+  // Activate resources SEQUENTIALLY. The node serializes same-chain
+  // operations behind per-chain guards, so N parallel activations don't
+  // overlap — they contend (guard queue thrash + epoch-append conflicts)
+  // and the whole batch reliably exceeds every timeout. Measured on prod
+  // (tinycloud-node#115): 15 resources sequentially ≈ 33s total (~1.7s
+  // each); the same 15 in Promise.all never completed within 180s.
+  const activated: ActivatedResource[] = [];
+  for (const { delegation, resource } of activatableResources) {
+    const service = normalizeResourceService(resource.service);
+    const access = await activateResourceWithContext(node, delegation, resource);
+    activated.push({ service, resource, access });
+  }
 
   const accessByService = new Map<string, ActivatedResource>();
   for (const entry of activated) {
