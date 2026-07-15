@@ -45,6 +45,23 @@ type DelegationValidationResult =
 export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
   const { node, store, cache, backendDid } = config;
 
+  // Single-flight activation per address. Every polling request used to
+  // launch its own multi-resource activation; the node serializes those on
+  // the same delegation-chain guards, so concurrent attempts starved each
+  // other and none finished inside any timeout (tinycloud-node#115).
+  // Concurrent requests now share one activation promise.
+  const activationInFlight = new Map<string, Promise<NonNullable<Request["delegatedAccess"]>>>();
+  const activateShared = (address: string, serialized: string) => {
+    let inFlight = activationInFlight.get(address);
+    if (!inFlight) {
+      inFlight = activateDelegation(node, cache, address, serialized).finally(() => {
+        activationInFlight.delete(address);
+      });
+      activationInFlight.set(address, inFlight);
+    }
+    return inFlight;
+  };
+
   return async (req: Request, res: Response, next: NextFunction) => {
     const user = req.user;
 
@@ -113,7 +130,7 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
       }
 
       // Deserialize and activate the delegation
-      access = await withTimeout(activateDelegation(node, cache, address, stored.serialized));
+      access = await withTimeout(activateShared(address, stored.serialized));
       req.delegatedAccess = access;
       next();
     } catch (err) {
@@ -166,9 +183,7 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
             return;
           }
 
-          const retryAccess = await withTimeout(
-            activateDelegation(node, cache, address, stored.serialized),
-          );
+          const retryAccess = await withTimeout(activateShared(address, stored.serialized));
           req.delegatedAccess = retryAccess;
           next();
         } catch (retryErr) {
