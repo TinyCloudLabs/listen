@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from "bun:test";
-import { activatePortableDelegation } from "../delegation-activation.js";
+import { activatePortableDelegation, createDelegationActivator } from "../delegation-activation.js";
 
 const TEST_DID = "did:pkh:eip155:1:0xTEST";
 const NETWORK_ID = `urn:tinycloud:encryption:${TEST_DID}:default`;
@@ -22,6 +22,153 @@ function makeDelegation(
 }
 
 describe("delegation activation secrets", () => {
+  it("strips a delegation's pinned host before activation", async () => {
+    const delegation = {
+      ...makeDelegation(
+        {
+          service: "tinycloud.kv",
+          space: "applications",
+          path: "/",
+          actions: ["tinycloud.kv/get"],
+        },
+        "cid-kv",
+      ),
+      host: "https://retired-node.example.com",
+    };
+    const useDelegation = mock(async (activated: any) => ({
+      kv: {},
+      delegation: activated,
+    }));
+
+    await activatePortableDelegation({ useDelegation } as any, delegation);
+
+    expect(useDelegation).toHaveBeenCalledTimes(1);
+    expect(useDelegation.mock.calls[0][0].host).toBeUndefined();
+    expect(delegation.host).toBe("https://retired-node.example.com");
+  });
+
+  it("activates delegation resources sequentially without overlap", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const order: string[] = [];
+    const useDelegation = mock(async (delegation: any) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      order.push(`start:${delegation.path}`);
+      await Bun.sleep(1);
+      order.push(`end:${delegation.path}`);
+      active -= 1;
+      return {
+        kv: {},
+        sql: {},
+        restorable: { delegationCid: delegation.cid },
+        delegation,
+      };
+    });
+
+    await activatePortableDelegation({ useDelegation } as any, [
+      makeDelegation(
+        {
+          service: "tinycloud.kv",
+          space: "applications",
+          path: "/",
+          actions: ["tinycloud.kv/get"],
+        },
+        "cid-kv",
+      ),
+      makeDelegation(
+        {
+          service: "tinycloud.sql",
+          space: "applications",
+          path: "conversations",
+          actions: ["tinycloud.sql/read"],
+        },
+        "cid-sql",
+      ),
+    ]);
+
+    expect(maxActive).toBe(1);
+    expect(order).toEqual(["start:/", "end:/", "start:conversations", "end:conversations"]);
+  });
+
+  it("shares one per-address activation promise across backend callers", async () => {
+    let finishActivation!: (access: any) => void;
+    const pendingActivation = new Promise<any>((resolve) => {
+      finishActivation = resolve;
+    });
+    const activateSerialized = mock(() => pendingActivation);
+    const cache = { set: mock(() => {}) };
+    const activator = createDelegationActivator({} as any, cache, activateSerialized);
+    const serialized = "serialized-delegation";
+
+    const middlewareActivation = activator.activate("0xOWNER", serialized);
+    const workspaceStateActivation = activator.activate("0xOWNER", serialized);
+    const webhookActivation = activator.activate("0xOWNER", serialized);
+
+    expect(middlewareActivation).toBe(workspaceStateActivation);
+    expect(workspaceStateActivation).toBe(webhookActivation);
+    expect(activateSerialized).toHaveBeenCalledTimes(1);
+
+    const access = { kv: {}, sql: {}, spaceId: "owner:applications" };
+    finishActivation(access);
+
+    expect(
+      await Promise.all([middlewareActivation, workspaceStateActivation, webhookActivation]),
+    ).toEqual([access, access, access]);
+    expect(cache.set).toHaveBeenCalledTimes(1);
+    expect(cache.set).toHaveBeenCalledWith("0xOWNER", access);
+  });
+
+  it("starts a new generation and prevents superseded activation from overwriting cache", async () => {
+    let finishOld!: (access: any) => void;
+    let finishNew!: (access: any) => void;
+    const activateSerialized = mock((serialized: string) => {
+      return new Promise<any>((resolve) => {
+        if (serialized === "old-delegation") finishOld = resolve;
+        else finishNew = resolve;
+      });
+    });
+    const cache = { set: mock(() => {}) };
+    const activator = createDelegationActivator({} as any, cache, activateSerialized);
+
+    const oldActivation = activator.activate("0xOWNER", "old-delegation");
+    const newActivation = activator.activate("0xOWNER", "new-delegation");
+
+    expect(oldActivation).not.toBe(newActivation);
+    expect(activateSerialized).toHaveBeenCalledTimes(2);
+
+    const oldAccess = { spaceId: "old" } as any;
+    finishOld(oldAccess);
+    expect(await oldActivation).toBe(oldAccess);
+    expect(cache.set).not.toHaveBeenCalled();
+    expect(activator.activate("0xOWNER", "new-delegation")).toBe(newActivation);
+
+    const newAccess = { spaceId: "new" } as any;
+    finishNew(newAccess);
+    expect(await newActivation).toBe(newAccess);
+    expect(cache.set).toHaveBeenCalledTimes(1);
+    expect(cache.set).toHaveBeenCalledWith("0xOWNER", newAccess);
+  });
+
+  it("does not populate cache when an in-flight activation is invalidated", async () => {
+    let finishActivation!: (access: any) => void;
+    const activateSerialized = mock(
+      () =>
+        new Promise<any>((resolve) => {
+          finishActivation = resolve;
+        }),
+    );
+    const cache = { set: mock(() => {}) };
+    const activator = createDelegationActivator({} as any, cache, activateSerialized);
+
+    const activation = activator.activate("0xOWNER", "revoked-delegation");
+    activator.invalidate("0xOWNER");
+    finishActivation({ spaceId: "revoked" });
+
+    await activation;
+    expect(cache.set).not.toHaveBeenCalled();
+  });
+
   it("uses non-secret app KV for general KV operations when secret resources come first", async () => {
     const secretPut = mock(async () => ({ ok: true }));
     const appPut = mock(async () => ({ ok: true }));

@@ -1,6 +1,5 @@
 import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
-import type { TinyCloudNode } from "@tinycloud/node-sdk";
 import type { DelegationStore, DelegationCache } from "@listen/server";
 import { DEFAULT_DELEGATION_EXPIRY_MS, type ServerInfoPermission } from "@listen/core";
 import {
@@ -9,21 +8,21 @@ import {
   ownerDidFromAddress,
 } from "../manifest.js";
 import {
-  activatePortableDelegation,
   DelegationActivationError,
   deserializePortableDelegationSet,
   portableDelegationExpiry,
   portableDelegations,
+  type DelegationActivator,
   type PortableDelegationSet,
 } from "../delegation-activation.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
 interface DelegationRoutesConfig {
-  node: TinyCloudNode;
   did: string;
   store: DelegationStore;
   cache: DelegationCache;
+  activator: DelegationActivator;
   authMiddleware: RequestHandler;
   writeLimiter?: RequestHandler;
 }
@@ -40,7 +39,7 @@ const GRANT_EXPIRY_MARGIN_MS = 30_000;
 // ── Delegation Routes ────────────────────────────────────────────────
 
 export function createDelegationRouter(config: DelegationRoutesConfig) {
-  const { node, store, cache, authMiddleware, writeLimiter } = config;
+  const { store, cache, activator, authMiddleware, writeLimiter } = config;
   const router = Router();
 
   // All delegation routes require authentication
@@ -95,11 +94,12 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
         resources,
         policyHash: backendDelegationPolicyHash(config.did, ownerDid),
       });
+      activator.invalidate(address);
+      cache.evict(address);
 
       try {
         // Cache the active DelegatedAccess keyed by address when activation is available now.
-        const access = await activatePortableDelegation(node, delegation);
-        cache.set(address, access);
+        await activator.activate(address, serialized);
 
         res.json({
           status: "active",
@@ -111,8 +111,6 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
           "[delegations] stored delegation but activation is pending:",
           describeActivationError(activationErr),
         );
-        cache.evict(address);
-
         res.json({
           status: "active",
           expiresAt,
@@ -140,6 +138,7 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
       const { address } = req.user;
 
       try {
+        activator.invalidate(address);
         await store.remove(address);
         cache.evict(address);
 
@@ -181,6 +180,7 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
 
       if (isExpired) {
         // Clean up expired delegation
+        activator.invalidate(address);
         await store.remove(address);
         cache.evict(address);
 
@@ -192,6 +192,7 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
       }
 
       if (stored.policyHash !== backendDelegationPolicyHash(config.did, ownerDid)) {
+        activator.invalidate(address);
         await store.remove(address);
         cache.evict(address);
 

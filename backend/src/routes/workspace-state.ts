@@ -1,22 +1,18 @@
 import { Router } from "express";
 import type { Request, RequestHandler } from "express";
-import type { TinyCloudNode } from "@tinycloud/node-sdk";
 import type { DelegationCache, DelegationStore } from "@listen/server";
 import type { WorkspaceStateResponse, WorkspaceSecretKey } from "@listen/core";
 import { backendDelegationPolicyHash, ownerDidFromAddress } from "../manifest.js";
-import {
-  activatePortableDelegation,
-  deserializePortableDelegationSet,
-} from "../delegation-activation.js";
+import type { DelegationActivator } from "../delegation-activation.js";
 import { withTimeout } from "../middleware/timeout.js";
 import { conversationSql } from "../schema.js";
 import { googleTokensExist } from "../services/google-tokens.js";
 
 interface WorkspaceStateRoutesConfig {
-  node: TinyCloudNode;
   did: string;
   store: DelegationStore;
   cache: DelegationCache;
+  activator: DelegationActivator;
   authMiddleware: RequestHandler;
 }
 
@@ -35,7 +31,7 @@ const WORKSPACE_SECRET_NAMES: Record<WorkspaceSecretKey, string> = {
 type DelegatedAccess = NonNullable<Request["delegatedAccess"]>;
 
 export function createWorkspaceStateRouter(config: WorkspaceStateRoutesConfig) {
-  const { node, store, cache, authMiddleware } = config;
+  const { store, cache, activator, authMiddleware } = config;
   const router = Router();
 
   router.use(authMiddleware);
@@ -84,6 +80,7 @@ export function createWorkspaceStateRouter(config: WorkspaceStateRoutesConfig) {
       }
 
       if (new Date(stored.expiresAt).getTime() <= Date.now()) {
+        activator.invalidate(address);
         await store.remove(address);
         cache.evict(address);
         res.json({
@@ -101,6 +98,7 @@ export function createWorkspaceStateRouter(config: WorkspaceStateRoutesConfig) {
 
       const validPolicy = stored.policyHash === backendDelegationPolicyHash(config.did, ownerDid);
       if (!validPolicy) {
+        activator.invalidate(address);
         await store.remove(address);
         cache.evict(address);
         res.json({
@@ -124,12 +122,10 @@ export function createWorkspaceStateRouter(config: WorkspaceStateRoutesConfig) {
 
       if (!access) {
         try {
-          const delegation = deserializePortableDelegationSet(stored.serialized);
           access = await withTimeout(
-            activatePortableDelegation(node, delegation) as Promise<DelegatedAccess>,
+            activator.activate(address, stored.serialized) as Promise<DelegatedAccess>,
             ACTIVATION_TIMEOUT_MS,
           );
-          cache.set(address, access);
           activation = "active";
         } catch (err) {
           activation = "failed";

@@ -1,19 +1,15 @@
 import type { Request, Response, NextFunction } from "express";
-import type { TinyCloudNode } from "@tinycloud/node-sdk";
 import type { DelegationStore, DelegationCache } from "@listen/server";
 import { withTimeout } from "./timeout.js";
 import { backendDelegationPolicyHash, ownerDidFromAddress } from "../manifest.js";
-import {
-  activatePortableDelegation,
-  deserializePortableDelegationSet,
-} from "../delegation-activation.js";
+import type { DelegationActivator } from "../delegation-activation.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
 interface DelegationMiddlewareConfig {
-  node: TinyCloudNode;
   store: DelegationStore;
   cache: DelegationCache;
+  activator: DelegationActivator;
   backendDid: string;
 }
 
@@ -43,24 +39,7 @@ type DelegationValidationResult =
  * 5. Returns 403 if no delegation found, 401 if expired
  */
 export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
-  const { node, store, cache, backendDid } = config;
-
-  // Single-flight activation per address. Every polling request used to
-  // launch its own multi-resource activation; the node serializes those on
-  // the same delegation-chain guards, so concurrent attempts starved each
-  // other and none finished inside any timeout (tinycloud-node#115).
-  // Concurrent requests now share one activation promise.
-  const activationInFlight = new Map<string, Promise<NonNullable<Request["delegatedAccess"]>>>();
-  const activateShared = (address: string, serialized: string) => {
-    let inFlight = activationInFlight.get(address);
-    if (!inFlight) {
-      inFlight = activateDelegation(node, cache, address, serialized).finally(() => {
-        activationInFlight.delete(address);
-      });
-      activationInFlight.set(address, inFlight);
-    }
-    return inFlight;
-  };
+  const { store, cache, activator, backendDid } = config;
 
   return async (req: Request, res: Response, next: NextFunction) => {
     const user = req.user;
@@ -85,6 +64,7 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
           address,
           store,
           cache,
+          activator,
           backendDid,
           ownerDid,
         );
@@ -102,6 +82,8 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
       const stored = await store.load(address);
 
       if (!stored) {
+        activator.invalidate(address);
+        cache.evict(address);
         res.status(403).json({
           error: "no_delegation",
           message: "No delegation found. Please delegate access from the frontend.",
@@ -111,7 +93,9 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
 
       // Check expiry
       if (new Date(stored.expiresAt).getTime() <= Date.now()) {
+        activator.invalidate(address);
         await store.remove(address);
+        cache.evict(address);
         res.status(401).json({
           error: "delegation_expired",
           message: "Delegation has expired. Please delegate access again.",
@@ -120,6 +104,7 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
       }
 
       if (stored.policyHash !== backendDelegationPolicyHash(backendDid, ownerDid)) {
+        activator.invalidate(address);
         await store.remove(address);
         cache.evict(address);
         res.status(403).json({
@@ -130,7 +115,7 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
       }
 
       // Deserialize and activate the delegation
-      access = await withTimeout(activateShared(address, stored.serialized));
+      access = await withTimeout(activator.activate(address, stored.serialized));
       req.delegatedAccess = access;
       next();
     } catch (err) {
@@ -152,11 +137,14 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
         message.includes("Unauthorized") ||
         message.includes("unauthorized")
       ) {
+        activator.invalidate(address);
         cache.evict(address);
 
         try {
           const stored = await store.load(address);
           if (!stored) {
+            activator.invalidate(address);
+            cache.evict(address);
             res.status(403).json({
               error: "no_delegation",
               message: "No delegation found after retry.",
@@ -165,7 +153,9 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
           }
 
           if (new Date(stored.expiresAt).getTime() <= Date.now()) {
+            activator.invalidate(address);
             await store.remove(address);
+            cache.evict(address);
             res.status(401).json({
               error: "delegation_expired",
               message: "Delegation has expired. Please delegate access again.",
@@ -174,6 +164,7 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
           }
 
           if (stored.policyHash !== backendDelegationPolicyHash(backendDid, ownerDid)) {
+            activator.invalidate(address);
             await store.remove(address);
             cache.evict(address);
             res.status(403).json({
@@ -183,7 +174,7 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
             return;
           }
 
-          const retryAccess = await withTimeout(activateShared(address, stored.serialized));
+          const retryAccess = await withTimeout(activator.activate(address, stored.serialized));
           req.delegatedAccess = retryAccess;
           next();
         } catch (retryErr) {
@@ -214,12 +205,14 @@ async function validateStoredDelegation(
   address: string,
   store: DelegationStore,
   cache: DelegationCache,
+  activator: DelegationActivator,
   backendDid: string,
   ownerDid: string,
 ): Promise<DelegationValidationResult> {
   const stored = await store.load(address);
 
   if (!stored) {
+    activator.invalidate(address);
     cache.evict(address);
     return {
       ok: false,
@@ -234,6 +227,7 @@ async function validateStoredDelegation(
   }
 
   if (new Date(stored.expiresAt).getTime() <= Date.now()) {
+    activator.invalidate(address);
     await store.remove(address);
     cache.evict(address);
     return {
@@ -249,6 +243,7 @@ async function validateStoredDelegation(
   }
 
   if (stored.policyHash !== backendDelegationPolicyHash(backendDid, ownerDid)) {
+    activator.invalidate(address);
     await store.remove(address);
     cache.evict(address);
     return {
@@ -264,19 +259,4 @@ async function validateStoredDelegation(
   }
 
   return { ok: true };
-}
-
-async function activateDelegation(
-  node: TinyCloudNode,
-  cache: DelegationCache,
-  address: string,
-  serialized: string,
-) {
-  const delegation = deserializePortableDelegationSet(serialized);
-  const access = await activatePortableDelegation(node, delegation);
-  console.log(
-    `[delegation] activated: address=${address} spaceId=${access.spaceId} path=${JSON.stringify(access.path)}`,
-  );
-  cache.set(address, access);
-  return access;
 }

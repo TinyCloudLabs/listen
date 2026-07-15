@@ -7,7 +7,16 @@ import {
 
 type PortableDelegation = Parameters<TinyCloudNode["useDelegation"]>[0];
 export type PortableDelegationSet = PortableDelegation | PortableDelegation[];
-type DelegatedAccess = Awaited<ReturnType<TinyCloudNode["useDelegation"]>>;
+export type DelegatedAccess = Awaited<ReturnType<TinyCloudNode["useDelegation"]>>;
+
+interface DelegationActivationCache {
+  set(address: string, access: DelegatedAccess): void;
+}
+
+export interface DelegationActivator {
+  activate(address: string, serialized: string): Promise<DelegatedAccess>;
+  invalidate(address: string): void;
+}
 
 const DELEGATION_BUNDLE_FORMAT = "listen.delegation-bundle";
 
@@ -108,6 +117,56 @@ export function portableDelegationExpiry(input: PortableDelegationSet): Date | n
 
   if (expiries.length === 0) return null;
   return new Date(Math.min(...expiries.map((expiry) => expiry.getTime())));
+}
+
+/**
+ * Creates one backend-scoped activation coordinator. All callers resolving an
+ * address must share this instance so polling, webhook, and OAuth requests do
+ * not start competing activations for the same delegation chain.
+ */
+export function createDelegationActivator(
+  node: TinyCloudNode,
+  cache: DelegationActivationCache,
+  activateSerialized: (serialized: string) => Promise<DelegatedAccess> = (serialized) =>
+    activateSerializedDelegation(node, serialized),
+): DelegationActivator {
+  const activationInFlight = new Map<
+    string,
+    { serialized: string; promise: Promise<DelegatedAccess> }
+  >();
+
+  return {
+    activate(address, serialized) {
+      const existing = activationInFlight.get(address);
+      if (existing?.serialized === serialized) return existing.promise;
+
+      const activation = activateSerialized(serialized);
+      let shared: Promise<DelegatedAccess>;
+      shared = activation
+        .then((access) => {
+          if (activationInFlight.get(address)?.promise === shared) {
+            cache.set(address, access);
+          }
+          return access;
+        })
+        .finally(() => {
+          if (activationInFlight.get(address)?.promise === shared) {
+            activationInFlight.delete(address);
+          }
+        });
+      activationInFlight.set(address, { serialized, promise: shared });
+      return shared;
+    },
+
+    invalidate(address) {
+      activationInFlight.delete(address);
+    },
+  };
+}
+
+async function activateSerializedDelegation(node: TinyCloudNode, serialized: string) {
+  const delegation = deserializePortableDelegationSet(serialized);
+  return activatePortableDelegation(node, delegation);
 }
 
 /**
