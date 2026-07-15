@@ -276,9 +276,14 @@ async function main() {
   app.use(createCsrfMiddleware());
 
   // 6. Rate limiting
+  // 2000/15min: the frontend legitimately polls several status endpoints
+  // every few seconds while a sync job runs (~700+ requests/15min for one
+  // tab). The previous limit of 100 meant the app rate-limited ITSELF
+  // mid-sync; /api/server-info then returned 429 and the frontend
+  // misdiagnosed it as a lost wallet session ("Reconnect wallet").
   const generalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    limit: 100,
+    limit: 2000,
     standardHeaders: "draft-7",
     legacyHeaders: false,
   });
@@ -299,11 +304,16 @@ async function main() {
     message: { error: "rate_limited", message: "Too many delegation requests" },
   });
 
+  // Cheap, static, unauthenticated info endpoints stay outside the rate
+  // limiter (same class as /healthz): the frontend treats a non-JSON
+  // /api/server-info response as "backend has no wallet instance" and
+  // dead-ends in the Reconnect Wallet screen.
+  app.use("/api/manifest", createManifestRouter(did));
+  app.use("/api/server-info", createServerInfoRouter(did));
+
   app.use(generalLimiter);
 
   // 7. Mount routes
-  app.use("/api/manifest", createManifestRouter(did));
-  app.use("/api/server-info", createServerInfoRouter(did));
 
   // Temporary incident diagnostics for tinycloud-node#115; remove after.
   app.use(
