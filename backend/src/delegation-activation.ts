@@ -151,13 +151,18 @@ export async function activatePortableDelegation(
     return activateResourceWithContext(node, only.delegation, only.resource);
   }
 
-  const activated = await Promise.all(
-    activatableResources.map(async ({ delegation, resource }) => {
-      const service = normalizeResourceService(resource.service);
-      const access = await activateResourceWithContext(node, delegation, resource);
-      return { service, resource, access };
-    }),
-  );
+  // Activate resources SEQUENTIALLY. The node serializes same-chain
+  // operations behind per-chain guards, so N parallel activations don't
+  // overlap — they contend (guard queue thrash + epoch-append conflicts)
+  // and the whole batch reliably exceeds every timeout. Measured on prod
+  // (tinycloud-node#115): 15 resources sequentially ≈ 33s total (~1.7s
+  // each); the same 15 in Promise.all never completed within 180s.
+  const activated: ActivatedResource[] = [];
+  for (const { delegation, resource } of activatableResources) {
+    const service = normalizeResourceService(resource.service);
+    const access = await activateResourceWithContext(node, delegation, resource);
+    activated.push({ service, resource, access });
+  }
 
   const accessByService = new Map<string, ActivatedResource>();
   for (const entry of activated) {
