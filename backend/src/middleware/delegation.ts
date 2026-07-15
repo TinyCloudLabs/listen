@@ -95,6 +95,7 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
       if (new Date(stored.expiresAt).getTime() <= Date.now()) {
         activator.invalidate(address);
         await store.remove(address);
+        activator.invalidate(address);
         cache.evict(address);
         res.status(401).json({
           error: "delegation_expired",
@@ -106,6 +107,7 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
       if (stored.policyHash !== backendDelegationPolicyHash(backendDid, ownerDid)) {
         activator.invalidate(address);
         await store.remove(address);
+        activator.invalidate(address);
         cache.evict(address);
         res.status(403).json({
           error: "delegation_stale",
@@ -155,6 +157,7 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
           if (new Date(stored.expiresAt).getTime() <= Date.now()) {
             activator.invalidate(address);
             await store.remove(address);
+            activator.invalidate(address);
             cache.evict(address);
             res.status(401).json({
               error: "delegation_expired",
@@ -166,6 +169,7 @@ export function createDelegationMiddleware(config: DelegationMiddlewareConfig) {
           if (stored.policyHash !== backendDelegationPolicyHash(backendDid, ownerDid)) {
             activator.invalidate(address);
             await store.remove(address);
+            activator.invalidate(address);
             cache.evict(address);
             res.status(403).json({
               error: "delegation_stale",
@@ -229,6 +233,7 @@ async function validateStoredDelegation(
   if (new Date(stored.expiresAt).getTime() <= Date.now()) {
     activator.invalidate(address);
     await store.remove(address);
+    activator.invalidate(address);
     cache.evict(address);
     return {
       ok: false,
@@ -245,6 +250,7 @@ async function validateStoredDelegation(
   if (stored.policyHash !== backendDelegationPolicyHash(backendDid, ownerDid)) {
     activator.invalidate(address);
     await store.remove(address);
+    activator.invalidate(address);
     cache.evict(address);
     return {
       ok: false,

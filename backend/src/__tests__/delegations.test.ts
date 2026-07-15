@@ -108,7 +108,7 @@ import express from "express";
 import type { Server } from "http";
 import type { Request, Response, NextFunction } from "express";
 import { createDelegationRouter } from "../routes/delegations.js";
-import { createDelegationActivator } from "../delegation-activation.js";
+import { createDelegationActivator, type DelegationActivator } from "../delegation-activation.js";
 
 // ── In-Memory Delegation Store ────────────────────────────────────────
 
@@ -186,6 +186,7 @@ function createApp(
   store: ReturnType<typeof createMockDelegationStore>,
   cache: ReturnType<typeof createMockDelegationCache>,
   writeLimiter?: RequestHandler,
+  activatorOverride?: DelegationActivator,
 ) {
   const mockNode = {
     useDelegation: mockUseDelegation,
@@ -198,7 +199,7 @@ function createApp(
   } as any;
 
   const app = express();
-  const activator = createDelegationActivator(mockNode, cache as any);
+  const activator = activatorOverride ?? createDelegationActivator(mockNode, cache as any);
   app.use(express.json());
   app.use(
     "/api/delegations",
@@ -711,6 +712,53 @@ describe("Delegation Routes", () => {
         method: "DELETE",
       });
 
+      expect(cache.has(TEST_ADDRESS)).toBe(false);
+    });
+
+    it("prevents activation started during revocation from repopulating cache", async () => {
+      if (server) await closeServer(server);
+
+      await store.store(TEST_ADDRESS, "still-loadable", {
+        expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+        actions: [],
+        path: "",
+      });
+
+      let markRemoveStarted!: () => void;
+      const removeStarted = new Promise<void>((resolve) => {
+        markRemoveStarted = resolve;
+      });
+      let finishRemove!: () => void;
+      const removePending = new Promise<void>((resolve) => {
+        finishRemove = resolve;
+      });
+      const removeStored = store.remove.bind(store);
+      store.remove = async (identifier: string) => {
+        markRemoveStarted();
+        await removePending;
+        await removeStored(identifier);
+      };
+
+      let finishActivation!: (access: any) => void;
+      const activationPending = new Promise<any>((resolve) => {
+        finishActivation = resolve;
+      });
+      const activator = createDelegationActivator({} as any, cache as any, () => activationPending);
+      const raceApp = createApp(store, cache, undefined, activator);
+      const result = await startServer(raceApp);
+      server = result.server;
+      baseUrl = `http://localhost:${result.port}`;
+
+      const deleteRequest = fetch(`${baseUrl}/api/delegations`, { method: "DELETE" });
+      await removeStarted;
+      expect(await store.load(TEST_ADDRESS)).not.toBeNull();
+
+      const racedActivation = activator.activate(TEST_ADDRESS, "still-loadable");
+      finishRemove();
+      expect((await deleteRequest).status).toBe(200);
+
+      finishActivation({ spaceId: "revoked" });
+      await racedActivation;
       expect(cache.has(TEST_ADDRESS)).toBe(false);
     });
 

@@ -140,6 +140,7 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
       try {
         activator.invalidate(address);
         await store.remove(address);
+        activator.invalidate(address);
         cache.evict(address);
 
         res.json({
@@ -182,6 +183,7 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
         // Clean up expired delegation
         activator.invalidate(address);
         await store.remove(address);
+        activator.invalidate(address);
         cache.evict(address);
 
         res.json({
@@ -194,6 +196,7 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
       if (stored.policyHash !== backendDelegationPolicyHash(config.did, ownerDid)) {
         activator.invalidate(address);
         await store.remove(address);
+        activator.invalidate(address);
         cache.evict(address);
 
         res.json({

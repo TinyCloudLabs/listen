@@ -82,6 +82,7 @@ export function createWorkspaceStateRouter(config: WorkspaceStateRoutesConfig) {
       if (new Date(stored.expiresAt).getTime() <= Date.now()) {
         activator.invalidate(address);
         await store.remove(address);
+        activator.invalidate(address);
         cache.evict(address);
         res.json({
           ...base,
@@ -100,6 +101,7 @@ export function createWorkspaceStateRouter(config: WorkspaceStateRoutesConfig) {
       if (!validPolicy) {
         activator.invalidate(address);
         await store.remove(address);
+        activator.invalidate(address);
         cache.evict(address);
         res.json({
           ...base,
