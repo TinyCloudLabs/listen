@@ -78,16 +78,23 @@ export function GlobalSyncIndicator({ api, onViewResults }: GlobalSyncIndicatorP
   const stoppedRef = useRef(false);
   // Current error backoff delay; null when the last poll succeeded.
   const errorDelayRef = useRef<number | null>(null);
+  // Poll-chain epoch. Bumped whenever a new chain starts (mount, visibilitychange);
+  // a poll whose fetch straddles a bump is a stale chain and must not write state
+  // or reschedule — otherwise a visibility flap during an in-flight request leaks
+  // a second, parallel poll chain.
+  const epochRef = useRef(0);
 
   const poll = useCallback(async () => {
     // Paused while the tab is hidden; the visibilitychange handler resumes us.
     if (document.hidden) return;
 
+    const epoch = epochRef.current;
     const nextActive: ActiveJobView[] = [];
     let hadError = false;
 
     try {
       const jobs = await api.get<Record<string, SyncJobLite | null>>("/api/sync/jobs");
+      if (stoppedRef.current || epoch !== epochRef.current) return;
 
       for (const source of SOURCES) {
         const job = jobs?.[source.key] ?? null;
@@ -125,6 +132,7 @@ export function GlobalSyncIndicator({ api, onViewResults }: GlobalSyncIndicatorP
 
       errorDelayRef.current = null; // reset backoff on success
     } catch (err) {
+      if (stoppedRef.current || epoch !== epochRef.current) return;
       hadError = true;
       // 429s can't surface Retry-After through ApiClient (see backend
       // rate-limit-handler / Step 2b), so jump straight to the ceiling.
@@ -137,13 +145,16 @@ export function GlobalSyncIndicator({ api, onViewResults }: GlobalSyncIndicatorP
       }
     }
 
-    if (!stoppedRef.current && !document.hidden) {
+    if (!stoppedRef.current && !document.hidden && epoch === epochRef.current) {
       if (!hadError) setActiveJobs(nextActive);
       const delay = hadError
         ? (errorDelayRef.current ?? IDLE_POLL_MS)
         : nextActive.length > 0
           ? ACTIVE_POLL_MS
           : IDLE_POLL_MS;
+      // Clear before overwrite so a pending timer can never be orphaned into a
+      // parallel chain.
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
       timerRef.current = window.setTimeout(() => void poll(), delay);
     }
   }, [api]);
@@ -159,13 +170,16 @@ export function GlobalSyncIndicator({ api, onViewResults }: GlobalSyncIndicatorP
     };
 
     const onVisibility = () => {
+      // Invalidate any in-flight poll from the previous chain, then start (or
+      // pause) a single fresh chain. Resume with an immediate poll when the tab
+      // becomes visible; stay paused (no reschedule) while hidden.
+      epochRef.current += 1;
       clearTimer();
-      // Resume with an immediate poll when the tab becomes visible; stay paused
-      // (no reschedule) while hidden.
       if (!document.hidden) void poll();
     };
 
     document.addEventListener("visibilitychange", onVisibility);
+    epochRef.current += 1;
     if (!document.hidden) void poll();
 
     return () => {

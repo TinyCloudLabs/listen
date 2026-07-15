@@ -129,6 +129,47 @@ describe("GlobalSyncIndicator", () => {
     expect(api.get).toHaveBeenCalledTimes(1);
   });
 
+  it("does not leak duplicate poll chains when visibility flaps during an in-flight poll", async () => {
+    const jobs = { fireflies: null, granola: job(), "google-meet": null };
+    let resolveFirst: ((value: unknown) => void) | null = null;
+    api.get.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirst = resolve;
+        }),
+    );
+    api.get.mockResolvedValue(jobs);
+
+    renderIndicator();
+    await flush();
+    expect(api.get).toHaveBeenCalledTimes(1); // poll A in flight
+
+    // Flap: hide then show while A is still pending — the handler starts chain B.
+    setHidden(true);
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    setHidden(false);
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(api.get).toHaveBeenCalledTimes(2); // chain B's immediate poll
+
+    // A resolves while the tab is visible — a stale chain must NOT reschedule.
+    await act(async () => {
+      resolveFirst!(jobs);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Exactly one request per subsequent 5s active window (chain B only).
+    await flush(5000);
+    expect(api.get).toHaveBeenCalledTimes(3);
+    await flush(5000);
+    expect(api.get).toHaveBeenCalledTimes(4);
+  });
+
   it("backs off after a failure and jumps to the ceiling on 429", async () => {
     api.get.mockRejectedValue(new Error("network down"));
     renderIndicator();
