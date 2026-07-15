@@ -1,10 +1,16 @@
 import { Router } from "express";
 import type { Request, RequestHandler, Response } from "express";
 import type { TinyCloudNode } from "@tinycloud/node-sdk";
+import type { DelegationStore } from "@listen/server";
+import {
+  activatePortableDelegation,
+  deserializePortableDelegationSet,
+} from "../delegation-activation.js";
 
 interface DebugProbeConfig {
   node: TinyCloudNode;
   authMiddleware: RequestHandler;
+  store: DelegationStore;
 }
 
 interface ProbeStep {
@@ -27,7 +33,7 @@ const ROUTE_BUDGET_MS = 50_000;
  * space. Remove once the incident is closed.
  */
 export function createDebugProbeRouter(config: DebugProbeConfig) {
-  const { node, authMiddleware } = config;
+  const { node, authMiddleware, store } = config;
   const router = Router();
 
   router.use(authMiddleware);
@@ -77,12 +83,48 @@ export function createDebugProbeRouter(config: DebugProbeConfig) {
 
     const address = req.user?.address ?? "unknown";
 
-    await run("kv.get debug/probe", () => node.kv.get("debug/probe"));
-    await run("kv.put debug/probe", () => node.kv.put("debug/probe", new Date().toISOString()));
-    await run(`kv.get delegations/${address}`, () => node.kv.get(`delegations/${address}`));
-    await run("kv.list", () => node.kv.list());
-    await run("signIn", () => node.signIn());
-    await run("kv.get debug/probe (post-signIn)", () => node.kv.get("debug/probe"));
+    let stored: Awaited<ReturnType<DelegationStore["load"]>> = null;
+    await run("store.load(address)", async () => {
+      const loaded = await store.load(address);
+      stored = loaded;
+      return loaded
+        ? {
+            ok: true,
+            code: `expiresAt=${loaded.expiresAt} grantedAt=${loaded.grantedAt}`,
+            message: `serializedLen=${loaded.serialized?.length} policyHash=${loaded.policyHash}`,
+          }
+        : { ok: false, code: "NOT_FOUND", message: "no stored delegation" };
+    });
+
+    const active = stored as Awaited<ReturnType<DelegationStore["load"]>>;
+    if (active) {
+      let deserialized: ReturnType<typeof deserializePortableDelegationSet> | null = null;
+      await run("deserialize stored delegation", async () => {
+        deserialized = deserializePortableDelegationSet(active.serialized);
+        const entries = Array.isArray(deserialized) ? deserialized : [deserialized];
+        return {
+          ok: true,
+          code: `delegations=${entries.length}`,
+          message: entries
+            .map(
+              (d) =>
+                `cid=${String((d as { cid?: unknown }).cid).slice(0, 16)} expiry=${(d as { expiry?: Date }).expiry?.toISOString?.()}`,
+            )
+            .join("; "),
+        };
+      });
+      if (deserialized) {
+        const bundle = deserialized;
+        await run("activatePortableDelegation", async () => {
+          const access = await activatePortableDelegation(node, bundle);
+          return {
+            ok: true,
+            code: `spaceId=${access.spaceId}`,
+            message: `path=${JSON.stringify(access.path)}`,
+          };
+        });
+      }
+    }
 
     res.json({
       host: process.env.TINYCLOUD_HOST ?? "https://node.tinycloud.xyz",

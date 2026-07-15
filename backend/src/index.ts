@@ -306,7 +306,10 @@ async function main() {
   app.use("/api/server-info", createServerInfoRouter(did));
 
   // Temporary incident diagnostics for tinycloud-node#115; remove after.
-  app.use("/api/debug/node-probe", createDebugProbeRouter({ node, authMiddleware }));
+  app.use(
+    "/api/debug/node-probe",
+    createDebugProbeRouter({ node, authMiddleware, store: delegationStore }),
+  );
 
   app.use(
     "/api/auth",
