@@ -126,6 +126,7 @@ async function main() {
       console.log(`${label} cached delegation expired at ${stored.expiresAt}`);
       delegationActivator.invalidate(address);
       await delegationStore.remove(address);
+      delegationActivator.invalidate(address);
       delegationCache.evict(address);
       return false;
     }
@@ -133,6 +134,7 @@ async function main() {
       console.log(`${label} cached delegation policy is stale`);
       delegationActivator.invalidate(address);
       await delegationStore.remove(address);
+      delegationActivator.invalidate(address);
       delegationCache.evict(address);
       return false;
     }
@@ -185,6 +187,7 @@ async function main() {
       console.log("[webhook] delegation policy is stale — user needs to sign in again");
       delegationActivator.invalidate(address);
       await delegationStore.remove(address);
+      delegationActivator.invalidate(address);
       delegationCache.evict(address);
       return null;
     }
@@ -262,6 +265,7 @@ async function main() {
       if (stored.policyHash !== backendDelegationPolicyHash(did, ownerDidFromAddress(address))) {
         delegationActivator.invalidate(address);
         await delegationStore.remove(address);
+        delegationActivator.invalidate(address);
         delegationCache.evict(address);
         return null;
       }
@@ -381,6 +385,13 @@ async function main() {
           return null;
         }
         if (new Date(stored.expiresAt).getTime() <= Date.now()) {
+          delegationActivator.invalidate(address);
+          delegationCache.evict(address);
+          return null;
+        }
+        if (stored.policyHash !== backendDelegationPolicyHash(did, ownerDidFromAddress(address))) {
+          delegationActivator.invalidate(address);
+          await delegationStore.remove(address);
           delegationActivator.invalidate(address);
           delegationCache.evict(address);
           return null;
