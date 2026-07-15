@@ -108,6 +108,7 @@ import express from "express";
 import type { Server } from "http";
 import type { Request, Response, NextFunction } from "express";
 import { createDelegationRouter } from "../routes/delegations.js";
+import { createDelegationActivator } from "../delegation-activation.js";
 
 // ── In-Memory Delegation Store ────────────────────────────────────────
 
@@ -197,14 +198,15 @@ function createApp(
   } as any;
 
   const app = express();
+  const activator = createDelegationActivator(mockNode, cache as any);
   app.use(express.json());
   app.use(
     "/api/delegations",
     createDelegationRouter({
-      node: mockNode,
       did: TEST_DID,
       store: store as any,
       cache: cache as any,
+      activator,
       authMiddleware: mockAuthMiddleware,
       writeLimiter,
     }),

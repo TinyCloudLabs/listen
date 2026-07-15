@@ -31,6 +31,7 @@ test("backend import emits a TinyCloud hook and refreshes the frontend inbox", a
 
   await page.addInitScript(
     ({ listenSession, tinycloudSessionKey, tinycloudSession }) => {
+      window.localStorage.setItem("listen:capability-version", "soundcore-secrets-v2");
       window.localStorage.setItem("listen:session", JSON.stringify(listenSession));
       window.localStorage.setItem(tinycloudSessionKey, JSON.stringify(tinycloudSession));
     },
@@ -55,6 +56,10 @@ test("backend import emits a TinyCloud hook and refreshes the frontend inbox", a
   );
 
   await page.goto("/");
+  await page
+    .getByRole("banner")
+    .getByRole("button", { name: /open app/i })
+    .click();
   await expect(page.getByText(state.initialConversationTitle)).toBeVisible();
   await ticketReady;
   await eventStreamReady;

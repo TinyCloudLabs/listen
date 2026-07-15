@@ -21,6 +21,7 @@ import express from "express";
 import type { Server } from "http";
 import type { Request, Response, NextFunction } from "express";
 import { createWorkspaceStateRouter } from "../routes/workspace-state.js";
+import { createDelegationActivator } from "../delegation-activation.js";
 import { backendDelegationPolicyHash, ownerDidFromAddress } from "../manifest.js";
 
 const TEST_ADDRESS = "0xTEST";
@@ -106,14 +107,15 @@ function createApp({
   node = { useDelegation: mock(async () => createAccess()) },
 } = {}) {
   const app = express();
+  const activator = createDelegationActivator(node as any, cache as any);
   app.use(express.json());
   app.use(
     "/api/workspace-state",
     createWorkspaceStateRouter({
-      node: node as any,
       did: BACKEND_DID,
       store: store as any,
       cache: cache as any,
+      activator,
       authMiddleware: mockAuthMiddleware,
     }),
   );
