@@ -1294,3 +1294,107 @@ describe("Conversations Routes — PUT /api/conversations/:id", () => {
     expect(noFields.status).toBe(400);
   });
 });
+
+// ── Concurrency — parallelized list & detail queries ─────────────────
+
+async function waitForCondition(predicate: () => boolean, timeoutMs = 1000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error("Timed out waiting for condition");
+}
+
+// Wraps createMockSQL, deferring resolution of any query whose SQL matches
+// `gate` until _release() is called, so we can observe that several queries
+// were issued concurrently before any resolved.
+function createGatedSQL(config: MockSQLConfig, gate: (sql: string) => boolean) {
+  const base = createMockSQL(config);
+  const gatedCalls: string[] = [];
+  const pending: Array<() => void> = [];
+  const query = (sql: string, params?: any[]) => {
+    if (gate(sql)) {
+      gatedCalls.push(sql);
+      return new Promise((resolve) => {
+        pending.push(() => resolve(base.query(sql, params)));
+      });
+    }
+    return base.query(sql, params);
+  };
+  return {
+    ...base,
+    query,
+    _gatedCalls: gatedCalls,
+    _release: () => pending.splice(0).forEach((fn) => fn()),
+  };
+}
+
+function createRecordingKV() {
+  const kv = createMockKV();
+  const getCalls: string[] = [];
+  const originalGet = kv.get;
+  kv.get = (async (key: string) => {
+    getCalls.push(key);
+    return originalGet(key);
+  }) as typeof kv.get;
+  return Object.assign(kv, { _getCalls: getCalls });
+}
+
+describe("Conversations Routes — query concurrency", () => {
+  let server: Server;
+
+  afterEach(async () => {
+    if (server) await closeServer(server);
+  });
+
+  it("issues the list count, source-count, and page queries concurrently", async () => {
+    const isListRead = (sql: string) =>
+      sql.includes("participant_count") ||
+      sql.includes("GROUP BY source") ||
+      (sql.includes("COUNT(*)") && sql.includes("AS total"));
+    const mockSQL = createGatedSQL(
+      { totalCount: 0, conversationRows: [], sourceCounts: [] },
+      isListRead,
+    );
+    const app = createApp(createMockKV(), mockSQL as any);
+    const result = await startServer(app);
+    server = result.server;
+
+    const respPromise = fetch(`http://localhost:${result.port}/api/conversations`);
+    await waitForCondition(() => mockSQL._gatedCalls.length === 3);
+    expect(mockSQL._gatedCalls.length).toBe(3);
+
+    mockSQL._release();
+    const resp = await respPromise;
+    expect(resp.status).toBe(200);
+  });
+
+  it("issues the detail participants query and transcript KV read concurrently", async () => {
+    const isParticipantsRead = (sql: string) =>
+      sql.includes("FROM participant") && sql.includes("conversation_id = ?");
+    const mockSQL = createGatedSQL(
+      { detailRow: { id: "conv-1", metadata: "{}", transcript_json_length: 0 } },
+      isParticipantsRead,
+    );
+    const mockKV = createRecordingKV();
+    const app = createApp(mockKV as any, mockSQL as any);
+    const result = await startServer(app);
+    server = result.server;
+
+    const respPromise = fetch(`http://localhost:${result.port}/api/conversations/conv-1`);
+    // Participants query is gated; the KV transcript read must still fire before
+    // we release it — proving the two run concurrently rather than sequentially.
+    await waitForCondition(
+      () =>
+        mockSQL._gatedCalls.length === 1 &&
+        mockKV._getCalls.some((key) => key.includes("transcript/conv-1")),
+    );
+    expect(mockSQL._gatedCalls.length).toBe(1);
+    expect(mockKV._getCalls.some((key) => key.includes("transcript/conv-1"))).toBe(true);
+
+    mockSQL._release();
+    const resp = await respPromise;
+    expect(resp.status).toBe(200);
+  });
+});

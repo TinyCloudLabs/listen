@@ -17,6 +17,7 @@ import {
   createNonceStore,
   withSessionRefresh,
 } from "@listen/server";
+import { DELEGATION_STORE_REVALIDATE_MS } from "@listen/core";
 
 import { createAuthMiddleware } from "./middleware/auth.js";
 import { createDelegationMiddleware } from "./middleware/delegation.js";
@@ -33,6 +34,7 @@ import { createFirefliesRouter } from "./routes/fireflies.js";
 import { createGranolaRouter } from "./routes/granola.js";
 import { createSoundcoreRouter } from "./routes/soundcore.js";
 import { createSyncRouter } from "./routes/sync.js";
+import { createSyncJobsRouter, type SyncJobResumeRegistry } from "./routes/sync-jobs.js";
 import { createGranolaSyncRouter } from "./routes/granola-sync.js";
 import { createOtterRouter } from "./routes/otter.js";
 import { createOtterSyncRouter } from "./routes/otter-sync.js";
@@ -44,6 +46,7 @@ import { createGoogleMeetPushRouter } from "./routes/google-meet-webhooks.js";
 import { createGoogleMeetSyncRouter } from "./routes/google-meet-sync.js";
 import { createGoogleMeetStatusRouter } from "./routes/google-meet-status.js";
 import { createGoogleAuthRouter } from "./routes/google-auth.js";
+import rateLimitHandler from "./rate-limit-handler.js";
 import {
   initGoogleMeetWebhooks,
   isGoogleMeetWebhooksEnabled,
@@ -112,90 +115,125 @@ async function main() {
     get: (key: string) => withSessionRefresh(node, () => node.kv.get(key)),
     put: (key: string, value: string) => withSessionRefresh(node, () => node.kv.put(key, value)),
   } as any;
+  const syncJobResumers: SyncJobResumeRegistry = {};
 
-  const cachedDelegationIsCurrent = async (address: string, label: string) => {
+  const parsedRevalidate = parseInt(process.env.DELEGATION_STORE_REVALIDATE_MS ?? "", 10);
+  const revalidateMs = Number.isNaN(parsedRevalidate)
+    ? DELEGATION_STORE_REVALIDATE_MS
+    : parsedRevalidate;
+
+  // Short TTL memo — collapses repeated reads of a value that only changes on an
+  // out-of-band config save (webhook user-address); staleness window is the TTL.
+  function ttlMemo<T>(fn: () => Promise<T>, ttlMs: number): () => Promise<T> {
+    let cached: { at: number; value: T } | null = null;
+    return async () => {
+      if (cached && Date.now() - cached.at < ttlMs) return cached.value;
+      const value = await fn();
+      cached = { at: Date.now(), value };
+      return value;
+    };
+  }
+
+  // Single delegation resolver for out-of-request contexts (webhooks, google-auth).
+  // A warm cache is validated in-memory via the Step 1 metadata (expiry + policy +
+  // revalidation TTL) with NO store read; past the TTL it does exactly ONE store.load
+  // and reuses the cached access when the row is still current (the pre-unification
+  // resolvers loaded twice on the cache-invalid path). Expiry evicts the cache but
+  // does NOT remove the store row (intentional — see flow-analysis); a stale policy
+  // hash removes + evicts. google-auth previously skipped the policy check; unifying
+  // adds it.
+  const resolveDelegatedAccessFor = async (address: string, label: string) => {
     const ownerDid = ownerDidFromAddress(address);
+    const entry = delegationCache.getEntry(address);
+    if (entry) {
+      const meta = entry.meta;
+      const fresh =
+        meta !== undefined &&
+        new Date(meta.expiresAt).getTime() > Date.now() &&
+        meta.policyHash === backendDelegationPolicyHash(did, ownerDid) &&
+        Date.now() - entry.lastStoreCheckAt < revalidateMs;
+      if (fresh) return entry.delegatedAccess;
+
+      const stored = await delegationStore.load(address);
+      if (!stored) {
+        console.log(`${label} cached delegation has no stored record`);
+        delegationCache.evict(address);
+        return null;
+      }
+      if (new Date(stored.expiresAt).getTime() <= Date.now()) {
+        console.log(`${label} cached delegation expired at ${stored.expiresAt}`);
+        delegationCache.evict(address);
+        return null;
+      }
+      if (stored.policyHash !== backendDelegationPolicyHash(did, ownerDid)) {
+        console.log(`${label} cached delegation policy is stale`);
+        await delegationStore.remove(address);
+        delegationCache.evict(address);
+        return null;
+      }
+      delegationCache.markStoreChecked(address, {
+        expiresAt: stored.expiresAt,
+        policyHash: stored.policyHash,
+      });
+      return entry.delegatedAccess;
+    }
+
+    // Cold: single store.load + activate.
     const stored = await delegationStore.load(address);
     if (!stored) {
-      console.log(`${label} cached delegation has no stored record`);
-      delegationCache.evict(address);
-      return false;
+      console.log(`${label} no delegation in store for this address`);
+      return null;
     }
     if (new Date(stored.expiresAt).getTime() <= Date.now()) {
-      console.log(`${label} cached delegation expired at ${stored.expiresAt}`);
-      await delegationStore.remove(address);
-      delegationCache.evict(address);
-      return false;
+      console.log(`${label} delegation expired at ${stored.expiresAt}`);
+      return null;
     }
     if (stored.policyHash !== backendDelegationPolicyHash(did, ownerDid)) {
-      console.log(`${label} cached delegation policy is stale`);
+      console.log(`${label} delegation policy is stale — user needs to sign in again`);
       await delegationStore.remove(address);
       delegationCache.evict(address);
-      return false;
+      return null;
     }
-    return true;
+    try {
+      const delegation = deserializeDelegation(stored.serialized);
+      const access = await activatePortableDelegation(node, delegation);
+      delegationCache.set(address, access, {
+        expiresAt: stored.expiresAt,
+        policyHash: stored.policyHash,
+      });
+      console.log(`${label} delegation activated from store`);
+      return access;
+    } catch (err) {
+      console.error(`${label} failed to activate delegation:`, err);
+      return null;
+    }
   };
 
   // Resolve delegated access for webhook processing (single-user mode)
   const WEBHOOK_USER_ADDRESS_PATH = resolveAppPath("webhooks/config/user-address");
-  const tryGetDelegatedAccess = async () => {
+  const readWebhookUserAddress = ttlMemo(async () => {
     const addrResult = await backendKV.get(WEBHOOK_USER_ADDRESS_PATH);
-    const address =
-      addrResult.ok && (addrResult as any).data?.data
-        ? String((addrResult as any).data.data)
-        : null;
+    return addrResult.ok && (addrResult as any).data?.data
+      ? String((addrResult as any).data.data)
+      : null;
+  }, 60_000);
+  const tryGetDelegatedAccess = async () => {
+    const address = await readWebhookUserAddress();
     if (!address) {
       console.log(
         "[webhook] no user-address stored — webhook secret may not have been saved with a signed-in user",
       );
       return null;
     }
-    console.log(`[webhook] resolving delegation for address=${address}`);
-
-    // Check cache first
-    let access = delegationCache.get(address);
-    if (access) {
-      if (await cachedDelegationIsCurrent(address, "[webhook]")) {
-        console.log("[webhook] delegation found in cache");
-        return access;
-      }
-      access = null;
-    }
-
-    // Load from persistent store
-    const stored = await delegationStore.load(address);
-    if (!stored) {
-      console.log(
-        "[webhook] no delegation in store for this address — user needs to sign in and delegate",
-      );
-      return null;
-    }
-    if (new Date(stored.expiresAt).getTime() <= Date.now()) {
-      console.log(`[webhook] delegation expired at ${stored.expiresAt}`);
-      return null;
-    }
-    if (stored.policyHash !== backendDelegationPolicyHash(did, ownerDidFromAddress(address))) {
-      console.log("[webhook] delegation policy is stale — user needs to sign in again");
-      await delegationStore.remove(address);
-      delegationCache.evict(address);
-      return null;
-    }
-
-    // Activate delegation
-    try {
-      const delegation = deserializeDelegation(stored.serialized);
-      access = await activatePortableDelegation(node, delegation);
-      delegationCache.set(address, access);
-      console.log("[webhook] delegation activated from store");
-      return access;
-    } catch (err) {
-      console.error("[webhook] failed to activate delegation:", err);
-      return null;
-    }
+    return resolveDelegatedAccessFor(address, "[webhook]");
   };
 
   // 5. Set up Express
   const app = express();
+  // trust proxy "loopback" + IP-keyed limiters means behind a non-loopback reverse proxy
+  // (e.g. a CVM ingress on another host) req.ip is the proxy address and all users share
+  // one rate-limit bucket; revisit trust proxy and/or key limiters by authenticated address
+  // if the deploy topology changes.
   app.set("trust proxy", "loopback");
   app.use(
     cors({
@@ -230,33 +268,16 @@ async function main() {
     const GOOGLE_MEET_USER_ADDRESS_PATH = resolveAppPath(
       "webhooks/config/google-meet-user-address",
     );
-    const tryGetGoogleMeetAccess = async () => {
+    const readGoogleMeetUserAddress = ttlMemo(async () => {
       const addrResult = await backendKV.get(GOOGLE_MEET_USER_ADDRESS_PATH);
-      const address =
-        addrResult.ok && (addrResult as any).data?.data
-          ? String((addrResult as any).data.data)
-          : null;
+      return addrResult.ok && (addrResult as any).data?.data
+        ? String((addrResult as any).data.data)
+        : null;
+    }, 60_000);
+    const tryGetGoogleMeetAccess = async () => {
+      const address = await readGoogleMeetUserAddress();
       if (!address) return null;
-      let access = delegationCache.get(address);
-      if (access) {
-        if (await cachedDelegationIsCurrent(address, "[google-meet-webhook]")) return access;
-        access = null;
-      }
-      const stored = await delegationStore.load(address);
-      if (!stored || new Date(stored.expiresAt).getTime() <= Date.now()) return null;
-      if (stored.policyHash !== backendDelegationPolicyHash(did, ownerDidFromAddress(address))) {
-        await delegationStore.remove(address);
-        delegationCache.evict(address);
-        return null;
-      }
-      try {
-        const delegation = deserializeDelegation(stored.serialized);
-        access = await activatePortableDelegation(node, delegation);
-        delegationCache.set(address, access);
-        return access;
-      } catch {
-        return null;
-      }
+      return resolveDelegatedAccessFor(address, "[google-meet-webhook]");
     };
 
     app.use(
@@ -280,6 +301,7 @@ async function main() {
     limit: 100,
     standardHeaders: "draft-7",
     legacyHeaders: false,
+    handler: rateLimitHandler("Too many requests"),
   });
 
   const authLimiter = rateLimit({
@@ -287,7 +309,7 @@ async function main() {
     limit: 30,
     standardHeaders: "draft-7",
     legacyHeaders: false,
-    message: { error: "rate_limited", message: "Too many auth requests" },
+    handler: rateLimitHandler("Too many auth requests"),
   });
 
   const delegationLimiter = rateLimit({
@@ -295,8 +317,32 @@ async function main() {
     limit: 10,
     standardHeaders: "draft-7",
     legacyHeaders: false,
-    message: { error: "rate_limited", message: "Too many delegation requests" },
+    handler: rateLimitHandler("Too many delegation requests"),
   });
+
+  const syncJobsLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 240,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    handler: rateLimitHandler("Too many sync status requests"),
+  });
+
+  // Dedicated limiter: active-sync polling (1 req/5s = 180/15min) cannot fit the
+  // general 100/15min budget; this endpoint is auth-gated, read-mostly, and
+  // replaces three per-source polls (which also each ran the delegation middleware
+  // twice via the /api/sync mount fall-through). Mounted before the /api/sync router
+  // so the fireflies router middleware stack never runs for it.
+  app.use(
+    "/api/sync/jobs",
+    syncJobsLimiter,
+    createSyncJobsRouter({
+      authMiddleware,
+      delegationMiddleware,
+      backendKV,
+      resumeRegistry: syncJobResumers,
+    }),
+  );
 
   app.use(generalLimiter);
 
@@ -354,23 +400,7 @@ async function main() {
     createGoogleAuthRouter({
       authMiddleware,
       delegationMiddleware,
-      resolveDelegation: async (address: string) => {
-        let access = delegationCache.get(address);
-        if (access) {
-          if (await cachedDelegationIsCurrent(address, "[google-auth]")) return access;
-          access = null;
-        }
-        const stored = await delegationStore.load(address);
-        if (!stored || new Date(stored.expiresAt).getTime() <= Date.now()) return null;
-        try {
-          const delegation = deserializeDelegation(stored.serialized);
-          access = await activatePortableDelegation(node, delegation);
-          delegationCache.set(address, access);
-          return access;
-        } catch {
-          return null;
-        }
-      },
+      resolveDelegation: (address: string) => resolveDelegatedAccessFor(address, "[google-auth]"),
       backendKV,
       isWebhooksEnabled: isGoogleMeetWebhooksEnabled,
       createMeetSubscription,
@@ -421,6 +451,7 @@ async function main() {
       authMiddleware,
       delegationMiddleware,
       backendKV,
+      resumeRegistry: syncJobResumers,
     }),
   );
 
@@ -431,6 +462,7 @@ async function main() {
       authMiddleware,
       delegationMiddleware,
       backendKV,
+      resumeRegistry: syncJobResumers,
     }),
   );
 
@@ -459,6 +491,7 @@ async function main() {
       authMiddleware,
       delegationMiddleware,
       backendKV,
+      resumeRegistry: syncJobResumers,
     }),
   );
 

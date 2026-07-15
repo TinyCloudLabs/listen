@@ -95,17 +95,47 @@ function thrownSchemaErrorMessage(error: unknown): string {
 }
 
 /**
- * Track schema initialization per DelegatedAccess instance.
- * WeakMap ensures cleanup when the access object is GC'd.
+ * Track schema initialization per user space (access.spaceId) so re-activations
+ * of the same space — every 50-min cache TTL expiry, every node-401 retry, every
+ * workspace-state activation — do not re-run the 3 node round trips. Falls back to
+ * a per-instance WeakMap for access objects that lack a spaceId (e.g. test mocks).
  */
-const schemaInitialized = new WeakMap<object, boolean>();
+const SCHEMA_MARKER_MAX = 10_000;
+const schemaInitializedBySpace = new Map<string, boolean>();
+const schemaInitializedByAccess = new WeakMap<object, boolean>();
+
+function accessSpaceId(access: DelegatedAccess): string | null {
+  const spaceId = (access as { spaceId?: unknown }).spaceId;
+  return typeof spaceId === "string" && spaceId ? spaceId : null;
+}
+
+function schemaMarked(access: DelegatedAccess): boolean {
+  const spaceId = accessSpaceId(access);
+  if (spaceId) return schemaInitializedBySpace.get(spaceId) === true;
+  return schemaInitializedByAccess.has(access);
+}
+
+function markSchemaInitialized(access: DelegatedAccess): void {
+  const spaceId = accessSpaceId(access);
+  if (!spaceId) {
+    schemaInitializedByAccess.set(access, true);
+    return;
+  }
+  // Bounded LRU (delete + re-insert; evict oldest over cap). One entry per space.
+  schemaInitializedBySpace.delete(spaceId);
+  if (schemaInitializedBySpace.size >= SCHEMA_MARKER_MAX) {
+    const oldest = schemaInitializedBySpace.keys().next().value;
+    if (oldest !== undefined) schemaInitializedBySpace.delete(oldest);
+  }
+  schemaInitializedBySpace.set(spaceId, true);
+}
 
 /**
  * Ensure the conversations schema exists. Runs migrations at most once
- * per DelegatedAccess instance.
+ * per user space (or per access instance when no spaceId is present).
  */
 export async function ensureSchema(access: DelegatedAccess): Promise<void> {
-  if (schemaInitialized.has(access)) return;
+  if (schemaMarked(access)) return;
 
   const sqlDb = conversationSql(access);
   const initialMigration = {
@@ -149,5 +179,5 @@ export async function ensureSchema(access: DelegatedAccess): Promise<void> {
     throw new Error(`Failed to update conversations schema: ${msg}`);
   }
 
-  schemaInitialized.set(access, true);
+  markSchemaInitialized(access);
 }

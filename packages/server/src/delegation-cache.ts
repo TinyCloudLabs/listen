@@ -3,9 +3,16 @@ import type { DelegatedAccess } from "@tinycloud/node-sdk";
 
 // ── Types ────────────────────────────────────────────────────────────
 
+interface CacheEntryMeta {
+  expiresAt: string;
+  policyHash?: string;
+}
+
 interface CacheEntry {
   delegatedAccess: DelegatedAccess;
   cachedAt: number;
+  meta?: CacheEntryMeta;
+  lastStoreCheckAt: number;
 }
 
 // ── Delegation Cache ─────────────────────────────────────────────────
@@ -35,6 +42,18 @@ export class DelegationCache {
    * Returns null if not cached or if the entry has expired.
    */
   get(address: string): DelegatedAccess | null {
+    return this.getEntry(address)?.delegatedAccess ?? null;
+  }
+
+  /**
+   * Get a cached DelegatedAccess entry for the given address.
+   * Returns null if not cached or if the entry has expired.
+   */
+  getEntry(address: string): {
+    delegatedAccess: DelegatedAccess;
+    meta?: CacheEntryMeta;
+    lastStoreCheckAt: number;
+  } | null {
     const entry = this.cache.get(address);
 
     if (!entry) return null;
@@ -49,21 +68,42 @@ export class DelegationCache {
     this.cache.delete(address);
     this.cache.set(address, entry);
 
-    return entry.delegatedAccess;
+    return {
+      delegatedAccess: entry.delegatedAccess,
+      meta: entry.meta,
+      lastStoreCheckAt: entry.lastStoreCheckAt,
+    };
   }
 
   /**
    * Cache a DelegatedAccess for the given address.
    */
-  set(address: string, delegatedAccess: DelegatedAccess): void {
+  set(address: string, delegatedAccess: DelegatedAccess, meta?: CacheEntryMeta): void {
     if (this.cache.size >= this.maxSize) {
       const oldest = this.cache.keys().next().value;
       if (oldest) this.cache.delete(oldest);
     }
+    const now = Date.now();
     this.cache.set(address, {
       delegatedAccess,
-      cachedAt: Date.now(),
+      cachedAt: now,
+      meta,
+      lastStoreCheckAt: now,
     });
+  }
+
+  /**
+   * Record that the backing delegation store was checked for an existing entry.
+   */
+  markStoreChecked(address: string, meta?: CacheEntryMeta): void {
+    const entry = this.cache.get(address);
+
+    if (!entry) return;
+
+    entry.lastStoreCheckAt = Date.now();
+    if (meta !== undefined) {
+      entry.meta = meta;
+    }
   }
 
   /**

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApiClient } from "@listen/client";
+import { ApiRequestError } from "@listen/client";
 
 // Ambient, app-wide sync status. Sync jobs run server-side and persist in KV,
 // but their progress was previously visible only while the Connections page
-// was mounted. This indicator polls the job-current endpoints from anywhere
-// in the app: a quiet pill while a job runs, a completion notice when one
-// finishes in view.
+// was mounted. This indicator polls a single consolidated endpoint
+// (GET /api/sync/jobs) from anywhere in the app: a quiet pill while a job
+// runs, a completion notice when one finishes in view.
 
 type SyncJobStatus = "queued" | "listing" | "syncing" | "completed" | "failed" | "canceled";
 
@@ -23,17 +24,20 @@ interface SyncJobLite {
 interface SyncSourceConfig {
   key: string;
   label: string;
-  path: string;
 }
 
+// key -> label mapping only; the paths collapsed into one endpoint. Per-source
+// "only poll connected sources" gating would need a props/App.tsx change (out of
+// scope for this batch) — the single request already covers all sources cheaply.
 const SOURCES: SyncSourceConfig[] = [
-  { key: "fireflies", label: "Fireflies", path: "/api/sync/fireflies/jobs/current" },
-  { key: "granola", label: "Granola", path: "/api/sync/granola/jobs/current" },
-  { key: "google-meet", label: "Google Meet", path: "/api/sync/google-meet/jobs/current" },
+  { key: "fireflies", label: "Fireflies" },
+  { key: "granola", label: "Granola" },
+  { key: "google-meet", label: "Google Meet" },
 ];
 
-const ACTIVE_POLL_MS = 1500;
-const IDLE_POLL_MS = 12000;
+const ACTIVE_POLL_MS = 5000;
+const IDLE_POLL_MS = 60000;
+const MAX_BACKOFF_MS = 300000;
 const NOTICE_DISMISS_MS = 10000;
 
 function isActiveStatus(status: SyncJobStatus): boolean {
@@ -72,19 +76,29 @@ export function GlobalSyncIndicator({ api, onViewResults }: GlobalSyncIndicatorP
   const seenJobsRef = useRef<Map<string, SyncJobStatus>>(new Map());
   const timerRef = useRef<number | null>(null);
   const stoppedRef = useRef(false);
+  // Current error backoff delay; null when the last poll succeeded.
+  const errorDelayRef = useRef<number | null>(null);
+  // Poll-chain epoch. Bumped whenever a new chain starts (mount, visibilitychange);
+  // a poll whose fetch straddles a bump is a stale chain and must not write state
+  // or reschedule — otherwise a visibility flap during an in-flight request leaks
+  // a second, parallel poll chain.
+  const epochRef = useRef(0);
 
   const poll = useCallback(async () => {
-    const nextActive: ActiveJobView[] = [];
+    // Paused while the tab is hidden; the visibilitychange handler resumes us.
+    if (document.hidden) return;
 
-    await Promise.all(
-      SOURCES.map(async (source) => {
-        let job: SyncJobLite | null = null;
-        try {
-          job = await api.get<SyncJobLite | null>(source.path);
-        } catch {
-          return; // Backend offline or endpoint unavailable — stay quiet.
-        }
-        if (!job || typeof job.id !== "string") return;
+    const epoch = epochRef.current;
+    const nextActive: ActiveJobView[] = [];
+    let hadError = false;
+
+    try {
+      const jobs = await api.get<Record<string, SyncJobLite | null>>("/api/sync/jobs");
+      if (stoppedRef.current || epoch !== epochRef.current) return;
+
+      for (const source of SOURCES) {
+        const job = jobs?.[source.key] ?? null;
+        if (!job || typeof job.id !== "string") continue;
 
         const jobKey = `${source.key}:${job.id}`;
         const lastStatus = seenJobsRef.current.get(jobKey);
@@ -98,7 +112,7 @@ export function GlobalSyncIndicator({ api, onViewResults }: GlobalSyncIndicatorP
             current: job.current ?? 0,
             total: job.total ?? 0,
           });
-          return;
+          continue;
         }
 
         // Terminal. Notify only if we saw this job active earlier.
@@ -114,22 +128,64 @@ export function GlobalSyncIndicator({ api, onViewResults }: GlobalSyncIndicatorP
           });
         }
         seenJobsRef.current.set(jobKey, job.status);
-      }),
-    );
+      }
 
-    if (!stoppedRef.current) {
-      setActiveJobs(nextActive);
-      const delay = nextActive.length > 0 ? ACTIVE_POLL_MS : IDLE_POLL_MS;
+      errorDelayRef.current = null; // reset backoff on success
+    } catch (err) {
+      if (stoppedRef.current || epoch !== epochRef.current) return;
+      hadError = true;
+      // 429s can't surface Retry-After through ApiClient (see backend
+      // rate-limit-handler / Step 2b), so jump straight to the ceiling.
+      // TODO: honor Retry-After once ApiClient exposes response headers.
+      if (err instanceof ApiRequestError && err.status === 429) {
+        errorDelayRef.current = MAX_BACKOFF_MS;
+      } else {
+        const prev = errorDelayRef.current;
+        errorDelayRef.current = prev ? Math.min(prev * 2, MAX_BACKOFF_MS) : IDLE_POLL_MS;
+      }
+    }
+
+    if (!stoppedRef.current && !document.hidden && epoch === epochRef.current) {
+      if (!hadError) setActiveJobs(nextActive);
+      const delay = hadError
+        ? (errorDelayRef.current ?? IDLE_POLL_MS)
+        : nextActive.length > 0
+          ? ACTIVE_POLL_MS
+          : IDLE_POLL_MS;
+      // Clear before overwrite so a pending timer can never be orphaned into a
+      // parallel chain.
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
       timerRef.current = window.setTimeout(() => void poll(), delay);
     }
   }, [api]);
 
   useEffect(() => {
     stoppedRef.current = false;
-    void poll();
+
+    const clearTimer = () => {
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+
+    const onVisibility = () => {
+      // Invalidate any in-flight poll from the previous chain, then start (or
+      // pause) a single fresh chain. Resume with an immediate poll when the tab
+      // becomes visible; stay paused (no reschedule) while hidden.
+      epochRef.current += 1;
+      clearTimer();
+      if (!document.hidden) void poll();
+    };
+
+    document.addEventListener("visibilitychange", onVisibility);
+    epochRef.current += 1;
+    if (!document.hidden) void poll();
+
     return () => {
       stoppedRef.current = true;
-      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+      document.removeEventListener("visibilitychange", onVisibility);
+      clearTimer();
     };
   }, [poll]);
 

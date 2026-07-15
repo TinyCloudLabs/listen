@@ -157,6 +157,9 @@ export const DEFAULT_DELEGATION_EXPIRY_MS = 365 * 24 * 60 * 60 * 1000;
 /** DelegatedAccess cache TTL: 50 minutes (under 1-hour sub-session cap) */
 export const DELEGATION_CACHE_TTL_MS = 50 * 60 * 1000;
 
+/** Default interval between delegation store revalidations on the middleware cache-hit fast path */
+export const DELEGATION_STORE_REVALIDATE_MS = 45_000;
+
 // ── Utilities ───────────────────────────────────────────────────────
 
 /**

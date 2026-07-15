@@ -15,6 +15,7 @@ import {
   writeGoogleTokens,
   type StoredGoogleTokens,
 } from "../services/google-tokens.js";
+import type { SyncJobResumeRegistry } from "./sync-jobs.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -22,6 +23,7 @@ interface GoogleMeetSyncRoutesConfig {
   authMiddleware: RequestHandler;
   delegationMiddleware: RequestHandler;
   backendKV?: BackendKV;
+  resumeRegistry?: SyncJobResumeRegistry;
   /** Injectable for testing */
   createClient?: (
     accessToken: string,
@@ -182,6 +184,8 @@ async function readCurrentJob(backendKV: BackendKV, ownerAddress: string) {
   const jobId = current.ok && current.data?.data ? current.data.data : null;
   return jobId ? readJob(backendKV, ownerAddress, jobId) : null;
 }
+
+export { readCurrentJob as readCurrentGoogleMeetJobKV };
 
 // ── 501 guard ────────────────────────────────────────────────────────
 
@@ -483,6 +487,47 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
     }
   };
 
+  const resumeGoogleMeetJobOnPoll = async (
+    req: Request,
+    job: GoogleMeetSyncJob | null,
+  ): Promise<GoogleMeetSyncJob | null> => {
+    const ownerAddress = normalizeOwnerAddress(req);
+    if (isActiveJob(job) && !runningGoogleMeetJobs.has(ownerAddress)) {
+      const tokens = await readGoogleTokens(req.delegatedAccess!);
+      if (tokens) {
+        runGoogleMeetJob({
+          runningJobs: runningGoogleMeetJobs,
+          job,
+          access: req.delegatedAccess!,
+          client: createClientWithTokenRefresh(tokens, req.delegatedAccess!, makeClient),
+          delayMs,
+          persistJob: persistGoogleMeetJob,
+        });
+      } else {
+        const failedJob = {
+          ...job,
+          status: "failed" as const,
+          updatedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          message: "No Google tokens configured. Connect your Google account first.",
+          errors: [
+            ...job.errors,
+            "No Google tokens configured. Connect your Google account first.",
+          ],
+        };
+        await persistGoogleMeetJob(failedJob);
+        return failedJob;
+      }
+    }
+
+    return job;
+  };
+
+  if (config.resumeRegistry) {
+    config.resumeRegistry["google-meet"] = async (req, job) =>
+      resumeGoogleMeetJobOnPoll(req, job as GoogleMeetSyncJob);
+  }
+
   // All routes require auth + delegation
   router.use(authMiddleware);
   router.use(delegationMiddleware);
@@ -577,35 +622,10 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
 
     try {
       const ownerAddress = normalizeOwnerAddress(req);
-      const job = await readCurrentGoogleMeetJob(ownerAddress);
-      if (isActiveJob(job) && !runningGoogleMeetJobs.has(ownerAddress)) {
-        const tokens = await readGoogleTokens(req.delegatedAccess!);
-        if (tokens) {
-          runGoogleMeetJob({
-            runningJobs: runningGoogleMeetJobs,
-            job,
-            access: req.delegatedAccess!,
-            client: createClientWithTokenRefresh(tokens, req.delegatedAccess!, makeClient),
-            delayMs,
-            persistJob: persistGoogleMeetJob,
-          });
-        } else {
-          const failedJob = {
-            ...job,
-            status: "failed" as const,
-            updatedAt: new Date().toISOString(),
-            completedAt: new Date().toISOString(),
-            message: "No Google tokens configured. Connect your Google account first.",
-            errors: [
-              ...job.errors,
-              "No Google tokens configured. Connect your Google account first.",
-            ],
-          };
-          await persistGoogleMeetJob(failedJob);
-          res.json(failedJob);
-          return;
-        }
-      }
+      const job = await resumeGoogleMeetJobOnPoll(
+        req,
+        await readCurrentGoogleMeetJob(ownerAddress),
+      );
 
       res.json(job);
     } catch (err) {

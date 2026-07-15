@@ -23,6 +23,71 @@ describe("DelegationCache", () => {
     expect(cache.get("0xABC")).toBe(access);
   });
 
+  test("set with meta round-trips through getEntry", () => {
+    const access = makeDelegatedAccess();
+    const meta = {
+      expiresAt: "2026-01-01T00:00:00.000Z",
+      policyHash: "policy-hash",
+    };
+
+    cache.set("0xABC", access, meta);
+
+    expect(cache.getEntry("0xABC")).toEqual({
+      delegatedAccess: access,
+      meta,
+      lastStoreCheckAt: expect.any(Number),
+    });
+  });
+
+  test("set without meta returns entry with meta undefined", () => {
+    const access = makeDelegatedAccess();
+
+    cache.set("0xABC", access);
+
+    expect(cache.getEntry("0xABC")).toEqual({
+      delegatedAccess: access,
+      meta: undefined,
+      lastStoreCheckAt: expect.any(Number),
+    });
+  });
+
+  test("markStoreChecked updates lastStoreCheckAt but not cachedAt", async () => {
+    const shortCache = new DelegationCache(50);
+    const access = makeDelegatedAccess();
+    shortCache.set("0xABC", access);
+    const initialEntry = shortCache.getEntry("0xABC");
+
+    await new Promise((r) => setTimeout(r, 30));
+
+    shortCache.markStoreChecked("0xABC");
+    const checkedEntry = shortCache.getEntry("0xABC");
+
+    expect(checkedEntry?.delegatedAccess).toBe(access);
+    expect(checkedEntry?.lastStoreCheckAt).toBeGreaterThan(initialEntry?.lastStoreCheckAt ?? 0);
+
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(shortCache.getEntry("0xABC")).toBeNull();
+    expect(shortCache.get("0xABC")).toBeNull();
+  });
+
+  test("markStoreChecked with meta replaces entry meta", () => {
+    const access = makeDelegatedAccess();
+    const originalMeta = {
+      expiresAt: "2026-01-01T00:00:00.000Z",
+      policyHash: "old-policy-hash",
+    };
+    const replacementMeta = {
+      expiresAt: "2026-02-01T00:00:00.000Z",
+      policyHash: "new-policy-hash",
+    };
+
+    cache.set("0xABC", access, originalMeta);
+    cache.markStoreChecked("0xABC", replacementMeta);
+
+    expect(cache.getEntry("0xABC")?.meta).toEqual(replacementMeta);
+  });
+
   test("keys are case-sensitive (JWT sub values)", () => {
     const access = makeDelegatedAccess();
     cache.set("user-ABC", access);
@@ -118,6 +183,29 @@ describe("DelegationCache", () => {
 
     // Access 0xA to move it to end (most recently used)
     smallCache.get("0xA");
+
+    // Adding a 4th entry should evict 0xB (least recently used), not 0xA
+    const a4 = makeDelegatedAccess();
+    smallCache.set("0xD", a4);
+
+    expect(smallCache.get("0xA")).toBe(a1); // survived eviction
+    expect(smallCache.get("0xB")).toBeNull(); // evicted (LRU)
+    expect(smallCache.get("0xC")).not.toBeNull();
+    expect(smallCache.get("0xD")).toBe(a4);
+  });
+
+  test("getEntry does LRU touch", () => {
+    const smallCache = new DelegationCache(undefined, 3);
+    const a1 = makeDelegatedAccess();
+    const a2 = makeDelegatedAccess();
+    const a3 = makeDelegatedAccess();
+
+    smallCache.set("0xA", a1);
+    smallCache.set("0xB", a2);
+    smallCache.set("0xC", a3);
+
+    // Access 0xA to move it to end (most recently used)
+    smallCache.getEntry("0xA");
 
     // Adding a 4th entry should evict 0xB (least recently used), not 0xA
     const a4 = makeDelegatedAccess();

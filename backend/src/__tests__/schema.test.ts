@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, mock } from "bun:test";
 
 // ── Mock DelegatedAccess ─────────────────────────────────────────────
 
-function createMockAccess() {
+function createMockAccess(spaceId?: string) {
   const dbHandle = {
     execute: mock(async (_sql: string) => ({ ok: true })),
     query: mock(async () => ({ ok: true, data: { rows: [], columns: [] } })),
@@ -17,6 +17,7 @@ function createMockAccess() {
       db: mock((_name: string) => dbHandle),
     },
     kv: {},
+    ...(spaceId ? { spaceId } : {}),
     dbHandle,
   } as any;
 }
@@ -120,13 +121,35 @@ describe("schema", () => {
       expect(access.dbHandle.migrations.apply.mock.calls.length).toBe(firstCallCount);
     });
 
-    it("runs schema again for a different access object", async () => {
+    it("runs schema again for a different access object without a spaceId", async () => {
       await ensureSchema(access);
 
       const access2 = createMockAccess();
       await ensureSchema(access2);
 
       expect(access2.dbHandle.migrations.apply.mock.calls.length).toBeGreaterThan(0);
+    });
+
+    it("no-ops for a different access object with the same spaceId", async () => {
+      const spaceId = `space-shared-${Date.now()}`;
+      const accessA = createMockAccess(spaceId);
+      await ensureSchema(accessA);
+      expect(accessA.dbHandle.migrations.apply.mock.calls.length).toBeGreaterThan(0);
+
+      const accessB = createMockAccess(spaceId);
+      await ensureSchema(accessB);
+      // Same space already initialized on accessA — accessB must not re-run.
+      expect(accessB.dbHandle.migrations.apply.mock.calls.length).toBe(0);
+    });
+
+    it("runs schema again for a different spaceId", async () => {
+      const accessA = createMockAccess(`space-a-${Date.now()}`);
+      await ensureSchema(accessA);
+
+      const accessB = createMockAccess(`space-b-${Date.now()}`);
+      await ensureSchema(accessB);
+
+      expect(accessB.dbHandle.migrations.apply.mock.calls.length).toBeGreaterThan(0);
     });
 
     it("throws when migrations.apply returns ok: false", async () => {
