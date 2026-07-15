@@ -30,6 +30,10 @@ export function recordBackendDelegationGrant(address: string, backendDid: string
     // Storage may be unavailable or full; renewal then falls back to the
     // explicit re-grant UI.
   }
+  // A fresh grant supersedes any recent sign-out revoke: the user (or a
+  // re-sign-in) actively re-established access, so the resurrection guard
+  // below must no longer block renewal.
+  clearDelegationRevoked();
 }
 
 export function hasBackendDelegationGrantRecord(address: string, backendDid: string): boolean {
@@ -45,6 +49,57 @@ export function clearBackendDelegationGrantRecord(address: string, backendDid: s
     storage()?.removeItem(grantRecordKey(address, backendDid));
   } catch {
     // Ignore storage failures.
+  }
+}
+
+// ── Sign-out revoke tombstone (same-browser resurrection guard) ──────
+//
+// Sign-out durably revokes the backend delegation, but the unconditional
+// renewal paths below (status "expired"/"stale", or a 401 delegation_expired
+// on any in-flight gated request) would silently re-grant it in the same
+// browser. We persist a short-lived tombstone at sign-out and gate ALL
+// renewals on it, so a signed-out user's delegation stays revoked. This is a
+// same-browser guard only; other still-authenticated devices/tabs hold live
+// credentials and may legitimately re-establish the delegation (documented in
+// knowledge/operations.md). The `listen:` prefix means sign-out's local-data
+// purge would remove it, so callers set it AFTER purging.
+
+const REVOKED_AT_KEY = "listen:revoked-at";
+const REVOKED_AT_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+/** Mark that the backend delegation was just revoked at sign-out. */
+export function recordDelegationRevoked(): void {
+  try {
+    storage()?.setItem(REVOKED_AT_KEY, String(Date.now()));
+  } catch {
+    // Storage unavailable; the server-side tombstone still holds, only the
+    // same-browser resurrection guard is lost.
+  }
+}
+
+/** Clear the sign-out revoke tombstone (called when a fresh grant is recorded). */
+export function clearDelegationRevoked(): void {
+  try {
+    storage()?.removeItem(REVOKED_AT_KEY);
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+/** Whether a sign-out revoke happened within the TTL window. */
+export function wasRecentlyRevoked(): boolean {
+  try {
+    const raw = storage()?.getItem(REVOKED_AT_KEY);
+    if (!raw) return false;
+    const at = Number(raw);
+    if (!Number.isFinite(at)) return false;
+    if (Date.now() - at > REVOKED_AT_TTL_MS) {
+      storage()?.removeItem(REVOKED_AT_KEY);
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -94,6 +149,12 @@ export function createBackendDelegationRenewer(
 
   const renewOnce = (): Promise<boolean> => {
     if (disabled) return Promise.resolve(false);
+    // Same-browser sign-out revoke guard: never resurrect a just-revoked
+    // delegation, even on the unconditional expired/stale/401 paths.
+    if (wasRecentlyRevoked()) {
+      log("skip-revoked");
+      return Promise.resolve(false);
+    }
     if (!inFlight) {
       inFlight = deps
         .renew()

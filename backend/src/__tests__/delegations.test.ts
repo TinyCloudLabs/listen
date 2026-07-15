@@ -123,24 +123,43 @@ interface StoredEntry {
 
 function createMockDelegationStore() {
   const data = new Map<string, StoredEntry>();
+  const state = { failRevoke: false, revokeCalls: 0 };
+
+  const setEntry = (identifier: string, serialized: string, metadata: any) => {
+    data.set(identifier, {
+      serialized,
+      grantedAt: metadata.grantedAt ?? new Date().toISOString(),
+      expiresAt: metadata.expiresAt,
+      actions: metadata.actions,
+      path: metadata.path,
+      policyHash: metadata.policyHash,
+      resources: metadata.resources,
+    });
+  };
 
   return {
     _data: data,
+    _state: state,
     store: async (identifier: string, serialized: string, metadata: any) => {
-      data.set(identifier, {
-        serialized,
-        grantedAt: metadata.grantedAt ?? new Date().toISOString(),
-        expiresAt: metadata.expiresAt,
-        actions: metadata.actions,
-        path: metadata.path,
-        policyHash: metadata.policyHash,
-        resources: metadata.resources,
-      });
+      setEntry(identifier, serialized, metadata);
     },
     load: async (identifier: string) => {
       return data.get(identifier) ?? null;
     },
     remove: async (identifier: string) => {
+      data.delete(identifier);
+    },
+    // Mirrors the real DelegationStore.revoke: write an expired tombstone then
+    // best-effort delete. Since the mock delete succeeds, the net effect is an
+    // absent row (status "none").
+    revoke: async (identifier: string) => {
+      state.revokeCalls += 1;
+      if (state.failRevoke) throw new Error("Failed to store delegation tombstone");
+      setEntry(identifier, "", {
+        expiresAt: new Date(Date.now() - 1).toISOString(),
+        actions: [],
+        path: "",
+      });
       data.delete(identifier);
     },
     isActive: async (identifier: string) => {
@@ -720,6 +739,35 @@ describe("Delegation Routes", () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.status).toBe("none");
+    });
+
+    it("revokes durably via store.revoke (not bare remove)", async () => {
+      await fetch(`${baseUrl}/api/delegations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serialized: "to-revoke" }),
+      });
+
+      const before = store._state.revokeCalls;
+      const res = await fetch(`${baseUrl}/api/delegations`, { method: "DELETE" });
+
+      expect(res.status).toBe(200);
+      expect((await res.json()).status).toBe("none");
+      expect(store._state.revokeCalls).toBe(before + 1);
+    });
+
+    it("returns 500 revoke_failed when the tombstone write throws", async () => {
+      const originalError = console.error;
+      console.error = () => {};
+      try {
+        store._state.failRevoke = true;
+        const res = await fetch(`${baseUrl}/api/delegations`, { method: "DELETE" });
+
+        expect(res.status).toBe(500);
+        expect((await res.json()).error).toBe("revoke_failed");
+      } finally {
+        console.error = originalError;
+      }
     });
   });
 });

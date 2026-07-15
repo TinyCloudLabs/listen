@@ -54,6 +54,7 @@ import {
   createBackendDelegationRenewer,
   hasBackendDelegationGrantRecord,
   recordBackendDelegationGrant,
+  recordDelegationRevoked,
   withDelegationAutoRenewal,
   type BackendDelegationRenewer,
 } from "./lib/backendDelegationRenewal";
@@ -1017,6 +1018,10 @@ export function App() {
           await sendDelegation(BACKEND_URL, serialized, token);
         },
         onRenewed: () => {
+          // Ignore results from a renewer that has been superseded (sign-out
+          // nulls the ref): a renewal already in flight at sign-out must not
+          // erase the listen:revoked-at marker or mutate signed-out UI state.
+          if (backendRenewerRef.current !== renewer) return;
           clearBackendWorkspaceCache(addr, bDid);
           recordBackendDelegationGrant(addr, bDid);
           setHasBackendDelegation(true);
@@ -1640,12 +1645,28 @@ export function App() {
 
   const handleSignOut = useCallback(async () => {
     const token = sessionStoreRef.current.getToken();
-    if (token) revokeDelegation(BACKEND_URL, token).catch(() => {});
+    // Null the renewer BEFORE awaiting revoke so an in-flight gated request
+    // cannot silently re-grant the delegation we are revoking. Also set the
+    // revoke marker now so other same-browser tabs' renewers are blocked
+    // during the revoke window (purge clears it; it is re-set after purge).
+    backendRenewerRef.current = null;
+    recordDelegationRevoked();
+    let revokeError: string | null = null;
+    if (token) {
+      try {
+        await revokeDelegation(BACKEND_URL, token);
+      } catch {
+        revokeError =
+          "Signed out, but revoking backend access failed. It expires automatically within 7 days.";
+      }
+    }
     await tcw?.signOut?.();
     if (address) clearBackendWorkspaceCache(address, backendDid ?? undefined);
     if (address) clearPersistedSession(address);
     purgeListenLocalData();
-    backendRenewerRef.current = null;
+    // Set AFTER purge (purge clears listen: keys): a same-browser resurrection
+    // guard so an unconditional renewal cannot re-grant the revoked delegation.
+    recordDelegationRevoked();
     sessionStoreRef.current.clear();
     setAddress(null);
     setDid(null);
@@ -1659,7 +1680,7 @@ export function App() {
     setLiveWritePathPrefix(null);
     setLiveWriteHost(null);
     setLiveWriteSpaceId(null);
-    setAuthError(null);
+    setAuthError(revokeError);
     setHasKey(null);
     setHasGranolaKey(null);
     setHasSoundcoreKey(null);

@@ -4,7 +4,16 @@ import {
   delegationCoversBackendPolicy,
   runtimeManifest,
   resolveAppPath,
+  BACKEND_SECRET_GRANTS,
 } from "../manifest.js";
+
+// manifest.json declares secret actions as read/write/delete; the backend
+// requests them as get/put/del. This map bridges the two vocabularies.
+const MANIFEST_TO_GRANT_ACTION: Record<string, string> = {
+  read: "get",
+  write: "put",
+  delete: "del",
+};
 
 describe("manifest", () => {
   test("serves the v1 user-permission manifest without backend-only sections", () => {
@@ -108,5 +117,42 @@ describe("manifest", () => {
     const granted = backendDelegationResolvedPermissions("did:key:backend", ownerDid);
 
     expect(delegationCoversBackendPolicy(granted, "did:key:backend", ownerDid)).toBe(true);
+  });
+
+  test("declares the default knowledge root", () => {
+    expect((runtimeManifest() as { knowledge?: unknown }).knowledge).toBe(true);
+  });
+
+  test("BACKEND_SECRET_GRANTS matches manifest.json secrets", () => {
+    const secrets = runtimeManifest().secrets as Record<
+      string,
+      string[] | { scope?: string; actions: string[] }
+    >;
+
+    const sortedManifestActions = (name: string): string[] => {
+      const entry = secrets[name];
+      const actions = Array.isArray(entry) ? entry : entry.actions;
+      return actions.map((action) => MANIFEST_TO_GRANT_ACTION[action] ?? action).sort();
+    };
+
+    // Every grant maps exactly onto a manifest secret.
+    for (const grant of BACKEND_SECRET_GRANTS) {
+      const manifestEntry = secrets[grant.name];
+      expect(manifestEntry, `manifest.secrets is missing ${grant.name}`).toBeDefined();
+
+      expect(sortedManifestActions(grant.name)).toEqual([...grant.actions].sort());
+
+      // Scope must match in both directions: a scoped grant requires the
+      // manifest object form with the same scope, and an object-form manifest
+      // scope requires the grant to carry it (a dropped grant scope is drift).
+      const grantScope: string | undefined = "scope" in grant ? grant.scope : undefined;
+      const manifestScope = Array.isArray(manifestEntry) ? undefined : manifestEntry.scope;
+      expect(grantScope).toBe(manifestScope);
+    }
+
+    // Every manifest secret is requested by exactly one grant (no drift either way).
+    const grantNames = BACKEND_SECRET_GRANTS.map((grant) => grant.name);
+    expect(new Set(grantNames).size).toBe(grantNames.length);
+    expect(grantNames.sort()).toEqual(Object.keys(secrets).sort());
   });
 });

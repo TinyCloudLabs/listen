@@ -204,6 +204,60 @@ describe("DelegationStore", () => {
     });
   });
 
+  describe("revoke", () => {
+    test("writes an expired tombstone then attempts delete", async () => {
+      await store.revoke("0xABC");
+
+      expect(mockNode.kv.put).toHaveBeenCalledTimes(1);
+      const [putKey, putValue] = mockNode.kv.put.mock.calls[0];
+      expect(putKey).toBe("delegations/0xABC");
+      const payload = typeof putValue === "string" ? JSON.parse(putValue) : putValue;
+      expect(payload.serialized).toBe("");
+      expect(payload.actions).toEqual([]);
+      expect(new Date(payload.expiresAt).getTime()).toBeLessThanOrEqual(Date.now());
+
+      expect(mockNode.kv.delete).toHaveBeenCalledTimes(1);
+      const [delKey] = mockNode.kv.delete.mock.calls[0];
+      expect(delKey).toBe("delegations/0xABC");
+    });
+
+    test("still resolves when kv.delete reports ok:false", async () => {
+      mockNode.kv.delete = mock(() =>
+        Promise.resolve({ ok: false, error: { code: "kv_delete_failed", message: "boom" } }),
+      );
+
+      const originalError = console.error;
+      console.error = () => {};
+      try {
+        await expect(store.revoke("0xABC")).resolves.toBeUndefined();
+      } finally {
+        console.error = originalError;
+      }
+    });
+
+    test("throws when the tombstone put fails", async () => {
+      mockNode.kv.put = mock(() =>
+        Promise.resolve({ ok: false, error: { message: "Space not found" } }),
+      );
+
+      await expect(store.revoke("0xABC")).rejects.toThrow("Failed to store delegation for 0xABC");
+    });
+
+    test("tombstone round-trips through load() as an expired record", async () => {
+      await store.revoke("0xABC");
+      const [, putValue] = mockNode.kv.put.mock.calls[0];
+      const payload = typeof putValue === "string" ? JSON.parse(putValue) : putValue;
+
+      // Feed the exact tombstone payload back through kv.get.
+      mockNode.kv.get = mock(() => Promise.resolve({ data: payload }));
+
+      const loaded = await store.load("0xABC");
+      expect(loaded).not.toBeNull();
+      expect(new Date(loaded!.expiresAt).getTime()).toBeLessThanOrEqual(Date.now());
+      expect(await store.isActive("0xABC")).toBe(false);
+    });
+  });
+
   describe("isActive", () => {
     test("returns true for non-expired delegation", async () => {
       const futureDate = new Date(Date.now() + 3600_000).toISOString();

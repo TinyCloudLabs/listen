@@ -1,4 +1,4 @@
-import { randomBytes } from "crypto";
+import { randomBytes, hkdfSync } from "crypto";
 import { SignJWT, jwtVerify } from "jose";
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -30,6 +30,12 @@ const NONCE_TTL_MS = 5 * 60 * 1000; // 5 minutes
  * - Bound to a specific address
  * - Single-use (deleted after validation)
  * - Short-lived (5 minute TTL)
+ *
+ * Single-instance assumption: nonces live in this process's memory, so
+ * single-use enforcement holds only for a single backend instance (or sticky
+ * routing to one instance). Listen's Phala deployment is single-instance
+ * today; horizontal scaling would require moving this to a shared store
+ * (Redis/KV) with an atomic delete-on-validate.
  */
 export function createNonceStore(): NonceStore {
   const store = new Map<string, NonceEntry>();
@@ -89,12 +95,21 @@ export function createNonceStore(): NonceStore {
 export async function verifySIWE(
   message: string,
   signature: string,
+  allowedDomains: ReadonlySet<string>,
 ): Promise<{ address: string; nonce: string }> {
   // Dynamic import to avoid requiring siwe at module load time
   const { SiweMessage } = await import("siwe");
 
   const siweMessage = new SiweMessage(message);
-  const result = await siweMessage.verify({ signature });
+  if (!allowedDomains.has(siweMessage.domain)) {
+    throw new Error(`SIWE domain not allowed: ${siweMessage.domain}`);
+  }
+
+  const result = await siweMessage.verify({
+    signature,
+    domain: siweMessage.domain,
+    time: new Date().toISOString(),
+  });
 
   if (!result.success) {
     throw new Error("SIWE signature verification failed");
@@ -108,6 +123,25 @@ export async function verifySIWE(
 
 // ── Session Token ───────────────────────────────────────────────────
 
+const SESSION_JWT_HKDF_INFO = "listen:session-jwt:v1";
+export const SESSION_JWT_ISSUER = "listen-backend";
+export const SESSION_JWT_AUDIENCE = "xyz.tinycloud.listen";
+const derivedSecretCache = new Map<string, Uint8Array>();
+
+/** Derive the HS256 session-JWT secret from the backend private key.
+ *  Rotating BACKEND_PRIVATE_KEY therefore rotates all session JWTs.
+ *  Exported for tests that need to mint tokens with the real secret. */
+export function deriveSessionJwtSecret(privateKey: string): Uint8Array {
+  let secret = derivedSecretCache.get(privateKey);
+  if (!secret) {
+    secret = new Uint8Array(
+      hkdfSync("sha256", privateKey, new Uint8Array(0), SESSION_JWT_HKDF_INFO, 32),
+    );
+    derivedSecretCache.set(privateKey, secret);
+  }
+  return secret;
+}
+
 /**
  * Issue a session JWT signed with HS256.
  * Subject is the wallet address.
@@ -116,12 +150,14 @@ export async function issueSessionToken(
   address: string,
   privateKey: string,
 ): Promise<{ token: string; expiresIn: number }> {
-  const secret = new TextEncoder().encode(privateKey);
+  const secret = deriveSessionJwtSecret(privateKey);
   const expiresIn = 24 * 60 * 60; // 24 hours in seconds
 
   const token = await new SignJWT({ address })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(address)
+    .setIssuer(SESSION_JWT_ISSUER)
+    .setAudience(SESSION_JWT_AUDIENCE)
     .setIssuedAt()
     .setExpirationTime("24h")
     .sign(secret);
@@ -137,10 +173,12 @@ export async function verifySessionToken(
   token: string,
   privateKey: string,
 ): Promise<{ address: string }> {
-  const secret = new TextEncoder().encode(privateKey);
+  const secret = deriveSessionJwtSecret(privateKey);
 
   const { payload } = await jwtVerify(token, secret, {
     algorithms: ["HS256"],
+    issuer: SESSION_JWT_ISSUER,
+    audience: SESSION_JWT_AUDIENCE,
   });
 
   if (!payload.sub) {

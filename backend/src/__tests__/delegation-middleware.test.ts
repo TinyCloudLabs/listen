@@ -203,6 +203,37 @@ describe("Delegation Middleware", () => {
     expect(mockUseDelegation).not.toHaveBeenCalled();
   });
 
+  it("treats an expired tombstone as terminal even when the delete no-ops", async () => {
+    // Simulate TC-140: kv.delete silently no-ops, so remove() leaves the row.
+    // A revoke tombstone (serialized "", actions [], past expiresAt) plus a
+    // stale policyHash must still 401 delegation_expired — proving expiry is
+    // checked before policyHash and the undeletable row stays terminal.
+    if (server) await closeServer(server);
+
+    const nonDeletingStore = createMockDelegationStore();
+    nonDeletingStore.remove = async () => {}; // delete no-op
+
+    const setup = createApp(nonDeletingStore, cache);
+    const started = await startServer(setup.app);
+    server = started.server;
+    baseUrl = `http://localhost:${started.port}`;
+
+    await nonDeletingStore.store(TEST_ADDRESS, "", {
+      expiresAt: new Date(Date.now() - 1).toISOString(),
+      actions: [],
+      path: "",
+      policyHash: "stale-policy",
+    });
+
+    const res = await fetch(`${baseUrl}/protected`);
+    const body = await res.json();
+
+    expect(res.status).toBe(401);
+    expect(body.error).toBe("delegation_expired");
+    // Row survives the failed delete but is still read back as expired.
+    expect(await nonDeletingStore.load(TEST_ADDRESS)).not.toBeNull();
+  });
+
   it("evicts a cached delegation when the stored delegation is missing", async () => {
     cache.set(TEST_ADDRESS, { kv: {}, sql: {} });
 
