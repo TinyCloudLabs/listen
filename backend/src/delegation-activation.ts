@@ -17,7 +17,7 @@ interface DelegationBundle {
   delegations: string[];
 }
 
-interface PortableResource {
+export interface PortableResource {
   service: string;
   space?: string;
   path: string;
@@ -211,7 +211,7 @@ function isDelegationBundle(value: unknown): value is DelegationBundle {
   );
 }
 
-function activateResource(
+export function activateResource(
   node: TinyCloudNode,
   delegation: PortableDelegation,
   resource: PortableResource,
@@ -226,7 +226,7 @@ function activateResource(
   });
 }
 
-async function activateResourceWithContext(
+export async function activateResourceWithContext(
   node: TinyCloudNode,
   delegation: PortableDelegation,
   resource: PortableResource,
@@ -238,7 +238,7 @@ async function activateResourceWithContext(
   }
 }
 
-function extractPortableResources(delegation: PortableDelegation): PortableResource[] {
+export function extractPortableResources(delegation: PortableDelegation): PortableResource[] {
   const resources = (delegation as { resources?: unknown }).resources;
   if (!Array.isArray(resources)) return [];
 

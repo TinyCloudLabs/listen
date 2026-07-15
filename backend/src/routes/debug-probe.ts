@@ -4,7 +4,9 @@ import type { TinyCloudNode } from "@tinycloud/node-sdk";
 import type { DelegationStore } from "@listen/server";
 import {
   activatePortableDelegation,
+  activateResource,
   deserializePortableDelegationSet,
+  extractPortableResources,
 } from "../delegation-activation.js";
 
 interface DebugProbeConfig {
@@ -115,14 +117,40 @@ export function createDebugProbeRouter(config: DebugProbeConfig) {
       });
       if (deserialized) {
         const bundle = deserialized;
-        await run("activatePortableDelegation", async () => {
-          const access = await activatePortableDelegation(node, bundle);
-          return {
+        const skip = Number.parseInt(String(req.query.skip ?? "0"), 10) || 0;
+        const perResource = req.query.each !== undefined;
+        if (perResource) {
+          const entries = (Array.isArray(bundle) ? bundle : [bundle]).flatMap((entry) =>
+            extractPortableResources(entry).map((resource) => ({ delegation: entry, resource })),
+          );
+          steps.push({
+            step: `bundle has ${entries.length} resources; probing from ${skip}`,
+            ms: 0,
             ok: true,
-            code: `spaceId=${access.spaceId}`,
-            message: `path=${JSON.stringify(access.path)}`,
-          };
-        });
+          });
+          for (const { delegation: entry, resource } of entries.slice(skip)) {
+            const label = `${resource.service}:${resource.space ?? ""}:${resource.path}`;
+            const cont = await run(`activate ${label}`, async () => {
+              const stripped = { ...(entry as Record<string, unknown>), host: undefined };
+              const access = await activateResource(
+                node,
+                stripped as unknown as Parameters<typeof activateResource>[1],
+                resource,
+              );
+              return { ok: true, code: `spaceId=${access.spaceId}` };
+            });
+            if (!cont && Date.now() - routeStart > ROUTE_BUDGET_MS) break;
+          }
+        } else {
+          await run("activatePortableDelegation", async () => {
+            const access = await activatePortableDelegation(node, bundle);
+            return {
+              ok: true,
+              code: `spaceId=${access.spaceId}`,
+              message: `path=${JSON.stringify(access.path)}`,
+            };
+          });
+        }
       }
     }
 
