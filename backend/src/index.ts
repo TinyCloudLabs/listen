@@ -8,7 +8,6 @@ import cors from "cors";
 import rateLimit from "express-rate-limit";
 import { apiReference } from "@scalar/express-api-reference";
 import { load as loadYaml } from "js-yaml";
-import { deserializeDelegation } from "@tinycloud/node-sdk";
 import {
   createBackendIdentity,
   DelegationStore,
@@ -20,7 +19,7 @@ import {
 
 import { createAuthMiddleware } from "./middleware/auth.js";
 import { createDelegationMiddleware } from "./middleware/delegation.js";
-import { activatePortableDelegation } from "./delegation-activation.js";
+import { createDelegationActivator } from "./delegation-activation.js";
 import { backendDelegationPolicyHash, ownerDidFromAddress, resolveAppPath } from "./manifest.js";
 import { createAuthRouter } from "./routes/auth.js";
 import { createHealthRouter } from "./routes/health.js";
@@ -95,15 +94,16 @@ async function main() {
   // 2. Create delegation infrastructure
   const delegationStore = new DelegationStore(node);
   const delegationCache = new DelegationCache();
+  const delegationActivator = createDelegationActivator(node, delegationCache);
 
   // 3. Create auth infrastructure
   const nonceStore = createNonceStore();
   const authMiddleware = createAuthMiddleware(BACKEND_PRIVATE_KEY);
 
   const delegationMiddleware = createDelegationMiddleware({
-    node,
     store: delegationStore,
     cache: delegationCache,
+    activator: delegationActivator,
     backendDid: did,
   });
 
@@ -118,18 +118,23 @@ async function main() {
     const stored = await delegationStore.load(address);
     if (!stored) {
       console.log(`${label} cached delegation has no stored record`);
+      delegationActivator.invalidate(address);
       delegationCache.evict(address);
       return false;
     }
     if (new Date(stored.expiresAt).getTime() <= Date.now()) {
       console.log(`${label} cached delegation expired at ${stored.expiresAt}`);
+      delegationActivator.invalidate(address);
       await delegationStore.remove(address);
+      delegationActivator.invalidate(address);
       delegationCache.evict(address);
       return false;
     }
     if (stored.policyHash !== backendDelegationPolicyHash(did, ownerDid)) {
       console.log(`${label} cached delegation policy is stale`);
+      delegationActivator.invalidate(address);
       await delegationStore.remove(address);
+      delegationActivator.invalidate(address);
       delegationCache.evict(address);
       return false;
     }
@@ -165,6 +170,8 @@ async function main() {
     // Load from persistent store
     const stored = await delegationStore.load(address);
     if (!stored) {
+      delegationActivator.invalidate(address);
+      delegationCache.evict(address);
       console.log(
         "[webhook] no delegation in store for this address — user needs to sign in and delegate",
       );
@@ -172,20 +179,22 @@ async function main() {
     }
     if (new Date(stored.expiresAt).getTime() <= Date.now()) {
       console.log(`[webhook] delegation expired at ${stored.expiresAt}`);
+      delegationActivator.invalidate(address);
+      delegationCache.evict(address);
       return null;
     }
     if (stored.policyHash !== backendDelegationPolicyHash(did, ownerDidFromAddress(address))) {
       console.log("[webhook] delegation policy is stale — user needs to sign in again");
+      delegationActivator.invalidate(address);
       await delegationStore.remove(address);
+      delegationActivator.invalidate(address);
       delegationCache.evict(address);
       return null;
     }
 
     // Activate delegation
     try {
-      const delegation = deserializeDelegation(stored.serialized);
-      access = await activatePortableDelegation(node, delegation);
-      delegationCache.set(address, access);
+      access = await delegationActivator.activate(address, stored.serialized);
       console.log("[webhook] delegation activated from store");
       return access;
     } catch (err) {
@@ -243,16 +252,25 @@ async function main() {
         access = null;
       }
       const stored = await delegationStore.load(address);
-      if (!stored || new Date(stored.expiresAt).getTime() <= Date.now()) return null;
+      if (!stored) {
+        delegationActivator.invalidate(address);
+        delegationCache.evict(address);
+        return null;
+      }
+      if (new Date(stored.expiresAt).getTime() <= Date.now()) {
+        delegationActivator.invalidate(address);
+        delegationCache.evict(address);
+        return null;
+      }
       if (stored.policyHash !== backendDelegationPolicyHash(did, ownerDidFromAddress(address))) {
+        delegationActivator.invalidate(address);
         await delegationStore.remove(address);
+        delegationActivator.invalidate(address);
         delegationCache.evict(address);
         return null;
       }
       try {
-        const delegation = deserializeDelegation(stored.serialized);
-        access = await activatePortableDelegation(node, delegation);
-        delegationCache.set(address, access);
+        access = await delegationActivator.activate(address, stored.serialized);
         return access;
       } catch {
         return null;
@@ -316,10 +334,10 @@ async function main() {
   app.use(
     "/api/delegations",
     createDelegationRouter({
-      node,
       did,
       store: delegationStore,
       cache: delegationCache,
+      activator: delegationActivator,
       authMiddleware,
       writeLimiter: delegationLimiter,
     }),
@@ -328,10 +346,10 @@ async function main() {
   app.use(
     "/api/workspace-state",
     createWorkspaceStateRouter({
-      node,
       did,
       store: delegationStore,
       cache: delegationCache,
+      activator: delegationActivator,
       authMiddleware,
     }),
   );
@@ -361,11 +379,25 @@ async function main() {
           access = null;
         }
         const stored = await delegationStore.load(address);
-        if (!stored || new Date(stored.expiresAt).getTime() <= Date.now()) return null;
+        if (!stored) {
+          delegationActivator.invalidate(address);
+          delegationCache.evict(address);
+          return null;
+        }
+        if (new Date(stored.expiresAt).getTime() <= Date.now()) {
+          delegationActivator.invalidate(address);
+          delegationCache.evict(address);
+          return null;
+        }
+        if (stored.policyHash !== backendDelegationPolicyHash(did, ownerDidFromAddress(address))) {
+          delegationActivator.invalidate(address);
+          await delegationStore.remove(address);
+          delegationActivator.invalidate(address);
+          delegationCache.evict(address);
+          return null;
+        }
         try {
-          const delegation = deserializeDelegation(stored.serialized);
-          access = await activatePortableDelegation(node, delegation);
-          delegationCache.set(address, access);
+          access = await delegationActivator.activate(address, stored.serialized);
           return access;
         } catch {
           return null;

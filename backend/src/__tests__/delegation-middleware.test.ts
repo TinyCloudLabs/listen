@@ -16,6 +16,7 @@ import express from "express";
 import type { Server } from "http";
 import type { Request, Response, NextFunction } from "express";
 import { createDelegationMiddleware } from "../middleware/delegation.js";
+import { createDelegationActivator } from "../delegation-activation.js";
 import { backendDelegationPolicyHash } from "../manifest.js";
 
 interface StoredEntry {
@@ -94,10 +95,14 @@ function createApp(
     sql: {},
   }));
   const app = express();
+  const activator = createDelegationActivator(
+    { useDelegation: mockUseDelegation } as any,
+    cache as any,
+  );
   const delegationMiddleware = createDelegationMiddleware({
-    node: { useDelegation: mockUseDelegation } as any,
     store: store as any,
     cache: cache as any,
+    activator,
     backendDid: TEST_DID,
   });
 

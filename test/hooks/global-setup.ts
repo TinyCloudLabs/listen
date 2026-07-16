@@ -54,6 +54,7 @@ const DEFAULT_OWNER_PRIVATE_KEY =
 const DEFAULT_BACKEND_PRIVATE_KEY =
   "0x8b3a350cf5c34c9194ca3a545d9f2bc5b642b3ee6cca3a637f1d2d1765f37c13";
 const DEFAULT_TINYCLOUD_NODE_SECRET = "dGlueWNsb3VkLWxpc3Rlbi1ob29rcy1lMmUtc3RhdGljLXNlY3JldC0zMg";
+const DEFAULT_TINYCLOUD_STARTUP_TIMEOUT_MS = 600_000;
 
 const pids: StartedProcess[] = [];
 
@@ -94,11 +95,10 @@ function startProcess(
     stdio: ["ignore", "pipe", "pipe"],
   });
 
-  child.stdout?.pipe(out);
-  child.stderr?.pipe(out);
-  child.once("exit", (code, signal) => {
-    out.write(`\n[${name}] exited code=${code ?? "null"} signal=${signal ?? "null"}\n`);
-    out.end();
+  child.stdout?.pipe(out, { end: false });
+  child.stderr?.pipe(out, { end: false });
+  child.once("close", (code, signal) => {
+    out.end(`\n[${name}] exited code=${code ?? "null"} signal=${signal ?? "null"}\n`);
   });
 
   if (!child.pid) {
@@ -195,7 +195,10 @@ async function startTinyCloudNode(port: number): Promise<string> {
     },
   });
 
-  await waitForHttp(`${host}/version`, "TinyCloud node", 180_000);
+  const startupTimeoutMs =
+    Number(process.env.LISTEN_E2E_TINYCLOUD_STARTUP_TIMEOUT_MS) ||
+    DEFAULT_TINYCLOUD_STARTUP_TIMEOUT_MS;
+  await waitForHttp(`${host}/version`, "TinyCloud node", startupTimeoutMs);
   return host;
 }
 
@@ -288,6 +291,25 @@ async function createOwnerSession(input: {
   };
 }
 
+async function bootstrapOwnerAccount(input: {
+  tinycloudHost: string;
+  ownerPrivateKey: string;
+}): Promise<void> {
+  const owner = new TinyCloudNode({
+    privateKey: input.ownerPrivateKey,
+    host: input.tinycloudHost,
+    autoCreateSpace: true,
+    sessionStorage: new MemorySessionStorage(),
+  });
+
+  await owner.signIn();
+  if (owner.bootstrapSkipped) {
+    throw new Error(
+      `TinyCloud owner bootstrap did not complete: ${owner.bootstrapStatus.reason ?? "unknown reason"}`,
+    );
+  }
+}
+
 async function materializeBackendDelegation(
   owner: TinyCloudNode,
   target: {
@@ -357,7 +379,14 @@ export default async function globalSetup(): Promise<void> {
     process.env.LISTEN_E2E_BACKEND_URL ?? `http://127.0.0.1:${backendPort}`,
   );
   const tinycloudHost = await startTinyCloudNode(tinycloudPort);
+  const ownerPrivateKey = process.env.LISTEN_E2E_OWNER_PRIVATE_KEY ?? DEFAULT_OWNER_PRIVATE_KEY;
   const backendPrivateKey = process.env.BACKEND_PRIVATE_KEY ?? DEFAULT_BACKEND_PRIVATE_KEY;
+
+  // The browser-style signer path intentionally skips canonical client
+  // bootstrap because interactive wallets would otherwise require many
+  // signatures. Provision the deterministic Ethereum test owner first, then
+  // exercise Listen's normal signer/delegation path against that account.
+  await bootstrapOwnerAccount({ tinycloudHost, ownerPrivateKey });
 
   startProcess("listen-backend", "bun src/index.ts", {
     cwd: resolve(LISTEN_ROOT, "backend"),
@@ -373,7 +402,7 @@ export default async function globalSetup(): Promise<void> {
   const owner = await createOwnerSession({
     backendURL,
     tinycloudHost,
-    ownerPrivateKey: process.env.LISTEN_E2E_OWNER_PRIVATE_KEY ?? DEFAULT_OWNER_PRIVATE_KEY,
+    ownerPrivateKey,
   });
 
   const initialConversationTitle = `Hooks E2E initial ${Date.now()}`;
