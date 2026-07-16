@@ -1,9 +1,10 @@
 # App Automated Testing
 
-Listen has two browser automation paths:
+Listen has three browser automation paths:
 
 1. A CI-safe app smoke test that restores a local session and mocks backend HTTP.
 2. An opt-in OpenKey passkey harness for real local or production sign-in.
+3. A local full-stack hooks test using a deterministic Ethereum owner key.
 
 ## CI-safe smoke test
 
@@ -36,6 +37,29 @@ APP_URL=http://127.0.0.1:5173 bun run test:app
 ```
 
 When `APP_URL` is set, the Playwright config does not start Vite.
+
+## Local TinyCloud hooks E2E
+
+Run the full local stack from the repository root:
+
+```bash
+bun install
+bun run test:app:install
+bun run test:hooks:e2e
+```
+
+The hooks harness starts a fresh TinyCloud node, the Listen backend, and the
+frontend. Before exercising the browser-style signer and backend delegation,
+it explicitly bootstraps the deterministic Ethereum owner account with the
+non-interactive private-key client. This provisions the canonical account
+spaces and schemas once, matching the server-provisioned account expected by
+interactive OpenKey signers without requiring repeated wallet prompts in the
+test.
+
+The test then verifies SIWE authentication, backend delegation activation,
+conversation import, hook ticket and event-stream setup, and a live inbox
+update without reloading the page. Override `LISTEN_E2E_OWNER_PRIVATE_KEY` only
+with a disposable local test key; never use a production owner key.
 
 ## Real OpenKey passkey harness
 
