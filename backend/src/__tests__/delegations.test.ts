@@ -299,9 +299,10 @@ describe("Delegation Routes", () => {
       expect(body.expiresAt).toBeDefined();
     });
 
-    it("returns 'none' and removes stale delegations without the current policy hash", async () => {
+    it("returns 'stale' and removes stale delegations without the current policy hash", async () => {
+      const expiresAt = new Date(Date.now() + 1000).toISOString();
       await store.store(TEST_ADDRESS, "old-delegation", {
-        expiresAt: new Date(Date.now() + 1000).toISOString(),
+        expiresAt,
         actions: [],
         path: "items/",
       });
@@ -310,7 +311,8 @@ describe("Delegation Routes", () => {
       const res = await fetch(`${baseUrl}/api/delegations/status`);
       expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body.status).toBe("none");
+      expect(body.status).toBe("stale");
+      expect(body.expiresAt).toBe(expiresAt);
 
       expect(await store.load(TEST_ADDRESS)).toBeNull();
       expect(cache.has(TEST_ADDRESS)).toBe(false);

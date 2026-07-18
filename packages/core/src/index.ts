@@ -20,7 +20,7 @@ export interface UpdateItemInput {
 
 // ── Delegation ───────────────────────────────────────────────────────
 
-export type DelegationStatus = "active" | "expired" | "none";
+export type DelegationStatus = "active" | "expired" | "stale" | "none";
 
 export interface StoredDelegation {
   serialized: string;

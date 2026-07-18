@@ -57,6 +57,18 @@ describe("createBackendDelegationRenewer — ensureFreshDelegation", () => {
     expect(deps.onRenewed).toHaveBeenCalledTimes(1);
   });
 
+  it("renews silently when the stored delegation is stale, without a grant record", async () => {
+    const deps = createDeps({
+      checkStatus: vi.fn().mockResolvedValue({ status: "stale" }),
+      hasPriorGrant: vi.fn().mockReturnValue(false),
+    });
+    const renewer = createBackendDelegationRenewer(deps);
+
+    expect(await renewer.ensureFreshDelegation()).toBe(true);
+    expect(deps.renew).toHaveBeenCalledTimes(1);
+    expect(deps.onRenewed).toHaveBeenCalledTimes(1);
+  });
+
   it("renews when status is none but a prior grant is known", async () => {
     const deps = createDeps({
       checkStatus: vi.fn().mockResolvedValue({ status: "none" }),
@@ -123,6 +135,14 @@ describe("createBackendDelegationRenewer — renewForApiError", () => {
     expect(deps.renew).toHaveBeenCalledTimes(1);
   });
 
+  it("renews on 403 delegation_stale regardless of grant record", async () => {
+    const deps = createDeps({ hasPriorGrant: vi.fn().mockReturnValue(false) });
+    const renewer = createBackendDelegationRenewer(deps);
+
+    expect(await renewer.renewForApiError("delegation_stale")).toBe(true);
+    expect(deps.renew).toHaveBeenCalledTimes(1);
+  });
+
   it("renews on 403 no_delegation only when a prior grant is known", async () => {
     const withGrant = createDeps({ hasPriorGrant: vi.fn().mockReturnValue(true) });
     const withGrantRenewer = createBackendDelegationRenewer(withGrant);
@@ -164,17 +184,20 @@ describe("createBackendDelegationRenewer — renewForApiError", () => {
 // ── Error-code detection ─────────────────────────────────────────────
 
 describe("delegationRenewalErrorCode", () => {
-  it("detects delegation_expired and no_delegation error codes", () => {
+  it("detects delegation_expired, no_delegation, and delegation_stale error codes", () => {
     expect(delegationRenewalErrorCode(new FakeApiError(401, "delegation_expired", "expired"))).toBe(
       "delegation_expired",
     );
     expect(delegationRenewalErrorCode(new FakeApiError(403, "no_delegation", "none"))).toBe(
       "no_delegation",
     );
+    expect(delegationRenewalErrorCode(new FakeApiError(403, "delegation_stale", "stale"))).toBe(
+      "delegation_stale",
+    );
   });
 
   it("ignores other errors", () => {
-    expect(delegationRenewalErrorCode(new FakeApiError(403, "delegation_stale", "stale"))).toBe(
+    expect(delegationRenewalErrorCode(new FakeApiError(403, "insufficient_scope", "nope"))).toBe(
       null,
     );
     expect(delegationRenewalErrorCode(new Error("Session expired. Please sign in again."))).toBe(
@@ -205,6 +228,17 @@ describe("withDelegationAutoRenewal", () => {
   it("renews and retries the original request once on delegation errors", async () => {
     const { client, get } = apiThatFailsOnce("no_delegation", 403);
     const deps = createDeps({ hasPriorGrant: vi.fn().mockReturnValue(true) });
+    const renewer = createBackendDelegationRenewer(deps);
+    const wrapped = withDelegationAutoRenewal(client, () => renewer);
+
+    expect(await wrapped.get("/api/workspace-state")).toEqual({ ok: true });
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(deps.renew).toHaveBeenCalledTimes(1);
+  });
+
+  it("renews and retries on 403 delegation_stale without a grant record", async () => {
+    const { client, get } = apiThatFailsOnce("delegation_stale", 403);
+    const deps = createDeps({ hasPriorGrant: vi.fn().mockReturnValue(false) });
     const renewer = createBackendDelegationRenewer(deps);
     const wrapped = withDelegationAutoRenewal(client, () => renewer);
 
