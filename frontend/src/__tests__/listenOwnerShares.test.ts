@@ -1,9 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { Wallet } from "ethers";
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
-import { POLICY_STATUS_SCHEMA as ROOT_POLICY_STATUS_SCHEMA } from "@tinycloud/sdk-core";
-import { TranscriptRequester, createTranscriptRequester } from "@tinycloud/sdk-core-m1";
-import { POLICY_STATUS_SCHEMA as POLICY_POLICY_STATUS_SCHEMA } from "@tinycloud/sdk-core/policy";
+import {
+  POLICY_STATUS_SCHEMA as ROOT_POLICY_STATUS_SCHEMA,
+  TranscriptRequester,
+  createTranscriptRequester,
+} from "@tinycloud/sdk-core-m1";
+import { POLICY_STATUS_SCHEMA } from "@tinycloud/sdk-core-m1/policy";
 
 import {
   assertConcreteRawPath,
@@ -133,8 +136,8 @@ describe("listen owner share validation", () => {
 });
 
 describe("listen owner share draft composition", () => {
-  it("uses the vendored M1 SDK root export for policy identity", () => {
-    expect(ROOT_POLICY_STATUS_SCHEMA).toBe(POLICY_POLICY_STATUS_SCHEMA);
+  it("uses the browser-compatible M1 policy schema", () => {
+    expect(ROOT_POLICY_STATUS_SCHEMA).toBe(POLICY_STATUS_SCHEMA);
   });
 
   it("composes capabilities for exactly the selected conversation IDs", () => {

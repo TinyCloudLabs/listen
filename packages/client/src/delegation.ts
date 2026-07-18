@@ -7,7 +7,8 @@ import {
 } from "@tinycloud/web-sdk";
 import { type DelegationResponse, type ServerInfoPermission } from "@listen/core";
 import { ApiRequestError } from "./api.js";
-import { listenDebugFetch } from "./debug.js";
+import { listenDebugFetch, listenDebugLog } from "./debug.js";
+import { normalizeMissingParentDelegationError } from "./missing-parent.js";
 
 // ── Create Delegation ────────────────────────────────────────────────
 
@@ -45,27 +46,26 @@ export async function createManifestDelegation(
     throw new Error(`No manifest delegation target found for DID ${backendDID}`);
   }
 
-  const permissionsBySpace = groupPermissionsBySpace(target.permissions);
-  if (permissionsBySpace.size > 1) {
-    const delegations: PortableDelegation[] = [];
-    let prompted = false;
+  // ReCap parsing represents one resource/action pair per entry, while
+  // composed manifests may keep several actions on one resource. Split the
+  // requested actions so the SDK's subset check compares equivalent shapes.
+  const permissionsBySpace = groupPermissionsBySpace(
+    normalizeDelegationPermissions(target.permissions),
+  );
+  const delegations: PortableDelegation[] = [];
+  let prompted = false;
 
-    for (const permissions of permissionsBySpace.values()) {
-      const result = await tcw.delegateTo(target.did, permissions, { expiry: target.expiryMs });
-      delegations.push(result.delegation);
-      prompted ||= result.prompted;
-    }
-
-    return {
-      serialized: serializeDelegationBundle(delegations),
-      prompted,
-    };
+  for (const permissions of permissionsBySpace.values()) {
+    const result = await delegationOperation(() =>
+      tcw.delegateTo(target.did, permissions, { expiry: target.expiryMs }),
+    );
+    delegations.push(result.delegation);
+    prompted ||= result.prompted;
   }
 
-  const result = await tcw.materializeDelegation(backendDID, capabilityRequest);
   return {
-    serialized: serializeDelegation(result.delegation),
-    prompted: result.prompted,
+    serialized: serializeDelegationBundle(delegations),
+    prompted,
   };
 }
 
@@ -88,15 +88,17 @@ export async function createPermissionDelegation(
     throw new Error("createPermissionDelegation: permissions list is empty");
   }
 
-  const resourcePermissions = dedupePermissions(permissions.map(toResourceCapability));
+  const resourcePermissions = normalizeDelegationPermissions(permissions.map(toResourceCapability));
   const permissionsBySpace = groupPermissionsBySpace(resourcePermissions);
   const delegations: PortableDelegation[] = [];
   let prompted = false;
 
   for (const groupedPermissions of permissionsBySpace.values()) {
-    const result = await tcw.delegateTo(backendDID, groupedPermissions, {
-      expiry: options?.expiryMs,
-    });
+    const result = await delegationOperation(() =>
+      tcw.delegateTo(backendDID, groupedPermissions, {
+        expiry: options?.expiryMs,
+      }),
+    );
     delegations.push(result.delegation);
     prompted ||= result.prompted;
   }
@@ -141,6 +143,16 @@ function dedupePermissions(permissions: readonly ResourceCapability[]): Resource
   return deduped;
 }
 
+function normalizeDelegationPermissions(
+  permissions: readonly ResourceCapability[],
+): ResourceCapability[] {
+  return dedupePermissions(
+    permissions.flatMap((permission) =>
+      permission.actions.map((action) => ({ ...permission, actions: [action] })),
+    ),
+  );
+}
+
 function groupPermissionsBySpace(
   permissions: readonly ResourceCapability[],
 ): Map<string, ResourceCapability[]> {
@@ -171,6 +183,24 @@ function serializeDelegationBundle(delegations: readonly PortableDelegation[]): 
   return JSON.stringify(bundle);
 }
 
+async function delegationOperation<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    const missing =
+      typeof error === "object" &&
+      error !== null &&
+      Array.isArray((error as { missing?: unknown }).missing)
+        ? (error as { missing: unknown[] }).missing
+        : undefined;
+    listenDebugLog("delegation.materialize", "failed", {
+      error: error instanceof Error ? error.message : String(error),
+      ...(missing ? { missing } : {}),
+    });
+    throw normalizeMissingParentDelegationError(error);
+  }
+}
+
 // ── Send Delegation to Backend ───────────────────────────────────────
 
 export async function sendDelegation(
@@ -195,11 +225,17 @@ export async function sendDelegation(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: "unknown", message: res.statusText }));
-    throw new ApiRequestError(
+    const error = new ApiRequestError(
       res.status,
       err.error,
       `Failed to send delegation: ${err.message ?? err.error}`,
     );
+    const context = {
+      error,
+      body: err,
+    };
+    const normalized = normalizeMissingParentDelegationError(context);
+    throw normalized === context ? error : normalized;
   }
 
   return res.json() as Promise<DelegationResponse>;

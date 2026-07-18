@@ -97,6 +97,12 @@ vi.mock("@listen/client", () => {
     createApiClient: vi.fn(() => mockApiClient),
     createManifestDelegation: vi.fn(),
     createPermissionDelegation: vi.fn(),
+    isMissingParentDelegationError: vi.fn((error: unknown) => {
+      if (typeof error !== "object" || error === null) return false;
+      const code = (error as { code?: unknown }).code;
+      const message = error instanceof Error ? error.message : "";
+      return code === "missing_parent_delegation" || /cannot find parent delegation/i.test(message);
+    }),
     clearPersistedSession: vi.fn(),
     loadPersistedSession: vi.fn(() => null),
     sendDelegation: vi.fn(),
@@ -1014,7 +1020,7 @@ describe("App manual sign-in processing", () => {
     expect(connectWallet).not.toHaveBeenCalled();
   });
 
-  it("does not renew during session restore when the user never granted", async () => {
+  it("validates the restored parent without sending a first backend grant", async () => {
     storeBackendSession();
     vi.mocked(loadPersistedSession).mockReturnValue({
       address: "0xabc123",
@@ -1032,7 +1038,8 @@ describe("App manual sign-in processing", () => {
       },
     } as never);
     // Default checkDelegationStatus mock reports "none" and no grant record
-    // exists — silent renewal must not turn into an implicit first grant.
+    // exists. Materialization validates the parent, but delivery remains
+    // behind evidence that the user previously granted backend access.
 
     render(<App />);
     fireEvent.click(screen.getAllByRole("button", { name: /open app/i })[0]);
@@ -1041,7 +1048,111 @@ describe("App manual sign-in processing", () => {
       expect(mockGet).toHaveBeenCalledWith("/api/workspace-state");
     });
     expect(sendDelegation).not.toHaveBeenCalled();
-    expect(createManifestDelegation).not.toHaveBeenCalled();
+    expect(createManifestDelegation).toHaveBeenCalledTimes(1);
+  });
+
+  it("detects a dead restored parent before committing TinyCloud access", async () => {
+    storeBackendSession();
+    vi.mocked(loadPersistedSession).mockReturnValue({
+      address: "0xabc123",
+      chainId: 1,
+      did: "did:pkh:eip155:1:0xabc123",
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      spaceId: "tinycloud:pkh:eip155:1:0xabc123:applications",
+    });
+    vi.mocked(restoreTinyCloudWeb).mockResolvedValue({
+      tcw: {
+        did: "did:pkh:eip155:1:0xabc123",
+        hosts: ["http://localhost:5112"],
+        spaceId: "tinycloud:pkh:eip155:1:0xabc123:applications",
+        signOut: vi.fn().mockResolvedValue(undefined),
+      },
+    } as never);
+    vi.mocked(checkDelegationStatus).mockResolvedValue({ status: "active", expiresAt: null });
+    vi.mocked(createManifestDelegation).mockRejectedValue(
+      Object.assign(new Error("Cannot find parent delegation"), {
+        code: "missing_parent_delegation",
+      }),
+    );
+
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: /open app/i })[0]);
+
+    expect(await screen.findByTestId("storage-session-recovery")).toBeInTheDocument();
+    expect(screen.getByText(/TinyCloud storage was updated/i)).toBeInTheDocument();
+    expect(createManifestDelegation).toHaveBeenCalledTimes(1);
+    expect(clearPersistedSession).toHaveBeenCalledWith("0xabc123");
+    expect(connectWallet).not.toHaveBeenCalled();
+  });
+
+  it("reconnects a dead parent with exactly one fresh delegation attempt", async () => {
+    storeBackendSession();
+    vi.mocked(loadPersistedSession).mockReturnValue({
+      address: "0xabc123",
+      chainId: 1,
+      did: "did:pkh:eip155:1:0xabc123",
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+    });
+    vi.mocked(restoreTinyCloudWeb).mockResolvedValue({
+      tcw: {
+        did: "did:pkh:eip155:1:0xabc123",
+        hosts: ["http://localhost:5112"],
+        signOut: vi.fn().mockResolvedValue(undefined),
+      },
+    } as never);
+    vi.mocked(checkDelegationStatus).mockResolvedValue({ status: "active", expiresAt: null });
+    vi.mocked(createManifestDelegation)
+      .mockRejectedValueOnce(
+        Object.assign(new Error("Cannot find parent delegation"), {
+          code: "missing_parent_delegation",
+        }),
+      )
+      .mockResolvedValueOnce({ serialized: "fresh-delegation", prompted: false });
+
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: /open app/i })[0]);
+    const reconnect = await screen.findByTestId("storage-session-reconnect");
+    fireEvent.click(reconnect);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("storage-session-recovery")).toBeNull();
+    });
+    expect(connectWallet).toHaveBeenCalledTimes(1);
+    expect(createAndSignIn).toHaveBeenCalledTimes(1);
+    expect(createManifestDelegation).toHaveBeenCalledTimes(2);
+    expect(sendDelegation).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops after one failed reconnect delegation and keeps honest recovery UI", async () => {
+    storeBackendSession();
+    vi.mocked(loadPersistedSession).mockReturnValue({
+      address: "0xabc123",
+      chainId: 1,
+      did: "did:pkh:eip155:1:0xabc123",
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+    });
+    vi.mocked(restoreTinyCloudWeb).mockResolvedValue({
+      tcw: {
+        did: "did:pkh:eip155:1:0xabc123",
+        hosts: ["http://localhost:5112"],
+        signOut: vi.fn().mockResolvedValue(undefined),
+      },
+    } as never);
+    vi.mocked(checkDelegationStatus).mockResolvedValue({ status: "active", expiresAt: null });
+    vi.mocked(createManifestDelegation).mockRejectedValue(
+      Object.assign(new Error("Cannot find parent delegation"), {
+        code: "missing_parent_delegation",
+      }),
+    );
+
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: /open app/i })[0]);
+    fireEvent.click(await screen.findByTestId("storage-session-reconnect"));
+
+    await waitFor(() => expect(createManifestDelegation).toHaveBeenCalledTimes(2));
+    expect(await screen.findByTestId("storage-session-recovery")).toBeInTheDocument();
+    expect(createAndSignIn).toHaveBeenCalledTimes(1);
+    expect(sendDelegation).not.toHaveBeenCalled();
   });
 
   it("does not treat an unreadable Fireflies secret as connected during sign-in", async () => {
@@ -1723,12 +1834,14 @@ describe("App session expiry", () => {
     openApp();
 
     const signInButton = await screen.findByRole("button", { name: /^sign in$/i });
-    localStorage.removeItem("listen:session");
+    const restoreCalls = vi.mocked(restoreTinyCloudWeb).mock.calls.length;
     fireEvent.click(signInButton);
 
     await waitFor(() => {
       expect(connectWallet).toHaveBeenCalled();
     });
+    expect(vi.mocked(restoreTinyCloudWeb).mock.calls).toHaveLength(restoreCalls);
+    expect(clearPersistedSession).toHaveBeenCalledWith("0xabc123");
   });
 
   it("delegation errors still invalidate the workspace cache", async () => {

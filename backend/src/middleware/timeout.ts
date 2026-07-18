@@ -6,9 +6,17 @@
 // retry succeeds.
 const TC_TIMEOUT_MS = parseInt(process.env.TC_TIMEOUT_MS ?? "180000", 10);
 
+export class TinyCloudOperationTimeoutError extends Error {
+  override name = "TinyCloudOperationTimeoutError";
+
+  constructor() {
+    super("TinyCloud operation timed out");
+  }
+}
+
 export function withTimeout<T>(promise: Promise<T>, timeoutMs = TC_TIMEOUT_MS): Promise<T> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("TinyCloud operation timed out")), timeoutMs);
+    const timer = setTimeout(() => reject(new TinyCloudOperationTimeoutError()), timeoutMs);
     promise.then(
       (val) => {
         clearTimeout(timer);

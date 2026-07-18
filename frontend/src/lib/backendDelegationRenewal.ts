@@ -1,4 +1,4 @@
-import type { ApiClient } from "@listen/client";
+import { isMissingParentDelegationError, type ApiClient } from "@listen/client";
 
 // ── Grant records ────────────────────────────────────────────────────
 //
@@ -59,6 +59,8 @@ export type DelegationRenewalErrorCode =
 export interface BackendDelegationRenewerDeps {
   /** GET /api/delegations/status — returns { status: "active" | "expired" | "stale" | "none" }. */
   checkStatus: () => Promise<{ status: string }>;
+  /** Materialize a child delegation locally to prove the restored parent still exists on the node. */
+  validateParent: () => Promise<void>;
   /** Whether the frontend has evidence a backend grant previously existed. */
   hasPriorGrant: () => boolean;
   /**
@@ -83,6 +85,13 @@ export interface BackendDelegationRenewer {
    */
   ensureFreshDelegation(): Promise<boolean>;
   /**
+   * Validate a restored browser session against the real delegation path.
+   * Always materializes a child locally, even when the backend has no grant or
+   * its status endpoint is unavailable, so a node-lost parent is found before
+   * the restored TinyCloud instance is committed to application state.
+   */
+  validateRestoredSession(options?: { replaceBackendGrant?: boolean }): Promise<boolean>;
+  /**
    * Reactive renewal after a gated API call failed. `delegation_expired`
    * and `delegation_stale` always renew (the row existed until this
    * request); `no_delegation` renews only with prior-grant evidence. Never
@@ -95,6 +104,7 @@ export interface BackendDelegationRenewer {
 }
 
 function isPermanentRenewalFailure(err: unknown): boolean {
+  if (isMissingParentDelegationError(err)) return true;
   if (typeof err !== "object" || err === null) return false;
   const name = (err as { name?: unknown }).name;
   const message = err instanceof Error ? err.message : "";
@@ -115,6 +125,24 @@ export function createBackendDelegationRenewer(
 
   const log = deps.log ?? (() => {});
 
+  const recordFailure = (err: unknown): void => {
+    if (isPermanentRenewalFailure(err)) {
+      disabled = true;
+      log("renewal-failed", {
+        permanent: true,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      deps.onRenewalFailed?.({ permanent: true, error: err });
+    } else {
+      lastTransientFailureAt = Date.now();
+      log("renewal-failed", {
+        permanent: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      deps.onRenewalFailed?.({ permanent: false, error: err });
+    }
+  };
+
   const renewOnce = (): Promise<boolean> => {
     if (disabled) return Promise.resolve(false);
     if (
@@ -133,21 +161,7 @@ export function createBackendDelegationRenewer(
           return true;
         })
         .catch((err) => {
-          if (isPermanentRenewalFailure(err)) {
-            disabled = true;
-            log("renewal-failed", {
-              permanent: true,
-              error: err instanceof Error ? err.message : String(err),
-            });
-            deps.onRenewalFailed?.({ permanent: true, error: err });
-          } else {
-            lastTransientFailureAt = Date.now();
-            log("renewal-failed", {
-              permanent: false,
-              error: err instanceof Error ? err.message : String(err),
-            });
-            deps.onRenewalFailed?.({ permanent: false, error: err });
-          }
+          recordFailure(err);
           return false;
         })
         .finally(() => {
@@ -174,6 +188,45 @@ export function createBackendDelegationRenewer(
       if (status === "none" && deps.hasPriorGrant()) return renewOnce();
       log("no-renewal-needed", { status });
       return false;
+    },
+
+    async validateRestoredSession(options): Promise<boolean> {
+      if (disabled) return false;
+      try {
+        await deps.validateParent();
+      } catch (err) {
+        recordFailure(err);
+        return false;
+      }
+
+      let status: string;
+      try {
+        ({ status } = await deps.checkStatus());
+      } catch (err) {
+        log("status-check-failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return true;
+      }
+
+      if (status === "active") {
+        if (options?.replaceBackendGrant) {
+          const renewed = await renewOnce();
+          return renewed || !disabled;
+        }
+        log("restored-parent-valid");
+        return true;
+      }
+      if (status === "expired" || status === "stale") {
+        const renewed = await renewOnce();
+        return renewed || !disabled;
+      }
+      if (status === "none" && deps.hasPriorGrant()) {
+        const renewed = await renewOnce();
+        return renewed || !disabled;
+      }
+      log("no-restored-grant", { status });
+      return true;
     },
 
     async renewForApiError(code: DelegationRenewalErrorCode): Promise<boolean> {

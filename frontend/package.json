@@ -15,10 +15,10 @@
     "@listen/core": "workspace:*",
     "@openkey/sdk": "^0.9.0",
     "@tinycloud/bootstrap-m1": "npm:@tinycloud/bootstrap@2.5.0",
-    "@tinycloud/sdk-core": "2.6.3",
+    "@tinycloud/sdk-core": "2.7.0",
     "@tinycloud/sdk-core-m1": "file:./vendor/tinycloud-sdk-core-m1",
     "@tinycloud/sdk-services-m1": "npm:@tinycloud/sdk-services@2.6.0",
-    "@tinycloud/web-sdk": "2.6.3",
+    "@tinycloud/web-sdk": "2.7.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },

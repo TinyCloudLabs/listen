@@ -16,6 +16,7 @@ import {
   SessionStore,
   loadPersistedSession,
   clearPersistedSession,
+  isMissingParentDelegationError,
   composeManifestWithDelegatees,
   resolveManifestPermissions,
   type ApiClient,
@@ -71,6 +72,8 @@ const ENABLE_AGENT = import.meta.env.VITE_ENABLE_AGENT === "true";
 const ENABLE_TINYCLOUD_HOOKS = import.meta.env.VITE_ENABLE_TINYCLOUD_HOOKS === "true";
 const CLIENT_CAPABILITY_VERSION = "soundcore-secrets-v2";
 const CLIENT_CAPABILITY_VERSION_KEY = "listen:capability-version";
+const STORAGE_SESSION_RECONNECT_MESSAGE =
+  "TinyCloud storage was updated. Sign in once to reconnect your workspace.";
 const CONVERSATION_HOOK_PATH_PREFIX = "conversations/conversation";
 const FIREFLIES_SECRET_NAME = "FIREFLIES_API_KEY";
 const GRANOLA_SECRET_NAME = "GRANOLA_API_KEY";
@@ -1002,6 +1005,7 @@ export function App() {
   const [pendingBanner, setPendingBanner] = useState<string | null>(null);
   const [sessionExpired, setSessionExpired] = useState(false);
   const [backendAccessExpired, setBackendAccessExpired] = useState(false);
+  const [storageSessionInvalid, setStorageSessionInvalid] = useState(false);
   const [gmLapsedBanner, setGmLapsedBanner] = useState(false);
   const [gmLapsedError, setGmLapsedError] = useState<string | null>(null);
   const [liveWritePathPrefix, setLiveWritePathPrefix] = useState<string | null>(null);
@@ -1015,6 +1019,7 @@ export function App() {
   const sessionStoreRef = useRef(new SessionStore());
   const backendRenewerRef = useRef<BackendDelegationRenewer | null>(null);
   const backendAccessRenewalFailedRef = useRef(false);
+  const authInFlightRef = useRef(false);
   const isMobile = useIsMobile();
   const chatEnabled = isChatEnabled();
   const [shareToken, setShareToken] = useState(() => readShareTokenFromLocation());
@@ -1052,6 +1057,25 @@ export function App() {
     return withDelegationAutoRenewal(sessionAwareClient, () => backendRenewerRef.current);
   }, []);
 
+  const markStorageSessionInvalid = useCallback(
+    (addr: string, tcwInstance: TinyCloudWeb, bDid?: string) => {
+      clearPersistedSession(addr);
+      void tcwInstance.signOut?.().catch(() => undefined);
+      if (bDid) clearBackendWorkspaceCache(addr, bDid);
+      backendRenewerRef.current = null;
+      backendAccessRenewalFailedRef.current = false;
+      setStorageSessionInvalid(true);
+      setSessionExpired(false);
+      setBackendAccessExpired(false);
+      setTcw(null);
+      setHasWalletSigner(false);
+      setHasBackendDelegation(false);
+      setLiveWriteHost(null);
+      setLiveWriteSpaceId(null);
+    },
+    [],
+  );
+
   /**
    * Install the silent backend-delegation renewer for the current session.
    *
@@ -1068,18 +1092,27 @@ export function App() {
       tcwInstance: TinyCloudWeb,
       bDid: string,
       composedRequest: ComposedManifestRequest,
+      options?: { onMissingParent?: () => void },
     ): BackendDelegationRenewer => {
+      let validatedDelegation: string | null = null;
       const renewer = createBackendDelegationRenewer({
         checkStatus: () => {
           const token = sessionStoreRef.current.getToken();
           if (!token) return Promise.reject(new Error("Missing backend session token"));
           return checkDelegationStatus(BACKEND_URL, token);
         },
+        validateParent: async () => {
+          const { serialized } = await createManifestDelegation(tcwInstance, bDid, composedRequest);
+          validatedDelegation = serialized;
+        },
         hasPriorGrant: () => hasBackendDelegationGrantRecord(addr, bDid),
         renew: async () => {
           const token = sessionStoreRef.current.getToken();
           if (!token) throw new Error("Missing backend session token");
-          const { serialized } = await createManifestDelegation(tcwInstance, bDid, composedRequest);
+          const serialized =
+            validatedDelegation ??
+            (await createManifestDelegation(tcwInstance, bDid, composedRequest)).serialized;
+          validatedDelegation = null;
           await sendDelegation(BACKEND_URL, serialized, token);
         },
         onRenewed: () => {
@@ -1091,7 +1124,12 @@ export function App() {
           setRefreshKey((k) => k + 1);
           setWorkspaceRefreshKey((k) => k + 1);
         },
-        onRenewalFailed: ({ permanent }) => {
+        onRenewalFailed: ({ permanent, error }) => {
+          if (isMissingParentDelegationError(error)) {
+            options?.onMissingParent?.();
+            markStorageSessionInvalid(addr, tcwInstance, bDid);
+            return;
+          }
           if (permanent) {
             backendAccessRenewalFailedRef.current = true;
             setBackendAccessExpired(true);
@@ -1102,7 +1140,7 @@ export function App() {
       backendRenewerRef.current = renewer;
       return renewer;
     },
-    [],
+    [markStorageSessionInvalid],
   );
 
   useEffect(() => {
@@ -1130,6 +1168,7 @@ export function App() {
     setApi(null);
     setSessionExpired(false);
     setBackendAccessExpired(false);
+    setStorageSessionInvalid(false);
     setAgentInfo(null);
     setBackendDid(null);
     setCapabilityRequest(null);
@@ -1225,41 +1264,57 @@ export function App() {
       // renewed grant. Requires a restored TinyCloud session; without one the
       // existing re-grant UI handles it.
       backendRenewerRef.current = null;
-      let delegationRenewed = false;
+      let restoredSessionValidated = false;
+      let missingParent = false;
       if (restoredTinyCloud) {
         const renewer = installBackendDelegationRenewer(
           addr,
           restoredTinyCloud.tcw,
           info.did,
           composedRequest,
+          { onMissingParent: () => (missingParent = true) },
         );
-        delegationRenewed = await renewer.ensureFreshDelegation();
+        restoredSessionValidated = await renewer.validateRestoredSession();
+      }
+      if (restoredTinyCloud && !restoredSessionValidated && !missingParent) {
+        step.complete({ restored: false, reason: "parent-validation-failed" });
+        return false;
       }
 
       setAddress(addr);
-      setDid(restoredTinyCloud?.tcw.did ?? persistedSession?.did ?? null);
-      setTcw(restoredTinyCloud?.tcw ?? null);
+      setDid(
+        missingParent
+          ? (persistedSession?.did ?? null)
+          : (restoredTinyCloud?.tcw.did ?? persistedSession?.did ?? null),
+      );
+      setTcw(missingParent ? null : (restoredTinyCloud?.tcw ?? null));
       setHasWalletSigner(false);
       setApi(apiClient);
       setSessionExpired(false);
       setBackendAccessExpired(false);
+      if (!missingParent) setStorageSessionInvalid(false);
       if (backendAccessRenewalFailedRef.current) setBackendAccessExpired(true);
       setAgentInfo(agent);
       setBackendDid(info.did);
       setCapabilityRequest(composedRequest);
       setServerGoogleMeetAvailable(info.features?.googleMeet?.available ?? null);
       setLiveWritePathPrefix(conversationEventPathPrefix);
-      setLiveWriteHost(restoredTinyCloud?.tcw.hosts[0] ?? null);
-      setLiveWriteSpaceId(restoredTinyCloud?.tcw.spaceId ?? persistedSession?.spaceId ?? null);
+      setLiveWriteHost(missingParent ? null : (restoredTinyCloud?.tcw.hosts[0] ?? null));
+      setLiveWriteSpaceId(
+        missingParent
+          ? null
+          : (restoredTinyCloud?.tcw.spaceId ?? persistedSession?.spaceId ?? null),
+      );
       setSelectedConversationId(null);
       setShareConversationId(null);
       step.complete({
         restored: true,
         hasPersistedTinyCloud: Boolean(persistedSession),
         restoredTinyCloud: restoredTinyCloud !== null,
+        missingParent,
         backendDid: info.did,
         agentDid: agent?.did ?? null,
-        delegationRenewed,
+        restoredSessionValidated,
       });
       return true;
     },
@@ -1294,9 +1349,12 @@ export function App() {
       step.complete({ ok: true, backendDid });
     } catch (err) {
       step.fail(err);
+      if (address && isMissingParentDelegationError(err)) {
+        markStorageSessionInvalid(address, tcw, backendDid);
+      }
       throw err;
     }
-  }, [address, backendDid, capabilityRequest, tcw]);
+  }, [address, backendDid, capabilityRequest, markStorageSessionInvalid, tcw]);
 
   const renewBackendDelegationWithSecrets = useCallback(
     async (secretNames: readonly string[]) => {
@@ -1341,10 +1399,13 @@ export function App() {
         step.complete({ ok: true, backendDid, secretCount: secretNames.length });
       } catch (err) {
         step.fail(err);
+        if (address && isMissingParentDelegationError(err)) {
+          markStorageSessionInvalid(address, tcw, backendDid);
+        }
         throw err;
       }
     },
-    [address, backendDid, capabilityRequest, did, tcw],
+    [address, backendDid, capabilityRequest, did, markStorageSessionInvalid, tcw],
   );
 
   useEffect(() => {
@@ -1406,6 +1467,16 @@ export function App() {
           step.complete({ cancelled: true });
           return;
         }
+        if (
+          address &&
+          tcw &&
+          state.delegation.activation === "failed" &&
+          isMissingParentDelegationError(state.delegation.error)
+        ) {
+          step.fail(state.delegation.error);
+          markStorageSessionInvalid(address, tcw, backendDid ?? undefined);
+          return;
+        }
 
         applyWorkspaceReadiness(state, {
           hasTinyCloud: tcw !== null,
@@ -1458,6 +1529,10 @@ export function App() {
           return;
         }
         step.fail(err);
+        if (address && tcw && isMissingParentDelegationError(err)) {
+          markStorageSessionInvalid(address, tcw, backendDid ?? undefined);
+          return;
+        }
         const errCode = (err as { code?: unknown }).code;
         if (appliedCachedState && typeof errCode !== "string") {
           // Transient, un-coded failure (network/offline) over cached-good
@@ -1482,7 +1557,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [address, api, backendDid, workspaceRefreshKey, tcw]);
+  }, [address, api, backendDid, markStorageSessionInvalid, workspaceRefreshKey, tcw]);
 
   useEffect(() => {
     if (!conversationApi || (!tcw && hasBackendDelegation !== true)) {
@@ -1566,13 +1641,24 @@ export function App() {
   // ── Sign In ───────────────────────────────────────────────────────
 
   const handleSignIn = useCallback(
-    async (options?: { forceWallet?: boolean }) => {
-      const step = startDebugStep("auth.sign-in", { forceWallet: options?.forceWallet === true });
+    async (options?: { forceWallet?: boolean; recoverMissingParent?: boolean }) => {
+      if (authInFlightRef.current) return;
+      authInFlightRef.current = true;
+      const step = startDebugStep("auth.sign-in", {
+        forceWallet: options?.forceWallet === true,
+        recoverMissingParent: options?.recoverMissingParent === true,
+      });
       setAuthLoading(true);
       setAuthError(null);
       setWorkspaceActionError(null);
       backendAccessRenewalFailedRef.current = false;
       try {
+        if (options?.forceWallet) {
+          const staleAddress = address ?? sessionStoreRef.current.getAddress();
+          sessionStoreRef.current.clear();
+          if (staleAddress) clearPersistedSession(staleAddress);
+        }
+
         if (!options?.forceWallet) {
           debugLog("auth.sign-in", "restore-before-wallet");
           const restored = await restoreStoredSession();
@@ -1682,13 +1768,20 @@ export function App() {
         // expired or its expired row was already cleaned up. Uses the LOCAL
         // sign-in results (state is not committed yet). Never renews for a
         // user who never granted — that stays behind the explicit setup UI.
+        let recoveryMissingParent = false;
         const renewer = installBackendDelegationRenewer(
           addr,
           tcwInstance,
           info.did,
           composedRequest,
+          { onMissingParent: () => (recoveryMissingParent = true) },
         );
-        const delegationRenewed = await renewer.ensureFreshDelegation();
+        const delegationReady = options?.recoverMissingParent
+          ? await renewer.validateRestoredSession({ replaceBackendGrant: true })
+          : await renewer.ensureFreshDelegation();
+        if (options?.recoverMissingParent && !delegationReady && recoveryMissingParent) {
+          throw new Error(STORAGE_SESSION_RECONNECT_MESSAGE);
+        }
 
         setAddress(addr);
         setDid(tcwInstance.did ?? null);
@@ -1697,6 +1790,7 @@ export function App() {
         setApi(apiClient);
         setSessionExpired(false);
         setBackendAccessExpired(false);
+        setStorageSessionInvalid(false);
         if (backendAccessRenewalFailedRef.current) setBackendAccessExpired(true);
         setAgentInfo(agent);
         setBackendDid(info.did);
@@ -1713,12 +1807,19 @@ export function App() {
           agentDid: agent?.did ?? null,
           did: tcwInstance.did ?? null,
           spaceId: tcwInstance.spaceId ?? null,
-          delegationRenewed,
+          delegationReady,
         });
       } catch (err) {
         step.fail(err);
-        setAuthError(err instanceof Error ? err.message : String(err));
+        setAuthError(
+          isMissingParentDelegationError(err)
+            ? STORAGE_SESSION_RECONNECT_MESSAGE
+            : err instanceof Error
+              ? err.message
+              : String(err),
+        );
       } finally {
+        authInFlightRef.current = false;
         setAuthLoading(false);
       }
     },
@@ -1727,6 +1828,7 @@ export function App() {
       installBackendDelegationRenewer,
       restoreStoredSession,
       signInDirectTinyCloud,
+      address,
     ],
   );
 
@@ -1747,6 +1849,7 @@ export function App() {
     setApi(null);
     setSessionExpired(false);
     setBackendAccessExpired(false);
+    setStorageSessionInvalid(false);
     setAgentInfo(null);
     setBackendDid(null);
     setCapabilityRequest(null);
@@ -2048,6 +2151,7 @@ export function App() {
     !backendUnavailable &&
     !sessionExpired &&
     !backendAccessExpired &&
+    !storageSessionInvalid &&
     workspaceChecksReady &&
     hasKey === true &&
     (hasBackendDelegation === false || hasFirefliesBackendAccess === false);
@@ -2055,6 +2159,7 @@ export function App() {
     !backendUnavailable &&
     !sessionExpired &&
     !backendAccessExpired &&
+    !storageSessionInvalid &&
     workspaceChecksReady &&
     hasGranolaKey === true &&
     (hasBackendDelegation === false || hasGranolaBackendAccess === false);
@@ -2062,6 +2167,7 @@ export function App() {
     !backendUnavailable &&
     !sessionExpired &&
     !backendAccessExpired &&
+    !storageSessionInvalid &&
     workspaceChecksReady &&
     hasSoundcoreKey === true &&
     (hasBackendDelegation === false || hasSoundcoreBackendAccess === false);
@@ -2080,6 +2186,7 @@ export function App() {
     isSignedIn &&
     !showSharedPage &&
     !backendUnavailable &&
+    !storageSessionInvalid &&
     workspaceChecksReady &&
     !hasUsableInbox &&
     !needsFirefliesAccess &&
@@ -2091,6 +2198,7 @@ export function App() {
     isSignedIn &&
     !showSharedPage &&
     !backendUnavailable &&
+    !storageSessionInvalid &&
     hasUsableInbox &&
     activePage === "sources" &&
     !setupAvailable;
@@ -2377,7 +2485,8 @@ export function App() {
     !showWalletSetupState &&
     !showSourcesSetup &&
     !showSourcesWalletState &&
-    !showBackendOfflineState
+    !showBackendOfflineState &&
+    !storageSessionInvalid
   ) {
     return (
       <>
@@ -2437,21 +2546,36 @@ export function App() {
         setSearchFocusKey((k) => k + 1);
       }}
     >
-      {sessionExpired && (
+      {storageSessionInvalid && (
+        <div style={s.pendingBanner} data-testid="storage-session-recovery">
+          <span>{STORAGE_SESSION_RECONNECT_MESSAGE}</span>
+          <button
+            type="button"
+            data-testid="storage-session-reconnect"
+            style={authLoading ? { ...s.statusButton, ...s.statusButtonDisabled } : s.statusButton}
+            disabled={authLoading}
+            onClick={() => void handleSignIn({ forceWallet: true, recoverMissingParent: true })}
+          >
+            Reconnect
+          </button>
+        </div>
+      )}
+
+      {!storageSessionInvalid && sessionExpired && (
         <div style={s.pendingBanner}>
           <span>Session expired — sign in to reconnect your workspace.</span>
           <button
             type="button"
             style={authLoading ? { ...s.statusButton, ...s.statusButtonDisabled } : s.statusButton}
             disabled={authLoading}
-            onClick={() => void handleSignIn()}
+            onClick={() => void handleSignIn({ forceWallet: true })}
           >
             Sign in
           </button>
         </div>
       )}
 
-      {!sessionExpired && backendAccessExpired && (
+      {!storageSessionInvalid && !sessionExpired && backendAccessExpired && (
         <div style={s.pendingBanner}>
           <span>Backend access expired — reconnect to restore workspace access.</span>
           <button
@@ -2759,6 +2883,11 @@ export function App() {
               spaceId={liveWriteSpaceId}
               pathPrefix={liveWritePathPrefix}
               onWrite={() => setRefreshKey((k) => k + 1)}
+              onError={(error) => {
+                if (address && tcw && isMissingParentDelegationError(error)) {
+                  markStorageSessionInvalid(address, tcw, backendDid ?? undefined);
+                }
+              }}
             />
           )}
           <ListenOwnerPublishedShares tcw={tcw} refreshKey={ownerShareRefreshKey} />

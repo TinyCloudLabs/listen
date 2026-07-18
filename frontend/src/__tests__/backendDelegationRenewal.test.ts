@@ -15,9 +15,11 @@ import type { ApiClient } from "@listen/client";
 function createDeps(overrides: Partial<BackendDelegationRenewerDeps> = {}) {
   const deps: BackendDelegationRenewerDeps = {
     checkStatus: vi.fn().mockResolvedValue({ status: "active" }),
+    validateParent: vi.fn().mockResolvedValue(undefined),
     hasPriorGrant: vi.fn().mockReturnValue(false),
     renew: vi.fn().mockResolvedValue(undefined),
     onRenewed: vi.fn(),
+    onRenewalFailed: vi.fn(),
     ...overrides,
   };
   return deps;
@@ -127,6 +129,70 @@ describe("createBackendDelegationRenewer — ensureFreshDelegation", () => {
     expect(await renewer.ensureFreshDelegation()).toBe(false);
     expect(await renewer.renewForApiError("delegation_expired")).toBe(false);
     expect(deps.renew).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("createBackendDelegationRenewer — validateRestoredSession", () => {
+  it("validates an active delegation without sending it again", async () => {
+    const deps = createDeps({
+      checkStatus: vi.fn().mockResolvedValue({ status: "active" }),
+      hasPriorGrant: vi.fn().mockReturnValue(false),
+    });
+    const renewer = createBackendDelegationRenewer(deps);
+
+    expect(await renewer.validateRestoredSession()).toBe(true);
+    expect(deps.validateParent).toHaveBeenCalledTimes(1);
+    expect(deps.renew).not.toHaveBeenCalled();
+  });
+
+  it("replaces an active backend grant after manual parent recovery", async () => {
+    const deps = createDeps({
+      checkStatus: vi.fn().mockResolvedValue({ status: "active" }),
+    });
+    const renewer = createBackendDelegationRenewer(deps);
+
+    expect(await renewer.validateRestoredSession({ replaceBackendGrant: true })).toBe(true);
+    expect(deps.validateParent).toHaveBeenCalledTimes(1);
+    expect(deps.renew).toHaveBeenCalledTimes(1);
+  });
+
+  it("latches a missing parent and does not retry automatically", async () => {
+    const failure = Object.assign(new Error("dead parent"), {
+      code: "missing_parent_delegation",
+    });
+    const deps = createDeps({
+      validateParent: vi.fn().mockRejectedValue(failure),
+    });
+    const renewer = createBackendDelegationRenewer(deps);
+
+    expect(await renewer.validateRestoredSession()).toBe(false);
+    expect(await renewer.validateRestoredSession()).toBe(false);
+    expect(deps.validateParent).toHaveBeenCalledTimes(1);
+    expect(deps.renew).not.toHaveBeenCalled();
+    expect(deps.onRenewalFailed).toHaveBeenCalledWith({ permanent: true, error: failure });
+  });
+
+  it("validates the parent without creating a first backend grant when the backend has none", async () => {
+    const deps = createDeps({
+      checkStatus: vi.fn().mockResolvedValue({ status: "none" }),
+      hasPriorGrant: vi.fn().mockReturnValue(false),
+    });
+    const renewer = createBackendDelegationRenewer(deps);
+
+    expect(await renewer.validateRestoredSession()).toBe(true);
+    expect(deps.validateParent).toHaveBeenCalledTimes(1);
+    expect(deps.renew).not.toHaveBeenCalled();
+  });
+
+  it("accepts a node-validated parent when backend status is temporarily unavailable", async () => {
+    const deps = createDeps({
+      checkStatus: vi.fn().mockRejectedValue(new Error("network down")),
+    });
+    const renewer = createBackendDelegationRenewer(deps);
+
+    expect(await renewer.validateRestoredSession()).toBe(true);
+    expect(deps.validateParent).toHaveBeenCalledTimes(1);
+    expect(deps.renew).not.toHaveBeenCalled();
   });
 });
 

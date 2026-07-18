@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 interface E2EState {
+  baseURL: string;
   backendURL: string;
   listenSession: {
     token: string;
@@ -28,6 +29,7 @@ test("backend import emits a TinyCloud hook and refreshes the frontend inbox", a
   request,
 }) => {
   const state = loadState();
+  page.on("pageerror", (error) => console.error(`[browser pageerror] ${error.message}`));
 
   await page.addInitScript(
     ({ listenSession, tinycloudSessionKey, tinycloudSession }) => {
@@ -55,7 +57,8 @@ test("backend import emits a TinyCloud hook and refreshes the frontend inbox", a
       response.status() === 200,
   );
 
-  await page.goto("/");
+  await page.goto(state.baseURL);
+  await expect(page.getByRole("banner")).toBeVisible({ timeout: 30_000 });
   await page
     .getByRole("banner")
     .getByRole("button", { name: /open app/i })

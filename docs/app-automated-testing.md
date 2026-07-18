@@ -4,7 +4,7 @@ Listen has three browser automation paths:
 
 1. A CI-safe app smoke test that restores a local session and mocks backend HTTP.
 2. An opt-in OpenKey passkey harness for real local or production sign-in.
-3. A local full-stack hooks test using a deterministic Ethereum owner key.
+3. A local full-stack hooks test using a disposable Ethereum owner key.
 
 ## CI-safe smoke test
 
@@ -50,7 +50,7 @@ bun run test:hooks:e2e
 
 The hooks harness starts a fresh TinyCloud node, the Listen backend, and the
 frontend. Before exercising the browser-style signer and backend delegation,
-it explicitly bootstraps the deterministic Ethereum owner account with the
+it explicitly bootstraps the disposable Ethereum owner account with the
 non-interactive private-key client. This provisions the canonical account
 spaces and schemas once, matching the server-provisioned account expected by
 interactive OpenKey signers without requiring repeated wallet prompts in the
@@ -60,6 +60,30 @@ The test then verifies SIWE authentication, backend delegation activation,
 conversation import, hook ticket and event-stream setup, and a live inbox
 update without reloading the page. Override `LISTEN_E2E_OWNER_PRIVATE_KEY` only
 with a disposable local test key; never use a production owner key.
+
+`LISTEN_E2E_OWNER_PRIVATE_KEY` is required. Store a throwaway Ethereum key in
+the local or CI secret manager and expose it only to the test process; the
+harness performs the manual bootstrap before starting browser authentication.
+The key must never control production funds or a production TinyCloud account.
+
+To exercise browser recovery after a node loses the persisted parent
+registration, run:
+
+```bash
+bun run test:recovery:e2e
+```
+
+This serial Playwright test follows the TinyCloud browser E2E guide: it injects
+a test-only EIP-1193 wallet before navigation, announces it with EIP-6963, and
+selects it through OpenKey's real external-wallet UI. Production code receives
+no private key or signer bypass. The harness manually bootstraps the owner,
+imports a transcript through Listen's normal delegation flow, removes only that
+browser session's root registration from the owned local node, and restarts the
+node without deleting application data. It then verifies the restored session
+is rejected, one user-initiated reconnect creates a different parent, and
+authorized reads and writes still work. The targeted database mutation is a
+test-only simulation of the deploy-time invariant break and must never run
+against a remote node.
 
 ## Real OpenKey passkey harness
 

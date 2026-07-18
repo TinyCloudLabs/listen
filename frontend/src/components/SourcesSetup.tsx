@@ -632,7 +632,11 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
               style={s.textarea}
             />
           </label>
-          {importError && <div style={s.errorCard}>{importError}</div>}
+          {importError && (
+            <div data-testid="transcript-import-error" style={s.errorCard}>
+              {importError}
+            </div>
+          )}
           <div style={s.btnRow}>
             <button style={s.btnGhost} onClick={() => setStep("cards")}>
               Back

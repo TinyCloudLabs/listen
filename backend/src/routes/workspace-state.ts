@@ -4,7 +4,7 @@ import type { DelegationCache, DelegationStore } from "@listen/server";
 import type { WorkspaceStateResponse, WorkspaceSecretKey } from "@listen/core";
 import { backendDelegationPolicyHash, ownerDidFromAddress } from "../manifest.js";
 import type { DelegationActivator } from "../delegation-activation.js";
-import { withTimeout } from "../middleware/timeout.js";
+import { TinyCloudOperationTimeoutError, withTimeout } from "../middleware/timeout.js";
 import { conversationSql } from "../schema.js";
 import { googleTokensExist } from "../services/google-tokens.js";
 
@@ -14,9 +14,10 @@ interface WorkspaceStateRoutesConfig {
   cache: DelegationCache;
   activator: DelegationActivator;
   authMiddleware: RequestHandler;
+  activationTimeoutMs?: number;
 }
 
-const ACTIVATION_TIMEOUT_MS = 5_000;
+const ACTIVATION_TIMEOUT_MS = 45_000;
 const WORKSPACE_SECRET_NAMES: Record<WorkspaceSecretKey, string> = {
   fireflies: "FIREFLIES_API_KEY",
   granola: "GRANOLA_API_KEY",
@@ -126,12 +127,16 @@ export function createWorkspaceStateRouter(config: WorkspaceStateRoutesConfig) {
         try {
           access = await withTimeout(
             activator.activate(address, stored.serialized) as Promise<DelegatedAccess>,
-            ACTIVATION_TIMEOUT_MS,
+            config.activationTimeoutMs ?? ACTIVATION_TIMEOUT_MS,
           );
           activation = "active";
         } catch (err) {
-          activation = "failed";
-          activationError = err instanceof Error ? err.message : String(err);
+          if (err instanceof TinyCloudOperationTimeoutError) {
+            activation = "pending";
+          } else {
+            activation = "failed";
+            activationError = err instanceof Error ? err.message : String(err);
+          }
         }
       }
 

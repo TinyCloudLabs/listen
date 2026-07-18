@@ -105,6 +105,7 @@ function createApp({
   store = createMockStore(),
   cache = createMockCache(),
   node = { useDelegation: mock(async () => createAccess()) },
+  activationTimeoutMs,
 } = {}) {
   const app = express();
   const activator = createDelegationActivator(node as any, cache as any);
@@ -117,6 +118,7 @@ function createApp({
       cache: cache as any,
       activator,
       authMiddleware: mockAuthMiddleware,
+      activationTimeoutMs,
     }),
   );
   return { app, store, cache, node };
@@ -221,5 +223,30 @@ describe("Workspace State Routes", () => {
     expect(body.backendReadableSecrets.fireflies.readable).toBeNull();
     expect(body.conversations.hasAny).toBeNull();
     expect(cache.has(TEST_ADDRESS)).toBe(false);
+  });
+
+  it("reports slow activation as pending while it continues in the background", async () => {
+    const store = createMockStore();
+    const node = {
+      useDelegation: mock(() => new Promise(() => {})),
+    };
+    await store.store(TEST_ADDRESS, "stored-delegation", {
+      expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      policyHash: currentPolicyHash(),
+    });
+    const { app } = createApp({ store, node, activationTimeoutMs: 5 });
+    ({ server, port } = await startServer(app));
+
+    const res = await fetch(`http://localhost:${port}/api/workspace-state`);
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.delegation).toMatchObject({
+      status: "active",
+      stored: true,
+      validPolicy: true,
+      activation: "pending",
+    });
+    expect(body.delegation.error).toBeUndefined();
   });
 });

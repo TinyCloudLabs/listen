@@ -8,9 +8,65 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
   },
 };
 
-const { createPermissionDelegation, sendDelegation, checkDelegationStatus } =
-  await import("../delegation.js");
+const {
+  createManifestDelegation,
+  createPermissionDelegation,
+  sendDelegation,
+  checkDelegationStatus,
+} = await import("../delegation.js");
 const { ApiRequestError } = await import("../api.js");
+
+describe("createManifestDelegation", () => {
+  test("splits multi-action manifest entries for SDK recap subset checks", async () => {
+    const calls: unknown[][] = [];
+    const tcw = {
+      delegateTo: async (...args: unknown[]) => {
+        calls.push(args);
+        return {
+          prompted: false,
+          delegation: {
+            cid: "cid-1",
+            expiry: new Date("2026-12-31T00:00:00.000Z"),
+            resources: args[1],
+          },
+        };
+      },
+    };
+
+    await createManifestDelegation(tcw as never, "did:key:backend", {
+      delegationTargets: [
+        {
+          did: "did:key:backend",
+          expiryMs: 60_000,
+          permissions: [
+            {
+              service: "tinycloud.kv",
+              space: "applications",
+              path: "xyz.tinycloud.listen/",
+              actions: ["tinycloud.kv/get", "tinycloud.kv/put"],
+            },
+          ],
+        },
+      ],
+    } as never);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0][1]).toEqual([
+      {
+        service: "tinycloud.kv",
+        space: "applications",
+        path: "xyz.tinycloud.listen/",
+        actions: ["tinycloud.kv/get"],
+      },
+      {
+        service: "tinycloud.kv",
+        space: "applications",
+        path: "xyz.tinycloud.listen/",
+        actions: ["tinycloud.kv/put"],
+      },
+    ]);
+  });
+});
 
 describe("createPermissionDelegation", () => {
   test("groups mixed-space permissions into same-space delegations", async () => {
