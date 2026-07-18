@@ -1764,22 +1764,19 @@ export function App() {
         sessionStoreRef.current.setSession(verified.token, verified.expiresIn, addr);
         const apiClient = createBackendApiClient(addr, info.did);
 
-        // Silently re-send the backend delegation when a previous grant
-        // expired or its expired row was already cleaned up. Uses the LOCAL
-        // sign-in results (state is not committed yet). Never renews for a
-        // user who never granted — that stays behind the explicit setup UI.
-        let recoveryMissingParent = false;
+        // Normal sign-in renews only a known expired/stale grant. Manual
+        // missing-parent recovery always replaces the old backend child with
+        // the new chain before committing application state.
         const renewer = installBackendDelegationRenewer(
           addr,
           tcwInstance,
           info.did,
           composedRequest,
-          { onMissingParent: () => (recoveryMissingParent = true) },
         );
         const delegationReady = options?.recoverMissingParent
           ? await renewer.validateRestoredSession({ replaceBackendGrant: true })
           : await renewer.ensureFreshDelegation();
-        if (options?.recoverMissingParent && !delegationReady && recoveryMissingParent) {
+        if (options?.recoverMissingParent && !delegationReady) {
           throw new Error(STORAGE_SESSION_RECONNECT_MESSAGE);
         }
 

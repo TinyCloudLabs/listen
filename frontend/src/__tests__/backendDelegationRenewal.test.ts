@@ -156,6 +156,20 @@ describe("createBackendDelegationRenewer — validateRestoredSession", () => {
     expect(deps.renew).toHaveBeenCalledTimes(1);
   });
 
+  it("requires backend acceptance when manual recovery replaces the grant", async () => {
+    const deps = createDeps({
+      checkStatus: vi.fn().mockRejectedValue(new Error("status unavailable")),
+      hasPriorGrant: vi.fn().mockReturnValue(false),
+      renew: vi.fn().mockRejectedValue(new TypeError("network down")),
+    });
+    const renewer = createBackendDelegationRenewer(deps);
+
+    expect(await renewer.validateRestoredSession({ replaceBackendGrant: true })).toBe(false);
+    expect(deps.validateParent).toHaveBeenCalledTimes(1);
+    expect(deps.checkStatus).not.toHaveBeenCalled();
+    expect(deps.renew).toHaveBeenCalledTimes(1);
+  });
+
   it("latches a missing parent and does not retry automatically", async () => {
     const failure = Object.assign(new Error("dead parent"), {
       code: "missing_parent_delegation",

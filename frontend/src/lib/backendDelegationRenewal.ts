@@ -199,6 +199,12 @@ export function createBackendDelegationRenewer(
         return false;
       }
 
+      // Manual missing-parent recovery creates a new root, so the backend's
+      // previously active child is necessarily stale. Replace it regardless
+      // of the status endpoint or local grant marker, and report success only
+      // after the backend accepts the new chain.
+      if (options?.replaceBackendGrant) return renewOnce();
+
       let status: string;
       try {
         ({ status } = await deps.checkStatus());
@@ -210,10 +216,6 @@ export function createBackendDelegationRenewer(
       }
 
       if (status === "active") {
-        if (options?.replaceBackendGrant) {
-          const renewed = await renewOnce();
-          return renewed || !disabled;
-        }
         log("restored-parent-valid");
         return true;
       }
