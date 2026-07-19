@@ -186,6 +186,7 @@ async function importTranscript(page: Page, title: string): Promise<void> {
 
 async function importTranscriptFromHub(page: Page, title: string): Promise<void> {
   const dialog = page.getByRole("dialog", { name: "Add transcripts" });
+  await expect(dialog).toBeVisible({ timeout: 15_000 });
   await dialog
     .getByLabel("Transcript text")
     .fill(
@@ -281,6 +282,12 @@ test("recovers one dead browser parent through the real OpenKey wallet flow", as
   const privateKey = process.env.LISTEN_E2E_OWNER_PRIVATE_KEY;
   if (!privateKey) throw new Error("LISTEN_E2E_OWNER_PRIVATE_KEY is required");
   await installWallet(page, state, privateKey);
+  page.on("response", (response) => {
+    const url = new URL(response.url());
+    if (url.pathname.startsWith("/api/") && response.status() >= 400) {
+      console.log(`[recovery-e2e] ${response.status()} ${url.pathname}`);
+    }
+  });
 
   const beforeTitle = `Recovery E2E before ${Date.now()}`;
   await page.goto(state.baseURL);

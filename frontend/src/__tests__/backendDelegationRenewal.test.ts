@@ -3,9 +3,6 @@ import {
   createBackendDelegationRenewer,
   delegationRenewalErrorCode,
   withDelegationAutoRenewal,
-  recordBackendDelegationGrant,
-  hasBackendDelegationGrantRecord,
-  clearBackendDelegationGrantRecord,
   type BackendDelegationRenewerDeps,
 } from "../lib/backendDelegationRenewal";
 import type { ApiClient } from "@listen/client";
@@ -16,7 +13,6 @@ function createDeps(overrides: Partial<BackendDelegationRenewerDeps> = {}) {
   const deps: BackendDelegationRenewerDeps = {
     checkStatus: vi.fn().mockResolvedValue({ status: "active" }),
     validateParent: vi.fn().mockResolvedValue(undefined),
-    hasPriorGrant: vi.fn().mockReturnValue(false),
     renew: vi.fn().mockResolvedValue(undefined),
     onRenewed: vi.fn(),
     onRenewalFailed: vi.fn(),
@@ -63,10 +59,9 @@ describe("createBackendDelegationRenewer — ensureFreshDelegation", () => {
     expect(deps.onRenewed).toHaveBeenCalledTimes(1);
   });
 
-  it("renews silently when the stored delegation is stale, without a grant record", async () => {
+  it("renews silently when the stored delegation is stale", async () => {
     const deps = createDeps({
       checkStatus: vi.fn().mockResolvedValue({ status: "stale" }),
-      hasPriorGrant: vi.fn().mockReturnValue(false),
     });
     const renewer = createBackendDelegationRenewer(deps);
 
@@ -75,22 +70,26 @@ describe("createBackendDelegationRenewer — ensureFreshDelegation", () => {
     expect(deps.onRenewed).toHaveBeenCalledTimes(1);
   });
 
-  it("renews when status is none but a prior grant is known", async () => {
+  it("does not report a pending activation as renewed", async () => {
+    const onRenewalFailed = vi.fn();
     const deps = createDeps({
-      checkStatus: vi.fn().mockResolvedValue({ status: "none" }),
-      hasPriorGrant: vi.fn().mockReturnValue(true),
+      checkStatus: vi.fn().mockResolvedValue({ status: "expired" }),
+      renew: vi.fn().mockResolvedValue({ activation: "pending" }),
+      onRenewalFailed,
     });
     const renewer = createBackendDelegationRenewer(deps);
 
-    expect(await renewer.ensureFreshDelegation()).toBe(true);
-    expect(deps.renew).toHaveBeenCalledTimes(1);
+    expect(await renewer.ensureFreshDelegation()).toBe(false);
+    expect(deps.onRenewed).not.toHaveBeenCalled();
+    expect(onRenewalFailed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expect.objectContaining({ code: "delegation_activation_pending" }),
+      }),
+    );
   });
 
-  it("does not renew when status is none and the user never granted", async () => {
-    const deps = createDeps({
-      checkStatus: vi.fn().mockResolvedValue({ status: "none" }),
-      hasPriorGrant: vi.fn().mockReturnValue(false),
-    });
+  it("does not renew when status is none", async () => {
+    const deps = createDeps({ checkStatus: vi.fn().mockResolvedValue({ status: "none" }) });
     const renewer = createBackendDelegationRenewer(deps);
 
     expect(await renewer.ensureFreshDelegation()).toBe(false);
@@ -98,13 +97,18 @@ describe("createBackendDelegationRenewer — ensureFreshDelegation", () => {
   });
 
   it("returns false without throwing when the status check fails", async () => {
+    const onRenewalFailed = vi.fn();
     const deps = createDeps({
       checkStatus: vi.fn().mockRejectedValue(new Error("network down")),
+      onRenewalFailed,
     });
     const renewer = createBackendDelegationRenewer(deps);
 
     expect(await renewer.ensureFreshDelegation()).toBe(false);
     expect(deps.renew).not.toHaveBeenCalled();
+    expect(onRenewalFailed).toHaveBeenCalledWith(
+      expect.objectContaining({ permanent: false, error: expect.any(Error) }),
+    );
   });
 
   it("returns false without throwing when renewal itself fails", async () => {
@@ -136,7 +140,6 @@ describe("createBackendDelegationRenewer — validateRestoredSession", () => {
   it("validates an active delegation without sending it again", async () => {
     const deps = createDeps({
       checkStatus: vi.fn().mockResolvedValue({ status: "active" }),
-      hasPriorGrant: vi.fn().mockReturnValue(false),
     });
     const renewer = createBackendDelegationRenewer(deps);
 
@@ -159,7 +162,6 @@ describe("createBackendDelegationRenewer — validateRestoredSession", () => {
   it("requires backend acceptance when manual recovery replaces the grant", async () => {
     const deps = createDeps({
       checkStatus: vi.fn().mockRejectedValue(new Error("status unavailable")),
-      hasPriorGrant: vi.fn().mockReturnValue(false),
       renew: vi.fn().mockRejectedValue(new TypeError("network down")),
     });
     const renewer = createBackendDelegationRenewer(deps);
@@ -189,7 +191,6 @@ describe("createBackendDelegationRenewer — validateRestoredSession", () => {
   it("validates the parent without creating a first backend grant when the backend has none", async () => {
     const deps = createDeps({
       checkStatus: vi.fn().mockResolvedValue({ status: "none" }),
-      hasPriorGrant: vi.fn().mockReturnValue(false),
     });
     const renewer = createBackendDelegationRenewer(deps);
 
@@ -208,35 +209,48 @@ describe("createBackendDelegationRenewer — validateRestoredSession", () => {
     expect(deps.validateParent).toHaveBeenCalledTimes(1);
     expect(deps.renew).not.toHaveBeenCalled();
   });
+
+  it("records a transient status rejection without converting later expiry into consent", async () => {
+    const statusError = Object.assign(new Error("status temporarily unavailable"), {
+      code: "gateway_timeout",
+    });
+    const onRenewalFailed = vi.fn();
+    const deps = createDeps({
+      checkStatus: vi.fn().mockRejectedValue(statusError),
+      onRenewalFailed,
+    });
+    const renewer = createBackendDelegationRenewer(deps);
+
+    expect(await renewer.validateRestoredSession()).toBe(true);
+    expect(onRenewalFailed).toHaveBeenCalledWith({ permanent: false, error: statusError });
+    expect(await renewer.renewForApiError("delegation_expired")).toBe(false);
+    expect(await renewer.renewForApiError("delegation_stale")).toBe(false);
+    expect(deps.renew).not.toHaveBeenCalled();
+  });
 });
 
 describe("createBackendDelegationRenewer — renewForApiError", () => {
-  it("renews on 401 delegation_expired regardless of grant record", async () => {
-    const deps = createDeps({ hasPriorGrant: vi.fn().mockReturnValue(false) });
+  it("renews on 401 delegation_expired", async () => {
+    const deps = createDeps();
     const renewer = createBackendDelegationRenewer(deps);
 
     expect(await renewer.renewForApiError("delegation_expired")).toBe(true);
     expect(deps.renew).toHaveBeenCalledTimes(1);
   });
 
-  it("renews on 403 delegation_stale regardless of grant record", async () => {
-    const deps = createDeps({ hasPriorGrant: vi.fn().mockReturnValue(false) });
+  it("renews on 403 delegation_stale", async () => {
+    const deps = createDeps();
     const renewer = createBackendDelegationRenewer(deps);
 
     expect(await renewer.renewForApiError("delegation_stale")).toBe(true);
     expect(deps.renew).toHaveBeenCalledTimes(1);
   });
 
-  it("renews on 403 no_delegation only when a prior grant is known", async () => {
-    const withGrant = createDeps({ hasPriorGrant: vi.fn().mockReturnValue(true) });
-    const withGrantRenewer = createBackendDelegationRenewer(withGrant);
-    expect(await withGrantRenewer.renewForApiError("no_delegation")).toBe(true);
-    expect(withGrant.renew).toHaveBeenCalledTimes(1);
-
-    const withoutGrant = createDeps({ hasPriorGrant: vi.fn().mockReturnValue(false) });
-    const withoutGrantRenewer = createBackendDelegationRenewer(withoutGrant);
-    expect(await withoutGrantRenewer.renewForApiError("no_delegation")).toBe(false);
-    expect(withoutGrant.renew).not.toHaveBeenCalled();
+  it("does not renew on 403 no_delegation", async () => {
+    const deps = createDeps();
+    const renewer = createBackendDelegationRenewer(deps);
+    expect(await renewer.renewForApiError("no_delegation")).toBe(false);
+    expect(deps.renew).not.toHaveBeenCalled();
   });
 
   it("shares a single in-flight renewal across concurrent triggers", async () => {
@@ -428,20 +442,20 @@ describe("withDelegationAutoRenewal", () => {
     };
   }
 
-  it("renews and retries the original request once on delegation errors", async () => {
+  it("does not renew or retry the original request for no_delegation", async () => {
     const { client, get } = apiThatFailsOnce("no_delegation", 403);
-    const deps = createDeps({ hasPriorGrant: vi.fn().mockReturnValue(true) });
+    const deps = createDeps();
     const renewer = createBackendDelegationRenewer(deps);
     const wrapped = withDelegationAutoRenewal(client, () => renewer);
 
-    expect(await wrapped.get("/api/workspace-state")).toEqual({ ok: true });
-    expect(get).toHaveBeenCalledTimes(2);
-    expect(deps.renew).toHaveBeenCalledTimes(1);
+    await expect(wrapped.get("/api/workspace-state")).rejects.toThrow("API error (403)");
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(deps.renew).not.toHaveBeenCalled();
   });
 
   it("renews and retries on 403 delegation_stale without a grant record", async () => {
     const { client, get } = apiThatFailsOnce("delegation_stale", 403);
-    const deps = createDeps({ hasPriorGrant: vi.fn().mockReturnValue(false) });
+    const deps = createDeps();
     const renewer = createBackendDelegationRenewer(deps);
     const wrapped = withDelegationAutoRenewal(client, () => renewer);
 
@@ -452,7 +466,7 @@ describe("withDelegationAutoRenewal", () => {
 
   it("rethrows the original error when renewal is declined", async () => {
     const { client, get } = apiThatFailsOnce("no_delegation", 403);
-    const deps = createDeps({ hasPriorGrant: vi.fn().mockReturnValue(false) });
+    const deps = createDeps();
     const renewer = createBackendDelegationRenewer(deps);
     const wrapped = withDelegationAutoRenewal(client, () => renewer);
 
@@ -461,18 +475,18 @@ describe("withDelegationAutoRenewal", () => {
     expect(deps.renew).not.toHaveBeenCalled();
   });
 
-  it("does not retry more than once even if the retry fails the same way", async () => {
+  it("does not retry no_delegation even if the request fails repeatedly", async () => {
     const get = vi
       .fn()
       .mockRejectedValue(new FakeApiError(403, "no_delegation", "API error (403)"));
     const client = { get, post: vi.fn(), put: vi.fn(), del: vi.fn() } as unknown as ApiClient;
-    const deps = createDeps({ hasPriorGrant: vi.fn().mockReturnValue(true) });
+    const deps = createDeps();
     const renewer = createBackendDelegationRenewer(deps);
     const wrapped = withDelegationAutoRenewal(client, () => renewer);
 
     await expect(wrapped.get("/api/anything")).rejects.toThrow("API error (403)");
-    expect(get).toHaveBeenCalledTimes(2);
-    expect(deps.renew).toHaveBeenCalledTimes(1);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(deps.renew).not.toHaveBeenCalled();
   });
 
   it("passes through when no renewer is available", async () => {
@@ -481,29 +495,5 @@ describe("withDelegationAutoRenewal", () => {
 
     await expect(wrapped.get("/api/anything")).rejects.toThrow("API error (403)");
     expect(get).toHaveBeenCalledTimes(1);
-  });
-});
-
-// ── Grant records ────────────────────────────────────────────────────
-
-describe("backend delegation grant records", () => {
-  it("records, reads, and clears grants per address + backend DID", () => {
-    expect(hasBackendDelegationGrantRecord("0xAbC", "did:key:backend")).toBe(false);
-
-    recordBackendDelegationGrant("0xAbC", "did:key:backend");
-    expect(hasBackendDelegationGrantRecord("0xabc", "did:key:backend")).toBe(true);
-    expect(hasBackendDelegationGrantRecord("0xabc", "did:key:other")).toBe(false);
-
-    clearBackendDelegationGrantRecord("0xABC", "did:key:backend");
-    expect(hasBackendDelegationGrantRecord("0xabc", "did:key:backend")).toBe(false);
-  });
-
-  it("uses a listen: prefixed key so sign-out purge removes it", () => {
-    recordBackendDelegationGrant("0xabc", "did:key:backend");
-    const keys = Array.from({ length: localStorage.length }, (_, index) =>
-      localStorage.key(index),
-    ).filter((key): key is string => key?.includes("backend-delegation-grant") === true);
-    expect(keys).toHaveLength(1);
-    expect(keys[0]!.startsWith("listen:")).toBe(true);
   });
 });

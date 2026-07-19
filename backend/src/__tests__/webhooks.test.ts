@@ -34,7 +34,7 @@ function createMockBackendKV() {
   };
 }
 
-function createMockAccess(apiKey?: string) {
+function createMockAccess(apiKey?: string, secretError?: unknown) {
   const kvData = new Map<string, string>();
   if (apiKey) kvData.set(FIREFLIES_KEY_PATH, apiKey);
 
@@ -53,6 +53,7 @@ function createMockAccess(apiKey?: string) {
     },
     secrets: {
       get: async () => {
+        if (secretError) throw secretError;
         const val = kvData.get(FIREFLIES_KEY_PATH);
         if (val === undefined) return { ok: false, error: { code: "KEY_NOT_FOUND" } };
         return { ok: true, data: val };
@@ -204,6 +205,24 @@ describe("POST /api/webhooks/fireflies", () => {
     expect(json.status).toBe("processed");
   });
 
+  it("returns 503 instead of queueing when the Fireflies secret read is unavailable", async () => {
+    mockAccess = createMockAccess(
+      undefined,
+      Object.assign(new Error("node unavailable"), { code: "node_unavailable" }),
+    );
+    delegatedAccessFn = async () => mockAccess;
+
+    const body = validPayload("secret-read-failed");
+    const res = await post(body, { "x-hub-signature": sign(body, SECRET) });
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({
+      status: "error",
+      error: "fireflies_secret_unavailable",
+      secretCode: "node_unavailable",
+    });
+  });
+
   it("returns 200 with status 'processed' for current Fireflies payload format", async () => {
     const body = validPayloadV2("v2-meeting");
     const res = await post(body, { "x-hub-signature": sign(body, SECRET) });
@@ -232,7 +251,7 @@ describe("POST /api/webhooks/fireflies", () => {
 
   // ── Expired delegation path ────────────────────────────────────────
 
-  it("returns 200 with status 'pending' when delegation expired", async () => {
+  it("returns 200 with status 'pending' when delegation is absent", async () => {
     delegatedAccessFn = async () => null;
 
     const body = validPayload();
@@ -241,7 +260,24 @@ describe("POST /api/webhooks/fireflies", () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.status).toBe("pending");
-    expect(json.reason).toBe("delegation_expired");
+    expect(json.reason).toBe("no_delegation");
+  });
+
+  it("keeps operational owner-address and delegation failures distinct while queueing", async () => {
+    delegatedAccessFn = async () => ({
+      access: null,
+      reason: "delegation_unavailable" as const,
+    });
+
+    const body = validPayload("operational-delegation-failure");
+    const res = await post(body, { "x-hub-signature": sign(body, SECRET) });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      status: "pending",
+      reason: "delegation_unavailable",
+    });
+    expect(syncFn).not.toHaveBeenCalled();
   });
 
   it("stores meetingId in pending queue when delegation expired", async () => {

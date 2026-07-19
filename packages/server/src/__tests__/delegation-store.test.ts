@@ -2,6 +2,7 @@ import { describe, test, expect, mock, beforeEach } from "bun:test";
 import { DelegationStore, type DelegationMetadata } from "../delegation-store.js";
 
 interface StoredDelegation {
+  revision: string;
   serialized: string;
   grantedAt: string;
   expiresAt: string;
@@ -13,7 +14,7 @@ function createMockNode() {
   return {
     kv: {
       get: mock(() => Promise.resolve({ data: null })),
-      put: mock(() => Promise.resolve()),
+      put: mock(() => Promise.resolve({ ok: true })),
       delete: mock(() => Promise.resolve()),
     },
     signIn: mock(() => Promise.resolve()),
@@ -22,6 +23,7 @@ function createMockNode() {
 
 function makeDelegation(overrides?: Partial<StoredDelegation>): StoredDelegation {
   return {
+    revision: "revision-test",
     serialized: "base64-encoded-delegation",
     grantedAt: "2026-01-01T00:00:00.000Z",
     expiresAt: "2026-12-31T23:59:59.000Z",
@@ -63,6 +65,7 @@ describe("DelegationStore", () => {
       // Value is passed as object (SDK handles serialization)
       const parsed = typeof value === "string" ? JSON.parse(value) : value;
       expect(parsed.serialized).toBe("serialized-data");
+      expect(parsed.revision).toEqual(expect.any(String));
       expect(parsed.grantedAt).toBe(metadata.grantedAt);
       expect(parsed.expiresAt).toBe(metadata.expiresAt);
       expect(parsed.actions).toEqual(metadata.actions);
@@ -95,6 +98,17 @@ describe("DelegationStore", () => {
         "Failed to store delegation for 0xABC",
       );
     });
+
+    test.each([undefined, {}, { ok: "true" }])(
+      "rejects malformed KV write envelope %#",
+      async (result) => {
+        mockNode.kv.put = mock(() => Promise.resolve(result as any));
+
+        await expect(store.store("0xABC", "data", makeMetadata())).rejects.toMatchObject({
+          code: "delegation_store_invalid_response",
+        });
+      },
+    );
   });
 
   describe("load", () => {
@@ -128,6 +142,18 @@ describe("DelegationStore", () => {
       expect(result).toEqual(delegation);
     });
 
+    test("assigns a stable generation to delegation rows written before revisions existed", async () => {
+      const { revision: _revision, ...legacyDelegation } = makeDelegation();
+      mockNode.kv.get = mock(() => Promise.resolve({ data: JSON.stringify(legacyDelegation) }));
+
+      const first = await store.load("0xAbC123");
+      const second = await store.load("0xAbC123");
+
+      expect(first).toEqual(second);
+      expect(first?.revision).toMatch(/^legacy:[0-9a-f]{64}$/);
+      expect(first?.serialized).toBe(legacyDelegation.serialized);
+    });
+
     test("returns null when kv.get returns no data", async () => {
       mockNode.kv.get = mock(() => Promise.resolve({ data: null }));
 
@@ -135,28 +161,66 @@ describe("DelegationStore", () => {
       expect(result).toBeNull();
     });
 
-    test("returns null when kv.get returns undefined data", async () => {
+    test("returns null when KV confirms the key is missing", async () => {
+      mockNode.kv.get = mock(() =>
+        Promise.resolve({ ok: false, error: { code: "key_not_found", message: "missing" } }),
+      );
+
+      const result = await store.load("0xABC");
+      expect(result).toBeNull();
+    });
+
+    test("does not treat grant_not_found as an absent durable delegation row", async () => {
+      mockNode.kv.get = mock(() =>
+        Promise.resolve({
+          ok: false,
+          error: { code: "grant_not_found", message: "delegation grant missing" },
+        }),
+      );
+
+      await expect(store.load("0xABC")).rejects.toThrow("grant_not_found");
+    });
+
+    test("throws when kv.get returns an unclassified response", async () => {
       mockNode.kv.get = mock(() => Promise.resolve({}));
 
-      const result = await store.load("0xABC");
-      expect(result).toBeNull();
+      await expect(store.load("0xABC")).rejects.toMatchObject({
+        code: "delegation_store_invalid_response",
+      });
     });
 
-    test("returns null on corrupted data", async () => {
+    test.each([
+      { ok: true, data: undefined },
+      { ok: true, data: {} },
+      { ok: true, data: { data: undefined } },
+      { ok: true, data: { data: { unexpected: true } } },
+    ])("throws on malformed successful KV envelope %#", async (response) => {
+      mockNode.kv.get = mock(() => Promise.resolve(response));
+
+      await expect(store.load("0xABC")).rejects.toMatchObject({
+        code: "delegation_store_invalid_response",
+      });
+    });
+
+    test("returns null only for an explicit nested null payload", async () => {
+      mockNode.kv.get = mock(() => Promise.resolve({ ok: true, data: { data: null } }));
+
+      await expect(store.load("0xABC")).resolves.toBeNull();
+    });
+
+    test("throws on corrupted data", async () => {
       mockNode.kv.get = mock(() => Promise.resolve({ data: "not-valid-json{{{" }));
 
-      const result = await store.load("0xABC");
-      expect(result).toBeNull();
+      await expect(store.load("0xABC")).rejects.toThrow("Failed to load delegation");
     });
 
-    test("returns null when parsed data has missing required fields", async () => {
+    test("throws when parsed data has missing required fields", async () => {
       mockNode.kv.get = mock(() => Promise.resolve({ data: JSON.stringify({ serialized: "ok" }) }));
 
-      const result = await store.load("0xABC");
-      expect(result).toBeNull();
+      await expect(store.load("0xABC")).rejects.toThrow("invalid delegation record shape");
     });
 
-    test("returns null when parsed data has wrong field types", async () => {
+    test("throws when parsed data has wrong field types", async () => {
       mockNode.kv.get = mock(() =>
         Promise.resolve({
           data: JSON.stringify({
@@ -167,8 +231,29 @@ describe("DelegationStore", () => {
         }),
       );
 
-      const result = await store.load("0xABC");
-      expect(result).toBeNull();
+      await expect(store.load("0xABC")).rejects.toThrow("invalid delegation record shape");
+    });
+
+    test("throws when expiry metadata is not finite", async () => {
+      mockNode.kv.get = mock(() =>
+        Promise.resolve({
+          data: JSON.stringify({
+            serialized: "ok",
+            expiresAt: "not-a-date",
+            actions: [],
+          }),
+        }),
+      );
+
+      await expect(store.load("0xABC")).rejects.toThrow("invalid delegation record shape");
+    });
+
+    test("throws when KV reports a failed read", async () => {
+      mockNode.kv.get = mock(() =>
+        Promise.resolve({ ok: false, error: { code: "KV_READ_FAILED", message: "unavailable" } }),
+      );
+
+      await expect(store.load("0xABC")).rejects.toThrow("KV_READ_FAILED");
     });
   });
 
@@ -181,26 +266,29 @@ describe("DelegationStore", () => {
       expect(key).toBe("delegations/0xAbC123");
     });
 
-    test("logs but does not throw when kv.delete reports failure", async () => {
+    test("throws when kv.delete reports failure", async () => {
       mockNode.kv.delete = mock(() =>
         Promise.resolve({ ok: false, error: { code: "kv_delete_failed", message: "boom" } }),
       );
-      const originalError = console.error;
-      const errorCalls: unknown[][] = [];
-      console.error = (...args: unknown[]) => {
-        errorCalls.push(args);
-      };
-
-      try {
-        await store.remove("0xAbC123");
-      } finally {
-        console.error = originalError;
-      }
+      await expect(store.remove("0xAbC123")).rejects.toThrow("kv_delete_failed");
 
       expect(mockNode.kv.delete).toHaveBeenCalledTimes(1);
-      expect(errorCalls.length).toBe(1);
-      expect(String(errorCalls[0]![0])).toContain("[DelegationStore]");
-      expect(JSON.stringify(errorCalls[0])).toContain("kv_delete_failed");
+    });
+
+    test("throws when delete reports success but the row remains", async () => {
+      const delegation = makeDelegation();
+      mockNode.kv.get = mock(() => Promise.resolve({ data: JSON.stringify(delegation) }));
+
+      await expect(store.remove("0xAbC123")).rejects.toThrow("record still exists");
+    });
+
+    test("accepts an explicit not-found delete after confirming absence", async () => {
+      mockNode.kv.delete = mock(() =>
+        Promise.resolve({ ok: false, error: { code: "KEY_NOT_FOUND" } }),
+      );
+      mockNode.kv.get = mock(() => Promise.resolve({ ok: true, data: { data: null } }));
+
+      await expect(store.remove("0xAbC123")).resolves.toBeUndefined();
     });
   });
 

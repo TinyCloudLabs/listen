@@ -1,1 +1,0 @@
-{"version":3,"sources":["../../src/bootstrap/index.ts"],"sourcesContent":["export * from \"@tinycloud/bootstrap\";\n"],"mappings":";AAAA,cAAc;","names":[]}

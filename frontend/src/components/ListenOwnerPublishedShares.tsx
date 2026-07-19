@@ -1,4 +1,4 @@
-import { useEffect, useState, type FC } from "react";
+import { useEffect, useRef, useState, type FC } from "react";
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
 
 import {
@@ -13,11 +13,13 @@ import {
 interface ListenOwnerPublishedSharesProps {
   tcw: TinyCloudWeb | null;
   refreshKey?: number;
+  mutationsDisabled?: boolean;
 }
 
 export const ListenOwnerPublishedShares: FC<ListenOwnerPublishedSharesProps> = ({
   tcw,
   refreshKey = 0,
+  mutationsDisabled = false,
 }) => {
   const [projection, setProjection] = useState<PublishedListenOwnerShareProjection>(() => ({
     ...getPublishedListenOwnerShareProjection(),
@@ -26,6 +28,8 @@ export const ListenOwnerPublishedShares: FC<ListenOwnerPublishedSharesProps> = (
   const [revokingShareId, setRevokingShareId] = useState<string | null>(null);
   const [errorShareId, setErrorShareId] = useState<string | null>(null);
   const [revokedShareId, setRevokedShareId] = useState<string | null>(null);
+  const mutationsDisabledRef = useRef(mutationsDisabled);
+  mutationsDisabledRef.current = mutationsDisabled;
 
   const refresh = () =>
     setProjection({
@@ -38,7 +42,7 @@ export const ListenOwnerPublishedShares: FC<ListenOwnerPublishedSharesProps> = (
   }, [refreshKey]);
 
   const revoke = async (share: PublishedListenOwnerShare) => {
-    if (!tcw) return;
+    if (!tcw || mutationsDisabledRef.current) return;
     setRevokingShareId(share.shareId);
     setErrorShareId(null);
     try {
@@ -99,7 +103,7 @@ export const ListenOwnerPublishedShares: FC<ListenOwnerPublishedSharesProps> = (
                 <button
                   type="button"
                   style={s.dangerButton}
-                  disabled={!tcw || revokingShareId === share.shareId}
+                  disabled={!tcw || mutationsDisabled || revokingShareId === share.shareId}
                   onClick={() => void revoke(share)}
                 >
                   {revokingShareId === share.shareId ? "Revoking..." : "Revoke access"}

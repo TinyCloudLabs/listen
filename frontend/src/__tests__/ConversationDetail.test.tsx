@@ -237,6 +237,43 @@ describe("ConversationDetail", () => {
     });
   });
 
+  it("keeps read content mounted while disabling title, repair, and share writes", async () => {
+    const put = vi.fn();
+    const post = vi.fn();
+    const onShare = vi.fn();
+    api = mockApi({
+      get: vi.fn().mockResolvedValue({
+        ...DETAIL_RESPONSE,
+        transcript_status: {
+          available: false,
+          missing: true,
+          repairable: true,
+          message: "Transcript content is missing.",
+        },
+      }),
+      put,
+      post,
+    });
+
+    render(
+      <ConversationDetail
+        api={api}
+        conversationId="01ABC"
+        onBack={onBack}
+        onShare={onShare}
+        mutationsDisabled
+      />,
+    );
+
+    expect(await screen.findByText("Sprint Planning")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /rename conversation/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Share$/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /recover from fireflies/i })).toBeDisabled();
+    expect(put).not.toHaveBeenCalled();
+    expect(post).not.toHaveBeenCalled();
+    expect(onShare).not.toHaveBeenCalled();
+  });
+
   it("renders summary section with HTML", async () => {
     api = mockApi({ get: vi.fn().mockResolvedValue(DETAIL_RESPONSE) });
 

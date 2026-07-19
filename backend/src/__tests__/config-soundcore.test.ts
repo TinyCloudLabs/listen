@@ -69,4 +69,19 @@ describe("Soundcore config secret checks", () => {
       ),
     ).resolves.toEqual({ ok: false, message: "decrypt denied" });
   });
+
+  it("treats malformed successful payloads as unavailable", async () => {
+    await expect(
+      checkAnySecretSetExists(
+        {
+          get: async () => ({ ok: true, data: "" }),
+        },
+        SOUNDCORE_SECRET_SETS,
+        "soundcore",
+      ),
+    ).resolves.toEqual({
+      ok: false,
+      message: "SOUNDCORE_SESSION returned an invalid successful secret response",
+    });
+  });
 });

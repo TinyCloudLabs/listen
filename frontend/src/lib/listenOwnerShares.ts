@@ -20,7 +20,7 @@ import {
   type PolicyEngineRecord,
   type PolicyStatus,
   type SignedObjectSigner,
-} from "@tinycloud/sdk-core-m1/policy";
+} from "@tinycloud/sdk-core/policy";
 import {
   createListenTranscriptSelectionCapability,
   LISTEN_CONTENT_SPACE,

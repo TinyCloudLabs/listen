@@ -53,11 +53,15 @@ import {
 } from "./lib/backendWorkspaceCache";
 import {
   createBackendDelegationRenewer,
-  hasBackendDelegationGrantRecord,
-  recordBackendDelegationGrant,
   withDelegationAutoRenewal,
   type BackendDelegationRenewer,
 } from "./lib/backendDelegationRenewal";
+import {
+  classifyDelegationFailure,
+  classifyDelegationState,
+  sourceNeedsConsent,
+  type DelegationLifecycleState,
+} from "./lib/delegationState";
 
 // ── Environment ─────────────────────────────────────────────────────
 
@@ -92,6 +96,12 @@ const DEEPGRAM_SECRET_NAME = "DEEPGRAM_API_KEY";
 type ProviderSecretSource = "fireflies" | "granola" | "soundcore" | "assemblyai" | "deepgram";
 type TranscriptionProvider = "assemblyai" | "deepgram";
 type TranscriptionProviderStatus = Record<TranscriptionProvider, boolean | null>;
+type BackendAccessRenewalOutcome = "transient" | "session_authority";
+
+interface OwnerSecretCheck {
+  exists: boolean | null;
+  error?: string;
+}
 
 const EMPTY_TRANSCRIPTION_STATUS: TranscriptionProviderStatus = {
   assemblyai: null,
@@ -230,6 +240,23 @@ const BACKEND_ACCESS_INVALIDATION_CODES = new Set([
   "no_delegation",
   "delegation_expired",
   "delegation_stale",
+  "delegation_unavailable",
+  "delegation_activation_failed",
+  "gateway_timeout",
+  "backend_unavailable",
+  "backend_access_unavailable",
+  "node_unavailable",
+  "store_unavailable",
+  "delegation_store_unavailable",
+  "delegation_store_invalid_response",
+  "workspace_state_failed",
+  "secret_read_failed",
+  "fireflies_secret_unavailable",
+  "granola_secret_unavailable",
+  "soundcore_secret_unavailable",
+  "transcription_secret_unavailable",
+  "secrets_access_missing",
+  "invalid_secret_response",
 ]);
 
 const SESSION_EXPIRY_CODES = new Set([
@@ -242,10 +269,33 @@ const SESSION_EXPIRY_CODES = new Set([
 
 function isBackendAccessInvalidationError(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
-  const code = (err as { code?: unknown }).code;
-  // Deliberately avoid message matching, including AUTH_DENIED: delegated
-  // secret-permission failures surface through source flows, not cache invalidation.
-  return typeof code === "string" && BACKEND_ACCESS_INVALIDATION_CODES.has(code);
+  const value = err as { code?: unknown; status?: unknown; name?: unknown; message?: unknown };
+  const code = typeof value.code === "string" ? value.code : "";
+  const normalizedCode = code.toLowerCase();
+  // Optional integrations use 501 when intentionally disabled. That is a
+  // feature-state response, not evidence that backend access became unavailable.
+  if (normalizedCode === "not_configured") return false;
+  if (
+    BACKEND_ACCESS_INVALIDATION_CODES.has(normalizedCode) ||
+    /(?:unavailable|timeout|timed_out|transport|network|store|kv|node|secret)/.test(normalizedCode)
+  ) {
+    return true;
+  }
+
+  // Server failures are operational, while ordinary 4xx validation, auth, and
+  // business responses are not evidence that the delegation is unavailable.
+  if (typeof value.status === "number" && (value.status >= 500 || value.status === 408)) {
+    return true;
+  }
+  const name = typeof value.name === "string" ? value.name : "";
+  const message = typeof value.message === "string" ? value.message : "";
+  return (
+    name === "TypeError" ||
+    name === "AbortError" ||
+    /Failed to fetch|NetworkError|fetch failed|ECONN|ETIMEDOUT|timed out|network (?:unavailable|down|failed|error)/i.test(
+      message,
+    )
+  );
 }
 
 function isSessionExpiryError(err: unknown): boolean {
@@ -309,8 +359,34 @@ function withSessionExpiryDetection(api: ApiClient, onSessionExpired: () => void
   };
 }
 
-function workspaceBackendStatus(readable: boolean | null, delegationActive: boolean) {
-  return readable ?? (delegationActive ? false : null);
+function workspaceBackendStatus(readable: boolean | null) {
+  return readable;
+}
+
+function aggregateSoundcoreReadability(
+  secrets: WorkspaceStateResponse["backendReadableSecrets"],
+): boolean | null {
+  const soundcoreSecrets = [
+    secrets.soundcoreSession,
+    secrets.soundcoreAuthToken,
+    secrets.soundcoreUid,
+    secrets.soundcoreOpenudid,
+  ];
+  if (soundcoreSecrets.some((secret) => secret.error !== undefined)) return null;
+
+  const legacyReadable =
+    secrets.soundcoreAuthToken.readable === true &&
+    secrets.soundcoreUid.readable === true &&
+    secrets.soundcoreOpenudid.readable === true
+      ? true
+      : secrets.soundcoreAuthToken.readable === false ||
+          secrets.soundcoreUid.readable === false ||
+          secrets.soundcoreOpenudid.readable === false
+        ? false
+        : null;
+  if (secrets.soundcoreSession.readable === true || legacyReadable === true) return true;
+  if (secrets.soundcoreSession.readable === false && legacyReadable === false) return false;
+  return null;
 }
 
 function applyWorkspaceReadiness(
@@ -318,6 +394,7 @@ function applyWorkspaceReadiness(
   {
     hasTinyCloud,
     setHasBackendDelegation,
+    setBackendDelegationState,
     setHasFirefliesBackendAccess,
     setHasGranolaBackendAccess,
     setHasSoundcoreBackendAccess,
@@ -328,9 +405,13 @@ function applyWorkspaceReadiness(
     setHasSoundcoreKey,
     setHasTranscriptionKeys,
     setHasExistingConversations,
+    backendAccessRenewalOutcome,
+    ownerSecretDiscoveryPending,
+    ownerSecretDiscoveryFailed,
   }: {
     hasTinyCloud: boolean;
     setHasBackendDelegation: (value: boolean) => void;
+    setBackendDelegationState: (value: DelegationLifecycleState) => void;
     setHasFirefliesBackendAccess: (value: boolean | null) => void;
     setHasGranolaBackendAccess: (value: boolean | null) => void;
     setHasSoundcoreBackendAccess: (value: boolean | null) => void;
@@ -341,29 +422,58 @@ function applyWorkspaceReadiness(
     setHasSoundcoreKey: (value: SetStateAction<boolean | null>) => void;
     setHasTranscriptionKeys: (value: SetStateAction<TranscriptionProviderStatus>) => void;
     setHasExistingConversations: (value: boolean) => void;
+    backendAccessRenewalOutcome?: BackendAccessRenewalOutcome | null;
+    ownerSecretDiscoveryPending?: boolean;
+    ownerSecretDiscoveryFailed?: boolean;
   },
 ): void {
-  const delegationActive = state.delegation.status === "active";
-  setHasBackendDelegation(delegationActive);
-
+  const classifiedDelegationState = classifyDelegationState(state.delegation);
+  const delegationActive = classifiedDelegationState === "ready";
+  const resolvedDelegationState =
+    ownerSecretDiscoveryFailed ||
+    (backendAccessRenewalOutcome === "transient" &&
+      (state.delegation.status === "expired" || state.delegation.status === "stale"))
+      ? "unavailable"
+      : classifiedDelegationState;
   const backendSecretReadable = state.backendReadableSecrets;
-  setHasFirefliesBackendAccess(
-    workspaceBackendStatus(backendSecretReadable.fireflies.readable, delegationActive),
+  const soundcoreBackendReadable = aggregateSoundcoreReadability(backendSecretReadable);
+  const operationalSecretFailure =
+    delegationActive &&
+    [
+      backendSecretReadable.fireflies,
+      backendSecretReadable.granola,
+      backendSecretReadable.assemblyai,
+      backendSecretReadable.deepgram,
+    ].some((secret) => secret.readable === null && secret.error !== undefined);
+  const operationalSoundcoreFailure =
+    delegationActive &&
+    [
+      backendSecretReadable.soundcoreSession,
+      backendSecretReadable.soundcoreAuthToken,
+      backendSecretReadable.soundcoreUid,
+      backendSecretReadable.soundcoreOpenudid,
+    ].some((secret) => secret.error !== undefined);
+  const googleMeetUnavailable = delegationActive && state.googleMeet.connected === null;
+  const conversationExistenceUnknown = delegationActive && state.conversations.hasAny === null;
+  setBackendDelegationState(
+    ownerSecretDiscoveryPending ||
+      operationalSecretFailure ||
+      operationalSoundcoreFailure ||
+      googleMeetUnavailable ||
+      conversationExistenceUnknown
+      ? "unavailable"
+      : resolvedDelegationState,
   );
-  setHasGranolaBackendAccess(
-    workspaceBackendStatus(backendSecretReadable.granola.readable, delegationActive),
-  );
-  const soundcoreBackendReadable =
-    backendSecretReadable.soundcoreSession.readable === true ||
-    (backendSecretReadable.soundcoreAuthToken.readable === true &&
-      backendSecretReadable.soundcoreUid.readable === true &&
-      backendSecretReadable.soundcoreOpenudid.readable === true);
-  setHasSoundcoreBackendAccess(workspaceBackendStatus(soundcoreBackendReadable, delegationActive));
+  setHasBackendDelegation(delegationActive && !ownerSecretDiscoveryPending);
+
+  setHasFirefliesBackendAccess(workspaceBackendStatus(backendSecretReadable.fireflies.readable));
+  setHasGranolaBackendAccess(workspaceBackendStatus(backendSecretReadable.granola.readable));
+  setHasSoundcoreBackendAccess(workspaceBackendStatus(soundcoreBackendReadable));
   setHasTranscriptionBackendAccess({
-    assemblyai: workspaceBackendStatus(backendSecretReadable.assemblyai.readable, delegationActive),
-    deepgram: workspaceBackendStatus(backendSecretReadable.deepgram.readable, delegationActive),
+    assemblyai: workspaceBackendStatus(backendSecretReadable.assemblyai.readable),
+    deepgram: workspaceBackendStatus(backendSecretReadable.deepgram.readable),
   });
-  setHasGoogleMeet(state.googleMeet.connected ?? (delegationActive ? false : null));
+  setHasGoogleMeet(state.googleMeet.connected);
 
   if (!hasTinyCloud) {
     setHasKey(backendSecretReadable.fireflies.readable === true);
@@ -373,44 +483,22 @@ function applyWorkspaceReadiness(
       assemblyai: backendSecretReadable.assemblyai.readable === true,
       deepgram: backendSecretReadable.deepgram.readable === true,
     });
-  }
-  if (backendSecretReadable.fireflies.readable === true) {
-    setHasKey(true);
-  }
-  if (backendSecretReadable.granola.readable === true) {
-    setHasGranolaKey(true);
-  }
-  if (soundcoreBackendReadable) {
-    setHasSoundcoreKey(true);
-  }
-  if (
-    backendSecretReadable.assemblyai.readable === true ||
-    backendSecretReadable.deepgram.readable === true
-  ) {
-    setHasTranscriptionKeys((previous) => ({
-      assemblyai: backendSecretReadable.assemblyai.readable === true || previous.assemblyai,
-      deepgram: backendSecretReadable.deepgram.readable === true || previous.deepgram,
-    }));
+  } else {
+    if (backendSecretReadable.fireflies.readable === true) setHasKey(true);
+    if (backendSecretReadable.granola.readable === true) setHasGranolaKey(true);
+    if (soundcoreBackendReadable) setHasSoundcoreKey(true);
+    if (
+      backendSecretReadable.assemblyai.readable === true ||
+      backendSecretReadable.deepgram.readable === true
+    ) {
+      setHasTranscriptionKeys((previous) => ({
+        assemblyai: backendSecretReadable.assemblyai.readable === true || previous.assemblyai,
+        deepgram: backendSecretReadable.deepgram.readable === true || previous.deepgram,
+      }));
+    }
   }
 
-  // Key states must always resolve to a boolean once workspace-state
-  // responds, regardless of delegation status: with no active delegation
-  // backend readability is unknowable (map null -> false, keep an
-  // in-session true); with an active delegation the server's readable
-  // booleans are definitive for anything still unresolved.
-  setHasKey((previous) => previous ?? backendSecretReadable.fireflies.readable === true);
-  setHasGranolaKey((previous) => previous ?? backendSecretReadable.granola.readable === true);
-  setHasSoundcoreKey((previous) => previous ?? soundcoreBackendReadable === true);
-  setHasTranscriptionKeys((previous) => ({
-    assemblyai: previous.assemblyai ?? backendSecretReadable.assemblyai.readable === true,
-    deepgram: previous.deepgram ?? backendSecretReadable.deepgram.readable === true,
-  }));
-
-  if (state.conversations.hasAny !== null) {
-    setHasExistingConversations(state.conversations.hasAny);
-  } else if (!hasTinyCloud && delegationActive) {
-    setHasExistingConversations(false);
-  }
+  if (state.conversations.hasAny !== null) setHasExistingConversations(state.conversations.hasAny);
 }
 
 // Display headlines render in JetBrains Mono (--lst-font-display)
@@ -820,6 +908,51 @@ async function checkSecretExistsFromBackend(
   }
 }
 
+async function checkOwnerSecretExists(
+  tcw: TinyCloudWeb,
+  secretName: string,
+): Promise<OwnerSecretCheck> {
+  try {
+    const result = await tcw.secrets.get(secretName);
+    if (result.ok === true) {
+      return typeof result.data === "string" && result.data.trim() !== ""
+        ? { exists: true }
+        : {
+            exists: null,
+            error: "INVALID_SECRET_RESPONSE",
+          };
+    }
+    const code = result.error?.code?.toLowerCase();
+    if (code && ["key_not_found", "not_found", "kv_not_found"].includes(code)) {
+      return { exists: false };
+    }
+    return {
+      exists: null,
+      error: code ?? result.error?.message ?? "owner_secret_check_failed",
+    };
+  } catch (error) {
+    const code =
+      typeof error === "object" &&
+      error !== null &&
+      typeof (error as { code?: unknown }).code === "string"
+        ? (error as { code: string }).code
+        : undefined;
+    return {
+      exists: null,
+      error: code ?? (error instanceof Error ? error.message : String(error)),
+    };
+  }
+}
+
+function soundcoreOwnerSecretExists(
+  session: boolean | null,
+  legacy: readonly (boolean | null)[],
+): boolean | null {
+  if (session === true || legacy.every((value) => value === true)) return true;
+  if (session === null || legacy.some((value) => value === null)) return null;
+  return false;
+}
+
 function providerForTranscriptionSecret(secretName: string): TranscriptionProvider | null {
   if (secretName === ASSEMBLYAI_SECRET_NAME) return "assemblyai";
   if (secretName === DEEPGRAM_SECRET_NAME) return "deepgram";
@@ -864,7 +997,8 @@ type WorkspaceStatusMode =
   | "granola-access"
   | "soundcore-access"
   | "wallet"
-  | "backend-offline";
+  | "backend-offline"
+  | "delegation-unavailable";
 
 function WorkspaceStatusPanel({
   mode,
@@ -919,6 +1053,13 @@ function WorkspaceStatusPanel({
       copy: "TinyCloud conversations remain available directly from your space. Sync, source setup, Google Meet, and backend imports are unavailable until the Listen backend is reachable.",
       action: "Reconnect backend",
       items: ["TinyCloud direct reads", "sync unavailable", "source setup unavailable"],
+    },
+    "delegation-unavailable": {
+      eyebrow: "workspace unavailable",
+      title: "Backend access is temporarily unavailable.",
+      copy: "Listen could not activate the stored delegation. This is an operational problem, not a consent request. Try again when the backend or TinyCloud node is reachable.",
+      action: "Try again",
+      items: ["stored grant preserved", "activation unavailable", "no wallet prompt"],
     },
   }[mode];
 
@@ -981,6 +1122,8 @@ export function App() {
     EMPTY_TRANSCRIPTION_STATUS,
   );
   const [hasBackendDelegation, setHasBackendDelegation] = useState<boolean | null>(null);
+  const [backendDelegationState, setBackendDelegationState] =
+    useState<DelegationLifecycleState | null>(null);
   const [hasFirefliesBackendAccess, setHasFirefliesBackendAccess] = useState<boolean | null>(null);
   const [hasGranolaBackendAccess, setHasGranolaBackendAccess] = useState<boolean | null>(null);
   const [hasSoundcoreBackendAccess, setHasSoundcoreBackendAccess] = useState<boolean | null>(null);
@@ -988,14 +1131,20 @@ export function App() {
     useState<TranscriptionProviderStatus>(EMPTY_TRANSCRIPTION_STATUS);
   const [hasGoogleMeet, setHasGoogleMeet] = useState<boolean | null>(null);
   const [hasExistingConversations, setHasExistingConversations] = useState<boolean | null>(null);
+  const [ownerSecretDiscoveryPending, setOwnerSecretDiscoveryPending] = useState(false);
+  const [ownerSecretDiscoveryFailed, setOwnerSecretDiscoveryFailed] = useState(false);
+  const [workspaceStatePending, setWorkspaceStatePending] = useState(false);
+  const [hasWorkspaceStateSnapshot, setHasWorkspaceStateSnapshot] = useState(false);
   const [workspaceActionLoading, setWorkspaceActionLoading] = useState(false);
   const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null);
   const [activePage, setActivePage] = useState<ShellRoute>("inbox");
+  const [sourcesSetupMode, setSourcesSetupMode] = useState<"onboarding" | "sources" | null>(null);
   const [sourcesInitialStep, setSourcesInitialStep] = useState<
     "cards" | "transcript-import" | "soundcore-key"
   >("cards");
   const [refreshKey, setRefreshKey] = useState(0);
   const [workspaceRefreshKey, setWorkspaceRefreshKey] = useState(0);
+  const [ownerSecretRefreshKey, setOwnerSecretRefreshKey] = useState(0);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [shareConversationId, setShareConversationId] = useState<string | null>(null);
   const [ownerShareConversationIds, setOwnerShareConversationIds] = useState<string[]>([]);
@@ -1018,7 +1167,9 @@ export function App() {
 
   const sessionStoreRef = useRef(new SessionStore());
   const backendRenewerRef = useRef<BackendDelegationRenewer | null>(null);
-  const backendAccessRenewalFailedRef = useRef(false);
+  const backendAccessRenewalOutcomeRef = useRef<BackendAccessRenewalOutcome | null>(null);
+  const ownerSecretDiscoveryPendingRef = useRef(false);
+  const ownerSecretDiscoveryFailedRef = useRef(false);
   const authInFlightRef = useRef(false);
   const isMobile = useIsMobile();
   const chatEnabled = isChatEnabled();
@@ -1040,11 +1191,12 @@ export function App() {
         reason: err instanceof Error ? err.message : String(err),
       });
       setHasBackendDelegation(false);
+      setBackendDelegationState("unavailable");
       setHasFirefliesBackendAccess(null);
       setHasGranolaBackendAccess(null);
       setHasSoundcoreBackendAccess(null);
       setHasTranscriptionBackendAccess(EMPTY_TRANSCRIPTION_STATUS);
-      setHasGoogleMeet(false);
+      setHasGoogleMeet(null);
     });
 
     const sessionAwareClient = withSessionExpiryDetection(invalidatingClient, () =>
@@ -1063,10 +1215,11 @@ export function App() {
       void tcwInstance.signOut?.().catch(() => undefined);
       if (bDid) clearBackendWorkspaceCache(addr, bDid);
       backendRenewerRef.current = null;
-      backendAccessRenewalFailedRef.current = false;
+      backendAccessRenewalOutcomeRef.current = null;
       setStorageSessionInvalid(true);
       setSessionExpired(false);
       setBackendAccessExpired(false);
+      setBackendDelegationState("unavailable");
       setTcw(null);
       setHasWalletSigner(false);
       setHasBackendDelegation(false);
@@ -1105,7 +1258,6 @@ export function App() {
           const { serialized } = await createManifestDelegation(tcwInstance, bDid, composedRequest);
           validatedDelegation = serialized;
         },
-        hasPriorGrant: () => hasBackendDelegationGrantRecord(addr, bDid),
         renew: async () => {
           const token = sessionStoreRef.current.getToken();
           if (!token) throw new Error("Missing backend session token");
@@ -1113,12 +1265,12 @@ export function App() {
             validatedDelegation ??
             (await createManifestDelegation(tcwInstance, bDid, composedRequest)).serialized;
           validatedDelegation = null;
-          await sendDelegation(BACKEND_URL, serialized, token);
+          return sendDelegation(BACKEND_URL, serialized, token);
         },
         onRenewed: () => {
-          backendAccessRenewalFailedRef.current = false;
+          backendAccessRenewalOutcomeRef.current = null;
           clearBackendWorkspaceCache(addr, bDid);
-          recordBackendDelegationGrant(addr, bDid);
+          setBackendDelegationState("ready");
           setHasBackendDelegation(true);
           setBackendAccessExpired(false);
           setRefreshKey((k) => k + 1);
@@ -1130,10 +1282,13 @@ export function App() {
             markStorageSessionInvalid(addr, tcwInstance, bDid);
             return;
           }
-          if (permanent) {
-            backendAccessRenewalFailedRef.current = true;
-            setBackendAccessExpired(true);
-          }
+          const state = permanent ? classifyDelegationFailure(error) : "unavailable";
+          backendAccessRenewalOutcomeRef.current =
+            state === "needs_consent" ? "session_authority" : "transient";
+          setBackendDelegationState(state);
+          setHasBackendDelegation(false);
+          setBackendAccessExpired(state === "needs_consent");
+          setWorkspaceRefreshKey((key) => key + 1);
         },
         log: (event, detail) => debugLog("delegation.auto-renew", event, detail),
       });
@@ -1159,13 +1314,14 @@ export function App() {
   const applyDirectTinyCloudSession = useCallback((addr: string, tcwInstance: TinyCloudWeb) => {
     clearBackendWorkspaceCache(addr);
     backendRenewerRef.current = null;
-    backendAccessRenewalFailedRef.current = false;
+    backendAccessRenewalOutcomeRef.current = null;
     sessionStoreRef.current.clear();
     setAddress(addr);
     setDid(tcwInstance.did ?? null);
     setTcw(tcwInstance);
     setHasWalletSigner(true);
     setApi(null);
+    setBackendDelegationState(null);
     setSessionExpired(false);
     setBackendAccessExpired(false);
     setStorageSessionInvalid(false);
@@ -1293,7 +1449,9 @@ export function App() {
       setSessionExpired(false);
       setBackendAccessExpired(false);
       if (!missingParent) setStorageSessionInvalid(false);
-      if (backendAccessRenewalFailedRef.current) setBackendAccessExpired(true);
+      if (backendAccessRenewalOutcomeRef.current === "session_authority") {
+        setBackendAccessExpired(true);
+      }
       setAgentInfo(agent);
       setBackendDid(info.did);
       setCapabilityRequest(composedRequest);
@@ -1340,12 +1498,22 @@ export function App() {
 
     try {
       const { serialized } = await createManifestDelegation(tcw, backendDid, capabilityRequest);
-      await sendDelegation(BACKEND_URL, serialized, token);
-      if (address) recordBackendDelegationGrant(address, backendDid);
-      backendAccessRenewalFailedRef.current = false;
+      const response = await sendDelegation(BACKEND_URL, serialized, token);
+      if (response.activation !== "active") {
+        setHasBackendDelegation(false);
+        setBackendDelegationState("unavailable");
+        setWorkspaceRefreshKey((key) => key + 1);
+        throw Object.assign(
+          new Error("Backend accepted the delegation, but activation is still unavailable."),
+          { code: "delegation_activation_failed" },
+        );
+      }
+      backendAccessRenewalOutcomeRef.current = null;
       setHasBackendDelegation(true);
+      setBackendDelegationState("ready");
       backendRenewerRef.current?.reset();
       setBackendAccessExpired(false);
+      setWorkspaceRefreshKey((key) => key + 1);
       step.complete({ ok: true, backendDid });
     } catch (err) {
       step.fail(err);
@@ -1390,12 +1558,22 @@ export function App() {
           ...target.permissions,
           ...secretPermissions,
         ]);
-        await sendDelegation(BACKEND_URL, serialized, token);
-        if (address) recordBackendDelegationGrant(address, backendDid);
-        backendAccessRenewalFailedRef.current = false;
+        const response = await sendDelegation(BACKEND_URL, serialized, token);
+        if (response.activation !== "active") {
+          setHasBackendDelegation(false);
+          setBackendDelegationState("unavailable");
+          setWorkspaceRefreshKey((key) => key + 1);
+          throw Object.assign(
+            new Error("Backend accepted the delegation, but activation is still unavailable."),
+            { code: "delegation_activation_failed" },
+          );
+        }
+        backendAccessRenewalOutcomeRef.current = null;
         setHasBackendDelegation(true);
+        setBackendDelegationState("ready");
         backendRenewerRef.current?.reset();
         setBackendAccessExpired(false);
+        setWorkspaceRefreshKey((key) => key + 1);
         step.complete({ ok: true, backendDid, secretCount: secretNames.length });
       } catch (err) {
         step.fail(err);
@@ -1409,8 +1587,94 @@ export function App() {
   );
 
   useEffect(() => {
+    if (!tcw) {
+      ownerSecretDiscoveryPendingRef.current = false;
+      setOwnerSecretDiscoveryPending(false);
+      return;
+    }
+
+    let cancelled = false;
+    // Keep the barrier synchronous: workspace-state can resolve before React
+    // commits the pending state update from this effect.
+    ownerSecretDiscoveryPendingRef.current = true;
+    setOwnerSecretDiscoveryPending(true);
+    ownerSecretDiscoveryFailedRef.current = false;
+    setOwnerSecretDiscoveryFailed(false);
+    setWorkspaceActionError(null);
+    setHasKey(null);
+    setHasGranolaKey(null);
+    setHasSoundcoreKey(null);
+    setHasTranscriptionKeys(EMPTY_TRANSCRIPTION_STATUS);
+
+    Promise.all([
+      checkOwnerSecretExists(tcw, FIREFLIES_SECRET_NAME),
+      checkOwnerSecretExists(tcw, GRANOLA_SECRET_NAME),
+      checkOwnerSecretExists(tcw, SOUNDCORE_SESSION_SECRET_NAME),
+      ...SOUNDCORE_SECRET_NAMES.map((secretName) => checkOwnerSecretExists(tcw, secretName)),
+      checkOwnerSecretExists(tcw, ASSEMBLYAI_SECRET_NAME),
+      checkOwnerSecretExists(tcw, DEEPGRAM_SECRET_NAME),
+    ]).then(
+      ([fireflies, granola, soundcoreSession, ...remaining]) => {
+        if (cancelled) return;
+        ownerSecretDiscoveryPendingRef.current = false;
+        setOwnerSecretDiscoveryPending(false);
+        const [soundcoreAuthToken, soundcoreUid, soundcoreOpenudid, assemblyai, deepgram] =
+          remaining;
+        const checks = [
+          fireflies,
+          granola,
+          soundcoreSession,
+          soundcoreAuthToken,
+          soundcoreUid,
+          soundcoreOpenudid,
+          assemblyai,
+          deepgram,
+        ];
+        const discoveryFailure = checks.find((check) => check.error !== undefined);
+        ownerSecretDiscoveryFailedRef.current = discoveryFailure !== undefined;
+        setOwnerSecretDiscoveryFailed(discoveryFailure !== undefined);
+        if (discoveryFailure) {
+          setBackendDelegationState("unavailable");
+          setWorkspaceActionError(discoveryFailure.error ?? "owner_secret_check_failed");
+        }
+        if (!discoveryFailure && api) setWorkspaceRefreshKey((key) => key + 1);
+        setHasKey(fireflies.exists);
+        setHasGranolaKey(granola.exists);
+        setHasSoundcoreKey(
+          soundcoreOwnerSecretExists(soundcoreSession.exists, [
+            soundcoreAuthToken.exists,
+            soundcoreUid.exists,
+            soundcoreOpenudid.exists,
+          ]),
+        );
+        setHasTranscriptionKeys({ assemblyai: assemblyai.exists, deepgram: deepgram.exists });
+      },
+      (_error) => {
+        if (cancelled) return;
+        ownerSecretDiscoveryPendingRef.current = false;
+        setOwnerSecretDiscoveryPending(false);
+        ownerSecretDiscoveryFailedRef.current = true;
+        setOwnerSecretDiscoveryFailed(true);
+        setBackendDelegationState("unavailable");
+        setWorkspaceActionError(_error instanceof Error ? _error.message : String(_error));
+        setHasKey(null);
+        setHasGranolaKey(null);
+        setHasSoundcoreKey(null);
+        setHasTranscriptionKeys(EMPTY_TRANSCRIPTION_STATUS);
+      },
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, ownerSecretRefreshKey, tcw]);
+
+  useEffect(() => {
     if (!api) {
+      setWorkspaceStatePending(false);
+      setHasWorkspaceStateSnapshot(false);
       setHasBackendDelegation(tcw ? false : null);
+      setBackendDelegationState(tcw ? "unavailable" : null);
       setHasFirefliesBackendAccess(null);
       setHasGranolaBackendAccess(null);
       setHasSoundcoreBackendAccess(null);
@@ -1425,14 +1689,16 @@ export function App() {
       return;
     }
 
-    let appliedCachedState = false;
+    setWorkspaceStatePending(true);
     if (address && backendDid && workspaceRefreshKey === 0) {
       const cached = readBackendWorkspaceCache(address, backendDid);
       if (cached) {
         const cachedState = workspaceStateFromCache(cached);
+        setHasWorkspaceStateSnapshot(true);
         applyWorkspaceReadiness(cachedState, {
           hasTinyCloud: tcw !== null,
           setHasBackendDelegation,
+          setBackendDelegationState,
           setHasFirefliesBackendAccess,
           setHasGranolaBackendAccess,
           setHasSoundcoreBackendAccess,
@@ -1443,8 +1709,10 @@ export function App() {
           setHasSoundcoreKey,
           setHasTranscriptionKeys,
           setHasExistingConversations,
+          backendAccessRenewalOutcome: backendAccessRenewalOutcomeRef.current,
+          ownerSecretDiscoveryPending: ownerSecretDiscoveryPendingRef.current,
+          ownerSecretDiscoveryFailed: ownerSecretDiscoveryFailedRef.current,
         });
-        appliedCachedState = true;
         debugLog("workspace-state.cache", "hit", {
           backendDid,
           expiresAt: cached.expiresAt,
@@ -1481,6 +1749,7 @@ export function App() {
         applyWorkspaceReadiness(state, {
           hasTinyCloud: tcw !== null,
           setHasBackendDelegation,
+          setBackendDelegationState,
           setHasFirefliesBackendAccess,
           setHasGranolaBackendAccess,
           setHasSoundcoreBackendAccess,
@@ -1491,13 +1760,19 @@ export function App() {
           setHasSoundcoreKey,
           setHasTranscriptionKeys,
           setHasExistingConversations,
+          backendAccessRenewalOutcome: backendAccessRenewalOutcomeRef.current,
+          ownerSecretDiscoveryPending: ownerSecretDiscoveryPendingRef.current,
+          ownerSecretDiscoveryFailed: ownerSecretDiscoveryFailedRef.current,
         });
-        if (address && backendDid && state.delegation.status === "active") {
+        setHasWorkspaceStateSnapshot(true);
+        setWorkspaceStatePending(false);
+        if (
+          address &&
+          backendDid &&
+          state.delegation.status === "active" &&
+          state.delegation.activation === "active"
+        ) {
           writeBackendWorkspaceCache(address, backendDid, state);
-          // Persist evidence of the grant so silent renewal stays available
-          // after the backend deletes an expired row (covers grants made
-          // before renewal shipped).
-          recordBackendDelegationGrant(address, backendDid);
           debugLog("workspace-state.cache", "stored", {
             backendDid,
             expiresAt: state.delegation.expiresAt,
@@ -1530,28 +1805,18 @@ export function App() {
         }
         step.fail(err);
         if (address && tcw && isMissingParentDelegationError(err)) {
+          setWorkspaceStatePending(false);
           markStorageSessionInvalid(address, tcw, backendDid ?? undefined);
           return;
         }
-        const errCode = (err as { code?: unknown }).code;
-        if (appliedCachedState && typeof errCode !== "string") {
-          // Transient, un-coded failure (network/offline) over cached-good
-          // state: keep showing the cached workspace instead of downgrading.
-          return;
-        }
+        setWorkspaceStatePending(false);
         setHasBackendDelegation(false);
+        setBackendDelegationState("unavailable");
         setHasFirefliesBackendAccess(null);
         setHasGranolaBackendAccess(null);
         setHasSoundcoreBackendAccess(null);
         setHasTranscriptionBackendAccess(EMPTY_TRANSCRIPTION_STATUS);
-        setHasGoogleMeet(false);
-        if (!tcw) {
-          setHasKey(false);
-          setHasGranolaKey(false);
-          setHasSoundcoreKey(false);
-          setHasTranscriptionKeys({ assemblyai: false, deepgram: false });
-          setHasExistingConversations(false);
-        }
+        setHasGoogleMeet(null);
       });
 
     return () => {
@@ -1560,10 +1825,14 @@ export function App() {
   }, [address, api, backendDid, markStorageSessionInvalid, workspaceRefreshKey, tcw]);
 
   useEffect(() => {
-    if (!conversationApi || (!tcw && hasBackendDelegation !== true)) {
+    if (
+      !conversationApi ||
+      (!tcw && hasBackendDelegation !== true && backendDelegationState !== "unavailable")
+    ) {
       setHasExistingConversations(null);
       return;
     }
+    if (!tcw && hasBackendDelegation !== true) return;
 
     const step = startDebugStep("conversations.exists", {
       path: "/api/conversations?limit=1&offset=0",
@@ -1578,9 +1847,12 @@ export function App() {
       })
       .catch((err) => {
         step.fail(err);
-        setHasExistingConversations(false);
+        // A failed existence probe is operationally unknown. Keep the last
+        // proven value for stale rendering, but make the workspace unavailable
+        // so no new mutations can begin.
+        setBackendDelegationState("unavailable");
       });
-  }, [conversationApi, hasBackendDelegation, refreshKey, tcw]);
+  }, [backendDelegationState, conversationApi, hasBackendDelegation, refreshKey, tcw]);
 
   useEffect(() => {
     if (!api || hasFirefliesBackendAccess !== true) return;
@@ -1651,7 +1923,7 @@ export function App() {
       setAuthLoading(true);
       setAuthError(null);
       setWorkspaceActionError(null);
-      backendAccessRenewalFailedRef.current = false;
+      backendAccessRenewalOutcomeRef.current = null;
       try {
         if (options?.forceWallet) {
           const staleAddress = address ?? sessionStoreRef.current.getAddress();
@@ -1788,7 +2060,9 @@ export function App() {
         setSessionExpired(false);
         setBackendAccessExpired(false);
         setStorageSessionInvalid(false);
-        if (backendAccessRenewalFailedRef.current) setBackendAccessExpired(true);
+        if (backendAccessRenewalOutcomeRef.current === "session_authority") {
+          setBackendAccessExpired(true);
+        }
         setAgentInfo(agent);
         setBackendDid(info.did);
         setCapabilityRequest(composedRequest);
@@ -1837,13 +2111,14 @@ export function App() {
     if (address) clearPersistedSession(address);
     purgeListenLocalData();
     backendRenewerRef.current = null;
-    backendAccessRenewalFailedRef.current = false;
+    backendAccessRenewalOutcomeRef.current = null;
     sessionStoreRef.current.clear();
     setAddress(null);
     setDid(null);
     setTcw(null);
     setHasWalletSigner(false);
     setApi(null);
+    setBackendDelegationState(null);
     setSessionExpired(false);
     setBackendAccessExpired(false);
     setStorageSessionInvalid(false);
@@ -1868,15 +2143,65 @@ export function App() {
     setHasExistingConversations(null);
     setWorkspaceActionError(null);
     setWorkspaceActionLoading(false);
+    setSourcesSetupMode(null);
     setActivePage("inbox");
     setSelectedConversationId(null);
     setShareConversationId(null);
     setGmLapsedBanner(false);
   }, [address, backendDid, tcw]);
 
+  const recheckBackendState = useCallback(async (): Promise<void> => {
+    setOwnerSecretRefreshKey((key) => key + 1);
+    setWorkspaceRefreshKey((key) => key + 1);
+  }, []);
+
+  const retryBackendAvailability = useCallback(async (): Promise<void> => {
+    if (!address) return;
+    setWorkspaceActionLoading(true);
+    setAuthError(null);
+    setWorkspaceActionError(null);
+    try {
+      const bootstrap = await loadAppBootstrapContext(ownerDidFromAddress(address));
+      if (!bootstrap.info) {
+        setBackendDelegationState("unavailable");
+        setWorkspaceActionError("Backend reconnect failed: Listen backend is still unreachable.");
+        return;
+      }
+
+      const { info, agent, composedRequest, conversationEventPathPrefix } = bootstrap;
+      setAgentInfo(agent);
+      setBackendDid(info.did);
+      setCapabilityRequest(composedRequest);
+      setServerGoogleMeetAvailable(info.features?.googleMeet?.available ?? null);
+      setLiveWritePathPrefix(conversationEventPathPrefix);
+      setLiveWriteHost(tcw?.hosts[0] ?? null);
+      setLiveWriteSpaceId(tcw?.spaceId ?? null);
+
+      const token = sessionStoreRef.current.getToken();
+      if (token) {
+        setApi(createBackendApiClient(address, info.did));
+        setWorkspaceRefreshKey((key) => key + 1);
+      } else {
+        // The probe proved reachability, but not authorization. Keep the
+        // current TinyCloud session and expose the separate consent action.
+        setBackendDelegationState("needs_consent");
+        setHasBackendDelegation(false);
+      }
+    } catch (error) {
+      setBackendDelegationState("unavailable");
+      setWorkspaceActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setWorkspaceActionLoading(false);
+    }
+  }, [address, createBackendApiClient, tcw]);
+
   const ensureBackendAccess = useCallback(async () => {
+    if (backendDelegationState === "unavailable") {
+      await recheckBackendState();
+      return;
+    }
     await renewBackendDelegation();
-  }, [renewBackendDelegation]);
+  }, [backendDelegationState, recheckBackendState, renewBackendDelegation]);
 
   const backendDelegationSecretNames = useCallback(
     (requestedSecretNames: readonly string[] = []) => {
@@ -1895,6 +2220,10 @@ export function App() {
 
   const ensureSourceBackendAccess = useCallback(
     async (source: "fireflies" | "granola" | "soundcore") => {
+      if (backendDelegationState === "unavailable") {
+        setWorkspaceRefreshKey((key) => key + 1);
+        return;
+      }
       if (!tcw || !backendDid || !api) {
         throw new Error(`Reconnect your wallet to finish ${source} setup.`);
       }
@@ -1932,7 +2261,14 @@ export function App() {
         setHasSoundcoreBackendAccess(true);
       }
     },
-    [api, backendDelegationSecretNames, backendDid, renewBackendDelegationWithSecrets, tcw],
+    [
+      api,
+      backendDelegationSecretNames,
+      backendDelegationState,
+      backendDid,
+      renewBackendDelegationWithSecrets,
+      tcw,
+    ],
   );
 
   const ensureFirefliesBackendAccess = useCallback(
@@ -1952,6 +2288,10 @@ export function App() {
 
   const ensureSecretBackendAccess = useCallback(
     async (secretName: string) => {
+      if (backendDelegationState === "unavailable") {
+        setWorkspaceRefreshKey((key) => key + 1);
+        return;
+      }
       if (!tcw || !backendDid) {
         throw new Error("Reconnect your wallet to finish source setup.");
       }
@@ -1984,10 +2324,22 @@ export function App() {
 
       setHasBackendDelegation(true);
     },
-    [api, backendDelegationSecretNames, backendDid, renewBackendDelegationWithSecrets, tcw],
+    [
+      api,
+      backendDelegationSecretNames,
+      backendDelegationState,
+      backendDid,
+      renewBackendDelegationWithSecrets,
+      tcw,
+    ],
   );
 
   const handleFinishMissingSourceAccess = useCallback(async () => {
+    if (backendDelegationState === "unavailable") {
+      setWorkspaceActionError(null);
+      setWorkspaceRefreshKey((key) => key + 1);
+      return;
+    }
     if (!api) {
       setWorkspaceActionError("Backend is offline. Try again when the backend is reachable.");
       return;
@@ -2068,13 +2420,17 @@ export function App() {
     hasKey,
     hasSoundcoreBackendAccess,
     hasSoundcoreKey,
+    backendDelegationState,
     renewBackendDelegationWithSecrets,
   ]);
 
   // ── Render ────────────────────────────────────────────────────────
 
   const isSignedIn = address !== null && (api !== null || tcw !== null);
-  const backendUnavailable = isSignedIn && api === null;
+  const backendUnavailable =
+    isSignedIn && api === null && backendDelegationState !== "needs_consent";
+  const backendConsentRequired =
+    isSignedIn && api === null && backendDelegationState === "needs_consent";
   const firefliesConnected =
     hasKey === true && hasBackendDelegation === true && hasFirefliesBackendAccess === true;
   const granolaConnected =
@@ -2098,10 +2454,14 @@ export function App() {
     hasGoogleMeet === true,
   ].filter(Boolean).length;
   const googleMeetAvailable =
-    !backendUnavailable && (HAS_FRONTEND_GOOGLE_CLIENT_ID || serverGoogleMeetAvailable === true);
+    !backendUnavailable &&
+    backendDelegationState !== "unavailable" &&
+    hasGoogleMeet !== null &&
+    (HAS_FRONTEND_GOOGLE_CLIENT_ID || serverGoogleMeetAvailable === true);
   const hasUsableInbox = connectedSourceCount > 0 || hasExistingConversations === true;
   const directExistingConversationsReady = tcw !== null && hasExistingConversations === true;
   const backendStatusReady = backendUnavailable || hasBackendDelegation !== null;
+  const delegationUnavailable = backendDelegationState === "unavailable";
   const firefliesKeyReady = hasKey !== null;
   const granolaKeyReady = hasGranolaKey !== null;
   const soundcoreKeyReady = hasSoundcoreKey !== null;
@@ -2124,17 +2484,23 @@ export function App() {
       : true,
   );
   const backendBackedChecksReady =
-    hasBackendDelegation === true
-      ? hasGoogleMeet !== null &&
-        firefliesBackendAccessReady &&
-        granolaBackendAccessReady &&
-        soundcoreBackendAccessReady &&
-        transcriptionBackendAccessReady
-      : true;
+    delegationUnavailable || hasBackendDelegation !== true
+      ? true
+      : hasBackendDelegation === true
+        ? hasGoogleMeet !== null &&
+          firefliesBackendAccessReady &&
+          granolaBackendAccessReady &&
+          soundcoreBackendAccessReady &&
+          transcriptionBackendAccessReady
+        : true;
   const conversationChecksReady =
-    tcw || hasBackendDelegation === true ? hasExistingConversations !== null : true;
+    delegationUnavailable || (!tcw && hasBackendDelegation !== true)
+      ? true
+      : hasExistingConversations !== null;
   const workspaceChecksReady =
     isSignedIn &&
+    !ownerSecretDiscoveryPending &&
+    !workspaceStatePending &&
     conversationChecksReady &&
     (directExistingConversationsReady ||
       (backendStatusReady &&
@@ -2151,7 +2517,11 @@ export function App() {
     !storageSessionInvalid &&
     workspaceChecksReady &&
     hasKey === true &&
-    (hasBackendDelegation === false || hasFirefliesBackendAccess === false);
+    sourceNeedsConsent({
+      delegationState: backendDelegationState,
+      hasBackendDelegation,
+      sourceAccess: hasFirefliesBackendAccess,
+    });
   const needsGranolaAccess =
     !backendUnavailable &&
     !sessionExpired &&
@@ -2159,7 +2529,11 @@ export function App() {
     !storageSessionInvalid &&
     workspaceChecksReady &&
     hasGranolaKey === true &&
-    (hasBackendDelegation === false || hasGranolaBackendAccess === false);
+    sourceNeedsConsent({
+      delegationState: backendDelegationState,
+      hasBackendDelegation,
+      sourceAccess: hasGranolaBackendAccess,
+    });
   const needsSoundcoreAccess =
     !backendUnavailable &&
     !sessionExpired &&
@@ -2167,22 +2541,36 @@ export function App() {
     !storageSessionInvalid &&
     workspaceChecksReady &&
     hasSoundcoreKey === true &&
-    (hasBackendDelegation === false || hasSoundcoreBackendAccess === false);
+    sourceNeedsConsent({
+      delegationState: backendDelegationState,
+      hasBackendDelegation,
+      sourceAccess: hasSoundcoreBackendAccess,
+    });
   const showSharedPage = activePage === "shared";
-  const showWorkspaceLoading = isSignedIn && !showSharedPage && !workspaceChecksReady;
+  const showWorkspaceLoading =
+    isSignedIn && !showSharedPage && !workspaceChecksReady && !hasWorkspaceStateSnapshot;
+  const workspaceMutationUnavailable =
+    backendUnavailable ||
+    delegationUnavailable ||
+    workspaceStatePending ||
+    ownerSecretDiscoveryPending;
+  const sourcesSetupAccessPending = workspaceStatePending || ownerSecretDiscoveryPending;
   const showOnboarding =
     isSignedIn &&
-    workspaceChecksReady &&
+    setupAvailable &&
     !showSharedPage &&
-    !hasUsableInbox &&
-    !needsFirefliesAccess &&
-    !needsGranolaAccess &&
-    !needsSoundcoreAccess &&
-    setupAvailable;
+    (sourcesSetupMode === "onboarding" ||
+      (workspaceChecksReady &&
+        !hasUsableInbox &&
+        !needsFirefliesAccess &&
+        !needsGranolaAccess &&
+        !needsSoundcoreAccess &&
+        !delegationUnavailable));
   const showWalletSetupState =
     isSignedIn &&
     !showSharedPage &&
     !backendUnavailable &&
+    !delegationUnavailable &&
     !storageSessionInvalid &&
     workspaceChecksReady &&
     !hasUsableInbox &&
@@ -2190,11 +2578,18 @@ export function App() {
     !needsGranolaAccess &&
     !setupAvailable;
   const showSourcesSetup =
-    isSignedIn && hasUsableInbox && !showSharedPage && activePage === "sources" && setupAvailable;
+    isSignedIn &&
+    !showSharedPage &&
+    activePage === "sources" &&
+    setupAvailable &&
+    (sourcesSetupMode === "sources" ||
+      (hasUsableInbox &&
+        (workspaceChecksReady || sourcesSetupAccessPending || delegationUnavailable)));
   const showSourcesWalletState =
     isSignedIn &&
     !showSharedPage &&
     !backendUnavailable &&
+    !delegationUnavailable &&
     !storageSessionInvalid &&
     hasUsableInbox &&
     activePage === "sources" &&
@@ -2215,6 +2610,12 @@ export function App() {
     !selectedConversationId &&
     conversationApi !== null &&
     (hasUsableInbox || showOptimisticInbox);
+
+  useEffect(() => {
+    if (showOnboarding && sourcesSetupMode === null) {
+      setSourcesSetupMode("onboarding");
+    }
+  }, [showOnboarding, sourcesSetupMode]);
 
   if (!isSignedIn) {
     if (shareToken) {
@@ -2316,6 +2717,7 @@ export function App() {
       : `RESTORED · ${connectedSourceCount} source${connectedSourceCount === 1 ? "" : "s"}`;
 
   const handleTranscriptImportComplete = (conversationId: string) => {
+    setSourcesSetupMode(null);
     setHasExistingConversations(true);
     setRefreshKey((k) => k + 1);
     setSelectedConversationId(conversationId);
@@ -2325,6 +2727,7 @@ export function App() {
   const openSourcesSetup = (
     initialStep: "cards" | "transcript-import" | "soundcore-key" = "cards",
   ) => {
+    setSourcesSetupMode("sources");
     setSourcesInitialStep(initialStep);
     setSelectedConversationId(null);
     setActivePage("sources");
@@ -2332,12 +2735,17 @@ export function App() {
 
   const handleRouteChange = (route: ShellRoute) => {
     setSelectedConversationId(null);
-    if (route === "sources") setSourcesInitialStep("cards");
+    if (route === "sources") {
+      setSourcesSetupMode("sources");
+      setSourcesInitialStep("cards");
+    } else {
+      setSourcesSetupMode(null);
+    }
     setActivePage(route);
   };
 
   const handleDisconnectFireflies = async () => {
-    if (!tcw) return;
+    if (!tcw || delegationUnavailable) return;
     const confirmed = window.confirm(
       "Disconnect Fireflies? Listen will stop syncing Fireflies transcripts until you reconnect.",
     );
@@ -2350,7 +2758,7 @@ export function App() {
   };
 
   const handleDisconnectGoogleMeet = async () => {
-    if (!api) return;
+    if (!api || delegationUnavailable) return;
     const confirmed = window.confirm(
       "Disconnect Google Meet? Listen will stop syncing Google Meet transcripts until you reconnect.",
     );
@@ -2404,7 +2812,7 @@ export function App() {
         onSignIn={handleSignIn}
         onSignOut={handleSignOut}
       />
-      {ENABLE_AGENT && tcw && capabilityRequest && (
+      {ENABLE_AGENT && !workspaceMutationUnavailable && tcw && capabilityRequest && (
         <ConnectAgentButton
           tcw={tcw}
           capabilityRequest={capabilityRequest}
@@ -2417,7 +2825,7 @@ export function App() {
       {(hasKey || hasGranolaKey || hasSoundcoreKey || hasGoogleMeet) && (
         <div style={s.userMenuSourceSection}>
           <span style={s.userMenuLabel}>Sources</span>
-          {hasKey && tcw && (
+          {!workspaceMutationUnavailable && hasKey && tcw && (
             <button
               type="button"
               style={s.userMenuAction}
@@ -2426,7 +2834,7 @@ export function App() {
               Disconnect Fireflies
             </button>
           )}
-          {hasGranolaKey && tcw && (
+          {!workspaceMutationUnavailable && hasGranolaKey && tcw && (
             <button
               type="button"
               style={s.userMenuAction}
@@ -2440,7 +2848,7 @@ export function App() {
               Disconnect Granola
             </button>
           )}
-          {hasSoundcoreKey && tcw && (
+          {!workspaceMutationUnavailable && hasSoundcoreKey && tcw && (
             <button
               type="button"
               style={s.userMenuAction}
@@ -2456,7 +2864,7 @@ export function App() {
               Disconnect Soundcore
             </button>
           )}
-          {hasGoogleMeet && (
+          {!workspaceMutationUnavailable && hasGoogleMeet && (
             <button
               type="button"
               style={s.userMenuAction}
@@ -2482,6 +2890,7 @@ export function App() {
     !showWalletSetupState &&
     !showSourcesSetup &&
     !showSourcesWalletState &&
+    !workspaceMutationUnavailable &&
     !showBackendOfflineState &&
     !storageSessionInvalid
   ) {
@@ -2536,7 +2945,7 @@ export function App() {
       userMenu={userMenu}
       sources={sourceItems}
       folders={[]}
-      onAddClick={api ? () => setShowAddHub(true) : undefined}
+      onAddClick={api && !workspaceMutationUnavailable ? () => setShowAddHub(true) : undefined}
       onSearchClick={() => {
         setActivePage("inbox");
         setSelectedConversationId(null);
@@ -2591,9 +3000,18 @@ export function App() {
       {showBackendOfflineState && (
         <WorkspaceStatusPanel
           mode="backend-offline"
-          loading={authLoading}
-          error={authError}
-          onAction={() => void handleSignIn({ forceWallet: true })}
+          loading={workspaceActionLoading}
+          error={workspaceActionError}
+          onAction={() => void retryBackendAvailability()}
+        />
+      )}
+
+      {delegationUnavailable && !backendUnavailable && (
+        <WorkspaceStatusPanel
+          mode="delegation-unavailable"
+          loading={workspaceActionLoading}
+          error={workspaceActionError}
+          onAction={() => void recheckBackendState()}
         />
       )}
 
@@ -2624,7 +3042,9 @@ export function App() {
         />
       )}
 
-      {(showWalletSetupState || showSourcesWalletState) && (
+      {(showWalletSetupState ||
+        showSourcesWalletState ||
+        (backendConsentRequired && !showSharedPage)) && (
         <WorkspaceStatusPanel
           mode="wallet"
           loading={authLoading}
@@ -2644,6 +3064,8 @@ export function App() {
           hasAssemblyAIKey={hasTranscriptionKeys.assemblyai}
           hasDeepgramKey={hasTranscriptionKeys.deepgram}
           hasBackendDelegation={hasBackendDelegation}
+          backendDelegationState={backendDelegationState}
+          backendAccessPending={sourcesSetupAccessPending}
           hasFirefliesBackendAccess={hasFirefliesBackendAccess}
           hasGranolaBackendAccess={hasGranolaBackendAccess}
           hasSoundcoreBackendAccess={hasSoundcoreBackendAccess}
@@ -2656,11 +3078,13 @@ export function App() {
           onEnsureGranolaBackendAccess={ensureGranolaBackendAccess}
           onEnsureSoundcoreBackendAccess={ensureSoundcoreBackendAccess}
           onEnsureSecretBackendAccess={ensureSecretBackendAccess}
+          onRecheckBackendState={recheckBackendState}
           onSoundcoreCredentialsSaved={() => {
             setHasSoundcoreKey(true);
             setHasSoundcoreBackendAccess(false);
           }}
           onFirefliesComplete={() => {
+            setSourcesSetupMode(null);
             setHasKey(true);
             setHasBackendDelegation(true);
             setHasFirefliesBackendAccess(true);
@@ -2669,6 +3093,7 @@ export function App() {
             setActivePage("inbox");
           }}
           onGranolaComplete={() => {
+            setSourcesSetupMode(null);
             setHasGranolaKey(true);
             setHasBackendDelegation(true);
             setHasGranolaBackendAccess(true);
@@ -2677,6 +3102,7 @@ export function App() {
             setActivePage("inbox");
           }}
           onSoundcoreComplete={() => {
+            setSourcesSetupMode(null);
             setHasSoundcoreKey(true);
             setHasBackendDelegation(true);
             setHasSoundcoreBackendAccess(true);
@@ -2692,8 +3118,12 @@ export function App() {
             setWorkspaceRefreshKey((k) => k + 1);
           }}
           onTranscriptImportComplete={handleTranscriptImportComplete}
-          onDone={() => setActivePage("inbox")}
+          onDone={() => {
+            setSourcesSetupMode(null);
+            setActivePage("inbox");
+          }}
           onGoogleMeetComplete={() => {
+            setSourcesSetupMode(null);
             setHasGoogleMeet(true);
             setHasBackendDelegation(true);
             setRefreshKey((k) => k + 1);
@@ -2716,6 +3146,8 @@ export function App() {
           hasAssemblyAIKey={hasTranscriptionKeys.assemblyai}
           hasDeepgramKey={hasTranscriptionKeys.deepgram}
           hasBackendDelegation={hasBackendDelegation}
+          backendDelegationState={backendDelegationState}
+          backendAccessPending={sourcesSetupAccessPending}
           hasFirefliesBackendAccess={hasFirefliesBackendAccess}
           hasGranolaBackendAccess={hasGranolaBackendAccess}
           hasSoundcoreBackendAccess={hasSoundcoreBackendAccess}
@@ -2728,11 +3160,13 @@ export function App() {
           onEnsureGranolaBackendAccess={ensureGranolaBackendAccess}
           onEnsureSoundcoreBackendAccess={ensureSoundcoreBackendAccess}
           onEnsureSecretBackendAccess={ensureSecretBackendAccess}
+          onRecheckBackendState={recheckBackendState}
           onSoundcoreCredentialsSaved={() => {
             setHasSoundcoreKey(true);
             setHasSoundcoreBackendAccess(false);
           }}
           onFirefliesComplete={() => {
+            setSourcesSetupMode(null);
             setHasKey(true);
             setHasBackendDelegation(true);
             setHasFirefliesBackendAccess(true);
@@ -2741,6 +3175,7 @@ export function App() {
             setActivePage("inbox");
           }}
           onGranolaComplete={() => {
+            setSourcesSetupMode(null);
             setHasGranolaKey(true);
             setHasBackendDelegation(true);
             setHasGranolaBackendAccess(true);
@@ -2749,6 +3184,7 @@ export function App() {
             setActivePage("inbox");
           }}
           onSoundcoreComplete={() => {
+            setSourcesSetupMode(null);
             setHasSoundcoreKey(true);
             setHasBackendDelegation(true);
             setHasSoundcoreBackendAccess(true);
@@ -2764,8 +3200,12 @@ export function App() {
             setWorkspaceRefreshKey((k) => k + 1);
           }}
           onTranscriptImportComplete={handleTranscriptImportComplete}
-          onDone={() => setActivePage("inbox")}
+          onDone={() => {
+            setSourcesSetupMode(null);
+            setActivePage("inbox");
+          }}
           onGoogleMeetComplete={() => {
+            setSourcesSetupMode(null);
             setHasGoogleMeet(true);
             setHasBackendDelegation(true);
             setRefreshKey((k) => k + 1);
@@ -2786,13 +3226,17 @@ export function App() {
         </div>
       )}
 
-      {gmLapsedBanner && (
+      {gmLapsedBanner && !workspaceMutationUnavailable && (
         <div style={s.lapsedBanner}>
           <span>Real-time sync was inactive. Some meetings may not have been captured.</span>
           <div style={s.lapsedActions}>
             <button
               style={s.lapsedSyncBtn}
               onClick={() => {
+                if (delegationUnavailable) {
+                  void recheckBackendState();
+                  return;
+                }
                 setGmLapsedError(null);
                 api
                   ?.post("/api/sync/google-meet")
@@ -2830,6 +3274,7 @@ export function App() {
           onShare={setShareConversationId}
           cacheScope={conversationCacheScope}
           onUpdated={() => setRefreshKey((k) => k + 1)}
+          mutationsDisabled={workspaceMutationUnavailable}
         />
       )}
 
@@ -2846,23 +3291,25 @@ export function App() {
           {backendUnavailable && (
             <div style={s.pendingBanner}>
               <span>
-                {authError
-                  ? `Backend reconnect failed: ${authError}`
+                {workspaceActionError || authError
+                  ? (workspaceActionError ?? `Backend reconnect failed: ${authError}`)
                   : "Backend offline. Sync and source setup are unavailable; the library reads directly from TinyCloud."}
               </span>
               <button
                 type="button"
                 style={
-                  authLoading ? { ...s.statusButton, ...s.statusButtonDisabled } : s.statusButton
+                  workspaceActionLoading
+                    ? { ...s.statusButton, ...s.statusButtonDisabled }
+                    : s.statusButton
                 }
-                disabled={authLoading}
-                onClick={() => void handleSignIn({ forceWallet: true })}
+                disabled={workspaceActionLoading}
+                onClick={() => void retryBackendAvailability()}
               >
-                {authLoading ? "Connecting..." : "Reconnect backend"}
+                {workspaceActionLoading ? "Checking..." : "Reconnect backend"}
               </button>
             </div>
           )}
-          {api && hasUsableInbox && (
+          {api && hasUsableInbox && !workspaceMutationUnavailable && (
             <SyncControl
               api={api}
               backendUrl={BACKEND_URL}
@@ -2874,7 +3321,7 @@ export function App() {
               hasGoogleMeet={hasGoogleMeet === true}
             />
           )}
-          {ENABLE_TINYCLOUD_HOOKS && liveWriteHost && (
+          {ENABLE_TINYCLOUD_HOOKS && !workspaceMutationUnavailable && liveWriteHost && (
             <LiveWriteEvents
               tcw={tcw}
               spaceId={liveWriteSpaceId}
@@ -2887,7 +3334,11 @@ export function App() {
               }}
             />
           )}
-          <ListenOwnerPublishedShares tcw={tcw} refreshKey={ownerShareRefreshKey} />
+          <ListenOwnerPublishedShares
+            tcw={tcw}
+            refreshKey={ownerShareRefreshKey}
+            mutationsDisabled={workspaceMutationUnavailable}
+          />
           <ConversationList
             focusSearchKey={searchFocusKey}
             api={activeConversationApi}
@@ -2896,6 +3347,7 @@ export function App() {
             onShareSelectedConversations={setOwnerShareConversationIds}
             refreshKey={refreshKey}
             cacheScope={conversationCacheScope}
+            mutationsDisabled={workspaceMutationUnavailable}
           />
         </>
       )}
@@ -2937,15 +3389,23 @@ export function App() {
           googleMeetAvailable={googleMeetAvailable}
           onAddSource={() => openSourcesSetup()}
           onConnectSoundcore={() => openSourcesSetup("soundcore-key")}
-          onFinishSoundcoreAccess={async () => {
-            await handleFinishMissingSourceAccess();
-          }}
-          onAddTranscript={() => openSourcesSetup("transcript-import")}
-          onFinishTranscriptionProviderAccess={(provider) =>
-            ensureSecretBackendAccess(
-              provider === "assemblyai" ? ASSEMBLYAI_SECRET_NAME : DEEPGRAM_SECRET_NAME,
-            )
+          onFinishSoundcoreAccess={
+            delegationUnavailable
+              ? undefined
+              : async () => {
+                  await handleFinishMissingSourceAccess();
+                }
           }
+          onAddTranscript={() => openSourcesSetup("transcript-import")}
+          onFinishTranscriptionProviderAccess={
+            delegationUnavailable
+              ? undefined
+              : (provider) =>
+                  ensureSecretBackendAccess(
+                    provider === "assemblyai" ? ASSEMBLYAI_SECRET_NAME : DEEPGRAM_SECRET_NAME,
+                  )
+          }
+          actionsDisabled={workspaceMutationUnavailable}
           onRefresh={() => {
             setRefreshKey((k) => k + 1);
             setWorkspaceRefreshKey((k) => k + 1);
@@ -2959,6 +3419,7 @@ export function App() {
           tcw={tcw}
           conversationId={shareConversationId}
           onClose={() => setShareConversationId(null)}
+          mutationsDisabled={workspaceMutationUnavailable}
         />
       )}
 
@@ -2969,10 +3430,11 @@ export function App() {
           conversationIds={ownerShareConversationIds}
           onPublished={() => setOwnerShareRefreshKey((key) => key + 1)}
           onClose={() => setOwnerShareConversationIds([])}
+          mutationsDisabled={workspaceMutationUnavailable}
         />
       )}
 
-      {showAddHub && api && (
+      {showAddHub && api && !workspaceMutationUnavailable && (
         <AddTranscriptHub
           api={api}
           transcriptionReady={{
@@ -3003,7 +3465,7 @@ export function App() {
         />
       )}
 
-      {api && hasBackendDelegation === true && (
+      {api && hasBackendDelegation === true && !workspaceMutationUnavailable && (
         <GlobalSyncIndicator
           api={api}
           onViewResults={() => {

@@ -107,12 +107,14 @@ mock.module("@tinycloud/node-sdk", () => ({
 import express from "express";
 import type { Server } from "http";
 import type { Request, Response, NextFunction } from "express";
+import { delegationContentIdentity } from "@listen/server";
 import { createDelegationRouter } from "../routes/delegations.js";
 import { createDelegationActivator, type DelegationActivator } from "../delegation-activation.js";
 
 // ── In-Memory Delegation Store ────────────────────────────────────────
 
 interface StoredEntry {
+  revision: string;
   serialized: string;
   grantedAt: string;
   expiresAt: string;
@@ -124,11 +126,13 @@ interface StoredEntry {
 
 function createMockDelegationStore() {
   const data = new Map<string, StoredEntry>();
+  let revision = 0;
 
   return {
     _data: data,
     store: async (identifier: string, serialized: string, metadata: any) => {
-      data.set(identifier, {
+      const entry = {
+        revision: `revision-${++revision}`,
         serialized,
         grantedAt: metadata.grantedAt ?? new Date().toISOString(),
         expiresAt: metadata.expiresAt,
@@ -136,7 +140,9 @@ function createMockDelegationStore() {
         path: metadata.path,
         policyHash: metadata.policyHash,
         resources: metadata.resources,
-      });
+      };
+      data.set(identifier, entry);
+      return entry;
     },
     load: async (identifier: string) => {
       return data.get(identifier) ?? null;
@@ -155,16 +161,23 @@ function createMockDelegationStore() {
 // ── In-Memory Delegation Cache ────────────────────────────────────────
 
 function createMockDelegationCache() {
-  const cache = new Map<string, any>();
+  const cache = new Map<string, { identity: string; revision: string; access: any }>();
 
   return {
     _cache: cache,
-    get: (key: string) => cache.get(key) ?? null,
-    set: (key: string, access: any) => {
-      cache.set(key, access);
+    get: (key: string, identity: string, revision: string) => {
+      const entry = cache.get(key);
+      if (!entry || entry.identity !== identity || entry.revision !== revision) return null;
+      return entry.access;
+    },
+    set: (key: string, identity: string, revision: string, access: any) => {
+      cache.set(key, { identity, revision, access });
     },
     evict: (key: string) => {
       cache.delete(key);
+    },
+    evictIfRevision: (key: string, revision: string) => {
+      if (cache.get(key)?.revision === revision) cache.delete(key);
     },
     has: (key: string) => cache.has(key),
     clear: () => cache.clear(),
@@ -265,6 +278,30 @@ describe("Delegation Routes", () => {
       expect(body.expiresAt).toBeNull();
     });
 
+    it("returns a 500 ApiError when a successful store envelope is malformed", async () => {
+      if (server) await closeServer(server);
+
+      const brokenStore = {
+        ...store,
+        load: async () => {
+          throw Object.assign(new Error("invalid successful KV response"), {
+            code: "delegation_store_invalid_response",
+          });
+        },
+      };
+      const brokenApp = createApp(brokenStore as any, cache);
+      const result = await startServer(brokenApp);
+      server = result.server;
+      baseUrl = `http://localhost:${result.port}`;
+
+      const res = await fetch(`${baseUrl}/api/delegations/status`);
+
+      expect(res.status).toBe(500);
+      expect(await res.json()).toMatchObject({
+        error: "status_check_failed",
+      });
+    });
+
     it("does not apply the write limiter to status checks", async () => {
       if (server) await closeServer(server);
 
@@ -302,14 +339,19 @@ describe("Delegation Routes", () => {
       expect(body.expiresAt).toBeDefined();
     });
 
-    it("returns 'stale' and removes stale delegations without the current policy hash", async () => {
+    it("returns stable 'stale' status without removing the stored row", async () => {
       const expiresAt = new Date(Date.now() + 1000).toISOString();
       await store.store(TEST_ADDRESS, "old-delegation", {
         expiresAt,
         actions: [],
         path: "items/",
       });
-      cache.set(TEST_ADDRESS, { kv: {}, sql: {} });
+      cache.set(
+        TEST_ADDRESS,
+        delegationContentIdentity("old-delegation"),
+        (await store.load(TEST_ADDRESS))!.revision,
+        { kv: {}, sql: {} },
+      );
 
       const res = await fetch(`${baseUrl}/api/delegations/status`);
       expect(res.status).toBe(200);
@@ -317,8 +359,12 @@ describe("Delegation Routes", () => {
       expect(body.status).toBe("stale");
       expect(body.expiresAt).toBe(expiresAt);
 
-      expect(await store.load(TEST_ADDRESS)).toBeNull();
+      expect(await store.load(TEST_ADDRESS)).not.toBeNull();
       expect(cache.has(TEST_ADDRESS)).toBe(false);
+
+      const repeated = await fetch(`${baseUrl}/api/delegations/status`);
+      expect((await repeated.json()).status).toBe("stale");
+      expect(await store.load(TEST_ADDRESS)).not.toBeNull();
     });
 
     it("returns 'expired' for expired delegations", async () => {
@@ -335,22 +381,30 @@ describe("Delegation Routes", () => {
       expect(body.status).toBe("expired");
     });
 
-    it("cleans up expired delegation from store and cache", async () => {
+    it("returns stable 'expired' status and preserves the stored row", async () => {
       // Store expired delegation and cache entry
       await store.store(TEST_ADDRESS, "old-delegation", {
         expiresAt: new Date(Date.now() - 1000).toISOString(),
         actions: [],
         path: "items/",
       });
-      cache.set(TEST_ADDRESS, { kv: {}, sql: {} });
+      cache.set(
+        TEST_ADDRESS,
+        delegationContentIdentity("old-delegation"),
+        (await store.load(TEST_ADDRESS))!.revision,
+        { kv: {}, sql: {} },
+      );
 
       await fetch(`${baseUrl}/api/delegations/status`);
 
-      // Store should be cleaned
+      // Store remains the source of truth until replacement or explicit DELETE.
       const stored = await store.load(TEST_ADDRESS);
-      expect(stored).toBeNull();
-      // Cache should be evicted
+      expect(stored).not.toBeNull();
       expect(cache.has(TEST_ADDRESS)).toBe(false);
+
+      const repeated = await fetch(`${baseUrl}/api/delegations/status`);
+      expect((await repeated.json()).status).toBe("expired");
+      expect(await store.load(TEST_ADDRESS)).not.toBeNull();
     });
 
     it("returns 'none' after DELETE", async () => {
@@ -378,6 +432,23 @@ describe("Delegation Routes", () => {
   // ── POST /api/delegations ─────────────────────────────────────────
 
   describe("POST /api/delegations", () => {
+    it("returns coded 503 when the durable store rejects a malformed KV write result", async () => {
+      store.store = async () => {
+        throw Object.assign(new Error("invalid successful KV write response"), {
+          code: "delegation_store_invalid_response",
+        });
+      };
+
+      const res = await fetch(`${baseUrl}/api/delegations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serialized: "malformed-store-result" }),
+      });
+
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ error: "delegation_store_unavailable" });
+    });
+
     it("stores a delegation and returns 'active' status", async () => {
       const res = await fetch(`${baseUrl}/api/delegations`, {
         method: "POST",
@@ -672,6 +743,236 @@ describe("Delegation Routes", () => {
       expect(stored!.serialized).toBe("unverifiable");
       expect(cache.has(TEST_ADDRESS)).toBe(false);
     });
+
+    it("reports a POST superseded when DELETE wins during activation", async () => {
+      if (server) await closeServer(server);
+
+      let markActivationStarted!: () => void;
+      const activationStarted = new Promise<void>((resolve) => {
+        markActivationStarted = resolve;
+      });
+      let finishActivation!: () => void;
+      const activationPending = new Promise<any>((resolve) => {
+        finishActivation = () => resolve({ spaceId: "old" });
+      });
+      const activator: DelegationActivator = {
+        activate: async () => {
+          markActivationStarted();
+          return activationPending;
+        },
+        invalidate: () => {},
+      };
+      const raceApp = createApp(store, cache, undefined, activator);
+      const result = await startServer(raceApp);
+      server = result.server;
+      baseUrl = `http://localhost:${result.port}`;
+
+      const postRequest = fetch(`${baseUrl}/api/delegations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serialized: "superseded-by-delete" }),
+      });
+      await activationStarted;
+
+      expect((await fetch(`${baseUrl}/api/delegations`, { method: "DELETE" })).status).toBe(200);
+      finishActivation();
+
+      const response = await postRequest;
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ error: "delegation_superseded" });
+      expect(await store.load(TEST_ADDRESS)).toBeNull();
+    });
+
+    it("reports a rejected activation superseded when DELETE wins", async () => {
+      if (server) await closeServer(server);
+
+      let markActivationStarted!: () => void;
+      const activationStarted = new Promise<void>((resolve) => {
+        markActivationStarted = resolve;
+      });
+      let rejectActivation!: () => void;
+      const activationPending = new Promise<any>((_resolve, reject) => {
+        rejectActivation = () => reject(new Error("node unavailable"));
+      });
+      const activator: DelegationActivator = {
+        activate: async () => {
+          markActivationStarted();
+          return activationPending;
+        },
+        invalidate: () => {},
+      };
+      const raceApp = createApp(store, cache, undefined, activator);
+      const result = await startServer(raceApp);
+      server = result.server;
+      baseUrl = `http://localhost:${result.port}`;
+
+      const postRequest = fetch(`${baseUrl}/api/delegations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serialized: "rejected-after-delete" }),
+      });
+      await activationStarted;
+
+      expect((await fetch(`${baseUrl}/api/delegations`, { method: "DELETE" })).status).toBe(200);
+      rejectActivation();
+
+      const response = await postRequest;
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ error: "delegation_superseded" });
+      expect(await store.load(TEST_ADDRESS)).toBeNull();
+    });
+
+    it("reports an older POST superseded when a newer POST wins", async () => {
+      if (server) await closeServer(server);
+
+      let markFirstActivationStarted!: () => void;
+      const firstActivationStarted = new Promise<void>((resolve) => {
+        markFirstActivationStarted = resolve;
+      });
+      let finishFirstActivation!: () => void;
+      const firstActivationPending = new Promise<any>((resolve) => {
+        finishFirstActivation = () => resolve({ spaceId: "old" });
+      });
+      const activator: DelegationActivator = {
+        activate: async (_address, serialized) => {
+          if (serialized === "grant-a") {
+            markFirstActivationStarted();
+            return firstActivationPending;
+          }
+          return { spaceId: "new" } as any;
+        },
+        invalidate: () => {},
+      };
+      const raceApp = createApp(store, cache, undefined, activator);
+      const result = await startServer(raceApp);
+      server = result.server;
+      baseUrl = `http://localhost:${result.port}`;
+
+      const firstPost = fetch(`${baseUrl}/api/delegations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serialized: "grant-a" }),
+      });
+      await firstActivationStarted;
+
+      const secondPost = await fetch(`${baseUrl}/api/delegations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serialized: "grant-b" }),
+      });
+      expect(secondPost.status).toBe(200);
+      expect((await secondPost.json()).activation).toBe("active");
+
+      finishFirstActivation();
+      const firstResponse = await firstPost;
+      expect(firstResponse.status).toBe(409);
+      expect(await firstResponse.json()).toMatchObject({ error: "delegation_superseded" });
+      expect((await store.load(TEST_ADDRESS))?.serialized).toBe("grant-b");
+    });
+
+    it("reports a rejected older POST superseded when a newer POST wins", async () => {
+      if (server) await closeServer(server);
+
+      let markFirstActivationStarted!: () => void;
+      const firstActivationStarted = new Promise<void>((resolve) => {
+        markFirstActivationStarted = resolve;
+      });
+      let rejectFirstActivation!: () => void;
+      const firstActivationPending = new Promise<any>((_resolve, reject) => {
+        rejectFirstActivation = () => reject(new Error("node unavailable"));
+      });
+      const activator: DelegationActivator = {
+        activate: async (_address, serialized) => {
+          if (serialized === "rejected-grant-a") {
+            markFirstActivationStarted();
+            return firstActivationPending;
+          }
+          return { spaceId: "new" } as any;
+        },
+        invalidate: () => {},
+      };
+      const raceApp = createApp(store, cache, undefined, activator);
+      const result = await startServer(raceApp);
+      server = result.server;
+      baseUrl = `http://localhost:${result.port}`;
+
+      const firstPost = fetch(`${baseUrl}/api/delegations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serialized: "rejected-grant-a" }),
+      });
+      await firstActivationStarted;
+
+      const secondPost = await fetch(`${baseUrl}/api/delegations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serialized: "grant-b" }),
+      });
+      expect(secondPost.status).toBe(200);
+      rejectFirstActivation();
+
+      const firstResponse = await firstPost;
+      expect(firstResponse.status).toBe(409);
+      expect(await firstResponse.json()).toMatchObject({ error: "delegation_superseded" });
+      expect((await store.load(TEST_ADDRESS))?.serialized).toBe("grant-b");
+    });
+
+    it("uses the durable revision to supersede identical POSTs", async () => {
+      if (server) await closeServer(server);
+
+      let activationCount = 0;
+      let markFirstActivationStarted!: () => void;
+      const firstActivationStarted = new Promise<void>((resolve) => {
+        markFirstActivationStarted = resolve;
+      });
+      let finishFirstActivation!: () => void;
+      const firstActivationPending = new Promise<any>((resolve) => {
+        finishFirstActivation = () => resolve({ spaceId: "old" });
+      });
+      const activator: DelegationActivator = {
+        activate: async (_address, _serialized, identity, revision) => {
+          if (activationCount++ === 0) {
+            markFirstActivationStarted();
+            return firstActivationPending;
+          }
+          const access = { spaceId: "new" } as any;
+          cache.set(TEST_ADDRESS, identity, revision, access);
+          return access;
+        },
+        invalidate: () => {},
+      };
+      const raceApp = createApp(store, cache, undefined, activator);
+      const result = await startServer(raceApp);
+      server = result.server;
+      baseUrl = `http://localhost:${result.port}`;
+
+      const firstPost = fetch(`${baseUrl}/api/delegations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serialized: "identical-grant" }),
+      });
+      await firstActivationStarted;
+
+      const secondPost = await fetch(`${baseUrl}/api/delegations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serialized: "identical-grant" }),
+      });
+      expect(secondPost.status).toBe(200);
+      expect((await secondPost.json()).activation).toBe("active");
+
+      finishFirstActivation();
+      const firstResponse = await firstPost;
+      expect(firstResponse.status).toBe(409);
+
+      const current = await store.load(TEST_ADDRESS);
+      expect(current?.serialized).toBe("identical-grant");
+      expect(current?.revision).toBeDefined();
+      expect(cache._cache.get(TEST_ADDRESS)).toMatchObject({
+        revision: current!.revision,
+        access: { spaceId: "new" },
+      });
+    });
   });
 
   // ── DELETE /api/delegations ───────────────────────────────────────
@@ -755,7 +1056,12 @@ describe("Delegation Routes", () => {
       await removeStarted;
       expect(await store.load(TEST_ADDRESS)).not.toBeNull();
 
-      const racedActivation = activator.activate(TEST_ADDRESS, "still-loadable");
+      const racedActivation = activator.activate(
+        TEST_ADDRESS,
+        "still-loadable",
+        "test-identity",
+        (await store.load(TEST_ADDRESS))!.revision,
+      );
       finishRemove();
       expect((await deleteRequest).status).toBe(200);
 
@@ -772,6 +1078,22 @@ describe("Delegation Routes", () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.status).toBe("none");
+    });
+
+    it("returns revoke_failed when durable removal is not confirmed", async () => {
+      await store.store(TEST_ADDRESS, "cannot-delete", {
+        expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+        actions: [],
+        path: "",
+      });
+      store.remove = async () => {
+        throw new Error("delete unavailable");
+      };
+
+      const res = await fetch(`${baseUrl}/api/delegations`, { method: "DELETE" });
+      expect(res.status).toBe(500);
+      expect(await res.json()).toMatchObject({ error: "revoke_failed" });
+      expect(await store.load(TEST_ADDRESS)).not.toBeNull();
     });
   });
 });

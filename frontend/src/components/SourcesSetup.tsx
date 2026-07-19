@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FC } from "react";
 import type { ApiClient } from "@listen/client";
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
 import { MAX_TRANSCRIPTION_FILE_BYTES, fileToBase64, formatFileSize } from "../lib/fileEncoding";
+import { sourceNeedsConsent, type DelegationLifecycleState } from "../lib/delegationState";
 
 type SetupMode = "onboarding" | "sources";
 type SetupStep =
@@ -53,6 +54,8 @@ interface SourcesSetupProps {
   hasAssemblyAIKey?: boolean | null;
   hasDeepgramKey?: boolean | null;
   hasBackendDelegation?: boolean | null;
+  backendDelegationState?: DelegationLifecycleState | null;
+  backendAccessPending?: boolean;
   hasFirefliesBackendAccess?: boolean | null;
   hasGranolaBackendAccess?: boolean | null;
   hasSoundcoreBackendAccess?: boolean | null;
@@ -65,6 +68,7 @@ interface SourcesSetupProps {
   onEnsureGranolaBackendAccess: () => Promise<void>;
   onEnsureSoundcoreBackendAccess?: () => Promise<void>;
   onEnsureSecretBackendAccess?: (secretName: string) => Promise<void>;
+  onRecheckBackendState?: () => Promise<void>;
   onSoundcoreCredentialsSaved?: () => void;
   onFirefliesComplete: () => void;
   onGranolaComplete: () => void;
@@ -135,6 +139,8 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   hasAssemblyAIKey = null,
   hasDeepgramKey = null,
   hasBackendDelegation = null,
+  backendDelegationState = "needs_consent",
+  backendAccessPending = false,
   hasFirefliesBackendAccess = null,
   hasGranolaBackendAccess = null,
   hasSoundcoreBackendAccess = null,
@@ -147,6 +153,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   onEnsureGranolaBackendAccess,
   onEnsureSoundcoreBackendAccess,
   onEnsureSecretBackendAccess,
+  onRecheckBackendState = async () => {},
   onSoundcoreCredentialsSaved,
   onFirefliesComplete,
   onGranolaComplete,
@@ -180,6 +187,10 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   const [connecting, setConnecting] = useState(false);
   const [googleError, setGoogleError] = useState<string | null>(null);
   const googlePopupPollRef = useRef<number | null>(null);
+  const googlePopupFinishRef = useRef<
+    ((result: "success" | "error" | "closed" | "unmounted" | "unavailable") => void) | null
+  >(null);
+  const mountedRef = useRef(true);
   const [importTitle, setImportTitle] = useState("");
   const [importStartedAt, setImportStartedAt] = useState(() => toDatetimeLocal(new Date()));
   const [importParticipants, setImportParticipants] = useState("");
@@ -205,11 +216,20 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
     hasFirefliesKey === true && hasBackendDelegation === true && hasFirefliesBackendAccess === true;
   const firefliesNeedsAccess =
     hasFirefliesKey === true &&
-    (hasBackendDelegation !== true || hasFirefliesBackendAccess !== true);
+    sourceNeedsConsent({
+      delegationState: backendDelegationState,
+      hasBackendDelegation,
+      sourceAccess: hasFirefliesBackendAccess,
+    });
   const granolaConnected =
     hasGranolaKey === true && hasBackendDelegation === true && hasGranolaBackendAccess === true;
   const granolaNeedsAccess =
-    hasGranolaKey === true && (hasBackendDelegation !== true || hasGranolaBackendAccess !== true);
+    hasGranolaKey === true &&
+    sourceNeedsConsent({
+      delegationState: backendDelegationState,
+      hasBackendDelegation,
+      sourceAccess: hasGranolaBackendAccess,
+    });
   const soundcoreConnected =
     (hasSoundcoreKey === true &&
       hasBackendDelegation === true &&
@@ -217,7 +237,11 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
     soundcoreAccessVerified;
   const soundcoreNeedsAccess =
     hasSoundcoreKey === true &&
-    (hasBackendDelegation !== true || hasSoundcoreBackendAccess !== true);
+    sourceNeedsConsent({
+      delegationState: backendDelegationState,
+      hasBackendDelegation,
+      sourceAccess: hasSoundcoreBackendAccess,
+    });
   const transcriptionKeyStatus: Record<TranscriptionProvider, boolean | null> = {
     assemblyai: hasAssemblyAIKey,
     deepgram: hasDeepgramKey,
@@ -232,7 +256,67 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
     transcriptionBackendAccess[provider] === true;
   const transcriptionProviderNeedsAccess = (provider: TranscriptionProvider) =>
     transcriptionKeyStatus[provider] === true &&
-    (hasBackendDelegation !== true || transcriptionBackendAccess[provider] !== true);
+    sourceNeedsConsent({
+      delegationState: backendDelegationState,
+      hasBackendDelegation,
+      sourceAccess: transcriptionBackendAccess[provider],
+    });
+  const delegationUnavailable = backendDelegationState === "unavailable";
+  const delegationStateRef = useRef(backendDelegationState);
+  const onRecheckBackendStateRef = useRef(onRecheckBackendState);
+  const backendAccessPendingRef = useRef(backendAccessPending);
+  const mutationInFlightRef = useRef(false);
+  delegationStateRef.current = backendDelegationState;
+  onRecheckBackendStateRef.current = onRecheckBackendState;
+  backendAccessPendingRef.current = backendAccessPending;
+
+  const recheckUnavailableBackend = async () => {
+    setSaving(true);
+    setTestError(null);
+    setTranscriptionError(null);
+    try {
+      await onRecheckBackendStateRef.current();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setTestError(message);
+      setTranscriptionError(message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const guardUnavailableAction = (): boolean => {
+    if (delegationStateRef.current !== "unavailable") return false;
+    void recheckUnavailableBackend();
+    return true;
+  };
+
+  const runSetupAction = (action: () => void | Promise<void>, mutating = false) => {
+    if (backendAccessPendingRef.current || guardUnavailableAction()) {
+      if (backendAccessPendingRef.current) void recheckUnavailableBackend();
+      return;
+    }
+    if (mutationInFlightRef.current) return;
+    if (mutating) {
+      mutationInFlightRef.current = true;
+    }
+
+    try {
+      const result = action();
+      if (!mutating) {
+        void result;
+        return;
+      }
+      void Promise.resolve(result)
+        .finally(() => {
+          mutationInFlightRef.current = false;
+        })
+        .catch(() => undefined);
+    } catch (err) {
+      if (mutating) mutationInFlightRef.current = false;
+      throw err;
+    }
+  };
   const assemblyAIReady = transcriptionProviderReady("assemblyai");
   const deepgramReady = transcriptionProviderReady("deepgram");
   const connectedCount = [
@@ -254,48 +338,41 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   useEffect(() => () => clearGooglePopupPoll(), []);
 
   useEffect(() => {
-    setStep(initialStep);
-  }, [initialStep]);
-
-  useEffect(() => {
     if (transcriptionProviderReady(transcriptionProvider)) return;
     if (assemblyAIReady) setTranscriptionProvider("assemblyai");
     else if (deepgramReady) setTranscriptionProvider("deepgram");
   }, [assemblyAIReady, deepgramReady, transcriptionProvider]);
 
-  useEffect(() => {
-    if (step !== "google-connect") return;
-
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === "google-auth-success") {
-        clearGooglePopupPoll();
-        setGoogleError(null);
-        setStep("google-success");
-        setConnecting(false);
-        onGoogleMeetComplete?.();
-      } else if (event.data?.type === "google-auth-error") {
-        clearGooglePopupPoll();
-        setGoogleError(event.data.message || "Authentication failed");
-        setConnecting(false);
-      }
-    };
-
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, [onGoogleMeetComplete, step]);
+  useEffect(
+    () => () => {
+      mountedRef.current = false;
+      googlePopupFinishRef.current?.("unmounted");
+      googlePopupFinishRef.current = null;
+      clearGooglePopupPoll();
+    },
+    [],
+  );
 
   const saveFirefliesKey = async () => {
+    if (await guardUnavailableAction()) return;
     setSaving(true);
     setTestError(null);
     try {
       const putResult = await tcw.secrets.put(FIREFLIES_SECRET_NAME, apiKey.trim());
       if (!putResult.ok) throw new Error(putResult.error.message);
 
+      if (await guardUnavailableAction()) return;
       await onEnsureFirefliesBackendAccess();
+      if (await guardUnavailableAction()) return;
       const user = await verifyFirefliesUser(api);
+      if (await guardUnavailableAction()) return;
       setUserInfo(user);
       setStep("fireflies-test");
     } catch (err) {
+      if (delegationStateRef.current === "unavailable") {
+        await recheckUnavailableBackend();
+        return;
+      }
       setTestError(err instanceof Error ? err.message : String(err));
       setStep("fireflies-test");
     } finally {
@@ -304,14 +381,21 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   };
 
   const finishFirefliesAccess = async () => {
+    if (await guardUnavailableAction()) return;
     setSaving(true);
     setTestError(null);
     try {
       await onEnsureFirefliesBackendAccess();
+      if (await guardUnavailableAction()) return;
       const user = await verifyFirefliesUser(api);
+      if (await guardUnavailableAction()) return;
       setUserInfo(user);
       setStep("fireflies-test");
     } catch (err) {
+      if (delegationStateRef.current === "unavailable") {
+        await recheckUnavailableBackend();
+        return;
+      }
       setTestError(err instanceof Error ? err.message : String(err));
       setStep("fireflies-test");
     } finally {
@@ -320,16 +404,24 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   };
 
   const saveGranolaKey = async () => {
+    if (await guardUnavailableAction()) return;
     setSaving(true);
     setTestError(null);
     try {
       const putResult = await tcw.secrets.put(GRANOLA_SECRET_NAME, granolaApiKey.trim());
       if (!putResult.ok) throw new Error(putResult.error.message);
 
+      if (await guardUnavailableAction()) return;
       await onEnsureGranolaBackendAccess();
+      if (await guardUnavailableAction()) return;
       await verifyGranolaStatus(api);
+      if (await guardUnavailableAction()) return;
       setStep("granola-test");
     } catch (err) {
+      if (delegationStateRef.current === "unavailable") {
+        await recheckUnavailableBackend();
+        return;
+      }
       setTestError(err instanceof Error ? err.message : String(err));
       setStep("granola-test");
     } finally {
@@ -338,13 +430,20 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   };
 
   const finishGranolaAccess = async () => {
+    if (await guardUnavailableAction()) return;
     setSaving(true);
     setTestError(null);
     try {
       await onEnsureGranolaBackendAccess();
+      if (await guardUnavailableAction()) return;
       await verifyGranolaStatus(api);
+      if (await guardUnavailableAction()) return;
       setStep("granola-test");
     } catch (err) {
+      if (delegationStateRef.current === "unavailable") {
+        await recheckUnavailableBackend();
+        return;
+      }
       setTestError(err instanceof Error ? err.message : String(err));
       setStep("granola-test");
     } finally {
@@ -353,6 +452,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   };
 
   const saveSoundcoreCredentials = async () => {
+    if (await guardUnavailableAction()) return;
     setSaving(true);
     setTestError(null);
     try {
@@ -366,11 +466,16 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
       );
       if (!putResult.ok) throw new Error(putResult.error.message);
 
+      if (await guardUnavailableAction()) return;
       setSoundcoreCredentialsSaved(true);
       setSoundcoreAccessVerified(false);
       onSoundcoreCredentialsSaved?.();
       setStep("soundcore-test");
     } catch (err) {
+      if (delegationStateRef.current === "unavailable") {
+        await recheckUnavailableBackend();
+        return;
+      }
       setTestError(err instanceof Error ? err.message : String(err));
       setStep("soundcore-test");
     } finally {
@@ -378,7 +483,8 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
     }
   };
 
-  const applySoundcoreEnvBlock = () => {
+  const applySoundcoreEnvBlock = async () => {
+    if (await guardUnavailableAction()) return;
     const parsed = parseSoundcoreEnvBlock(soundcoreEnvBlock);
     if (parsed.SOUNDCORE_AUTH_TOKEN) setSoundcoreAuthToken(parsed.SOUNDCORE_AUTH_TOKEN);
     if (parsed.SOUNDCORE_UID) setSoundcoreUid(parsed.SOUNDCORE_UID);
@@ -386,15 +492,22 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   };
 
   const finishSoundcoreAccess = async () => {
+    if (await guardUnavailableAction()) return;
     setSaving(true);
     setTestError(null);
     try {
       await (onEnsureSoundcoreBackendAccess ?? onEnsureBackendAccess)();
+      if (await guardUnavailableAction()) return;
       await verifySoundcoreStatus(api);
+      if (await guardUnavailableAction()) return;
       setSoundcoreCredentialsSaved(true);
       setSoundcoreAccessVerified(true);
       setStep("soundcore-test");
     } catch (err) {
+      if (delegationStateRef.current === "unavailable") {
+        await recheckUnavailableBackend();
+        return;
+      }
       setTestError(err instanceof Error ? err.message : String(err));
       setStep("soundcore-test");
     } finally {
@@ -403,6 +516,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   };
 
   const syncSoundcoreNow = async () => {
+    if (await guardUnavailableAction()) return;
     setSoundcoreSyncing(true);
     setTestError(null);
     setSoundcoreSyncMessage(null);
@@ -417,6 +531,10 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
         `Synced ${result.synced} note${result.synced === 1 ? "" : "s"} (${result.skipped} already in Listen, ${result.skippedNoTranscript} without transcripts).`,
       );
     } catch (err) {
+      if (delegationStateRef.current === "unavailable") {
+        await recheckUnavailableBackend();
+        return;
+      }
       setTestError(err instanceof Error ? err.message : String(err));
     } finally {
       setSoundcoreSyncing(false);
@@ -424,6 +542,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   };
 
   const saveTranscriptionProviderKey = async () => {
+    if (await guardUnavailableAction()) return;
     const secretName = TRANSCRIPTION_SECRET_NAMES[transcriptionProvider];
     setSaving(true);
     setTranscriptionError(null);
@@ -431,11 +550,17 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
       const putResult = await tcw.secrets.put(secretName, transcriptionKey.trim());
       if (!putResult.ok) throw new Error(putResult.error.message);
 
+      if (await guardUnavailableAction()) return;
       await (onEnsureSecretBackendAccess ?? onEnsureBackendAccess)(secretName);
+      if (await guardUnavailableAction()) return;
       onTranscriptionProviderComplete?.(transcriptionProvider);
       setTranscriptionKey("");
       setStep("transcription-upload");
     } catch (err) {
+      if (delegationStateRef.current === "unavailable") {
+        await recheckUnavailableBackend();
+        return;
+      }
       setTranscriptionError(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving(false);
@@ -443,14 +568,20 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   };
 
   const finishTranscriptionProviderAccess = async (provider: TranscriptionProvider) => {
+    if (await guardUnavailableAction()) return;
     setSaving(true);
     setTranscriptionError(null);
     try {
       await (onEnsureSecretBackendAccess ?? onEnsureBackendAccess)(
         TRANSCRIPTION_SECRET_NAMES[provider],
       );
+      if (await guardUnavailableAction()) return;
       onTranscriptionProviderComplete?.(provider);
     } catch (err) {
+      if (delegationStateRef.current === "unavailable") {
+        await recheckUnavailableBackend();
+        return;
+      }
       setTranscriptionError(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving(false);
@@ -458,25 +589,79 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   };
 
   const handleGoogleConnect = async () => {
+    if (await guardUnavailableAction()) return;
     setConnecting(true);
     setGoogleError(null);
     try {
       if (hasBackendDelegation !== true) {
         await onEnsureBackendAccess();
+        if (await guardUnavailableAction()) {
+          setConnecting(false);
+          return;
+        }
       }
       const { authUrl } = await api.get<{ authUrl: string }>("/api/auth/google");
+      if (await guardUnavailableAction()) {
+        setConnecting(false);
+        return;
+      }
       const popup = window.open(authUrl, "google-auth", "width=500,height=600,popup=yes");
       if (!popup) {
         throw new Error("Popup blocked. Allow popups for this site and try again.");
       }
-      googlePopupPollRef.current = window.setInterval(() => {
-        if (popup.closed) {
+
+      const result = await new Promise<
+        "success" | "error" | "closed" | "unmounted" | "unavailable"
+      >((resolve) => {
+        let settled = false;
+        const cleanup = () => {
           clearGooglePopupPoll();
-          setConnecting(false);
-          setGoogleError("The Google sign-in window was closed before finishing. Try again.");
-        }
-      }, 500);
+          window.removeEventListener("message", handleMessage);
+          if (googlePopupFinishRef.current === finish) googlePopupFinishRef.current = null;
+        };
+        const finish = (next: "success" | "error" | "closed" | "unmounted" | "unavailable") => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve(next);
+        };
+        const handleMessage = async (event: MessageEvent) => {
+          if (event.data?.type === "google-auth-success") {
+            if (await guardUnavailableAction()) {
+              finish("unavailable");
+              return;
+            }
+            finish("success");
+          } else if (event.data?.type === "google-auth-error") {
+            setGoogleError(event.data.message || "Authentication failed");
+            finish("error");
+          }
+        };
+        googlePopupFinishRef.current = finish;
+        window.addEventListener("message", handleMessage);
+        googlePopupPollRef.current = window.setInterval(() => {
+          if (popup.closed) finish("closed");
+        }, 500);
+      });
+
+      if (!mountedRef.current || result === "unmounted") return;
+      setConnecting(false);
+      if (result === "success") {
+        setGoogleError(null);
+        setStep("google-success");
+        onGoogleMeetComplete?.();
+      } else if (result === "closed") {
+        if (delegationStateRef.current === "unavailable") void recheckUnavailableBackend();
+        else setGoogleError("The Google sign-in window was closed before finishing. Try again.");
+      } else if (result === "unavailable") {
+        // guardUnavailableAction already started the shared read-only recheck.
+      }
     } catch (err) {
+      if (delegationStateRef.current === "unavailable") {
+        setConnecting(false);
+        await recheckUnavailableBackend();
+        return;
+      }
       setGoogleError(err instanceof Error ? err.message : String(err));
       setConnecting(false);
     }
@@ -484,7 +669,9 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
 
   const handleTranscriptFile = async (file: File | null) => {
     if (!file) return;
+    if (await guardUnavailableAction()) return;
     const text = await file.text();
+    if (await guardUnavailableAction()) return;
     setImportTranscript(text);
     setImportError(null);
     if (importTitle.trim() === "") {
@@ -493,11 +680,13 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   };
 
   const submitTranscriptImport = async () => {
+    if (await guardUnavailableAction()) return;
     setImportSaving(true);
     setImportError(null);
     try {
       if (hasBackendDelegation !== true) {
         await onEnsureBackendAccess();
+        if (await guardUnavailableAction()) return;
       }
 
       const result = await api.post<ImportTranscriptResponse>("/api/conversations/import", {
@@ -511,6 +700,10 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
       setImportedConversationId(result.conversationId);
       setStep("transcript-success");
     } catch (err) {
+      if (delegationStateRef.current === "unavailable") {
+        await recheckUnavailableBackend();
+        return;
+      }
       setImportError(err instanceof Error ? err.message : String(err));
     } finally {
       setImportSaving(false);
@@ -520,6 +713,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
   const submitTranscription = async () => {
     if (!transcriptionFile) return;
     if (transcriptionFile.size > MAX_TRANSCRIPTION_FILE_BYTES) return;
+    if (await guardUnavailableAction()) return;
     setTranscriptionSaving(true);
     setTranscriptionError(null);
     try {
@@ -529,12 +723,14 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
         );
       }
 
+      const contentBase64 = await fileToBase64(transcriptionFile);
+      if (await guardUnavailableAction()) return;
       const result = await api.post<TranscribeResponse>("/api/conversations/transcribe", {
         provider: transcriptionProvider,
         title: transcriptionTitle.trim() || transcriptionFile.name.replace(/\.[^.]+$/, ""),
         fileName: transcriptionFile.name,
         contentType: transcriptionFile.type || "application/octet-stream",
-        contentBase64: await fileToBase64(transcriptionFile),
+        contentBase64,
         startedAt: transcriptionStartedAt
           ? new Date(transcriptionStartedAt).toISOString()
           : undefined,
@@ -542,6 +738,10 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
       setImportedConversationId(result.conversationId);
       setStep("transcript-success");
     } catch (err) {
+      if (delegationStateRef.current === "unavailable") {
+        await recheckUnavailableBackend();
+        return;
+      }
       setTranscriptionError(err instanceof Error ? err.message : String(err));
     } finally {
       setTranscriptionSaving(false);
@@ -649,7 +849,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
                   : {}),
               }}
               disabled={!importTitle.trim() || !importTranscript.trim() || importSaving}
-              onClick={submitTranscriptImport}
+              onClick={() => void runSetupAction(submitTranscriptImport, true)}
             >
               {importSaving ? "Importing..." : "Import transcript"}
             </button>
@@ -689,6 +889,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
     if (step === "transcription-upload") {
       const providerReady = transcriptionProviderReady(transcriptionProvider);
       const providerNeedsAccess = transcriptionProviderNeedsAccess(transcriptionProvider);
+      const providerAccessUnavailable = delegationUnavailable;
       const providerLabel = TRANSCRIPTION_PROVIDER_LABELS[transcriptionProvider];
       const fileTooLarge = Boolean(
         transcriptionFile && transcriptionFile.size > MAX_TRANSCRIPTION_FILE_BYTES,
@@ -707,7 +908,9 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
             <select
               value={transcriptionProvider}
               onChange={(event) =>
-                setTranscriptionProvider(event.target.value as TranscriptionProvider)
+                void runSetupAction(() =>
+                  setTranscriptionProvider(event.target.value as TranscriptionProvider),
+                )
               }
               style={s.input}
             >
@@ -721,20 +924,38 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
           </label>
           {!providerReady && (
             <div style={s.errorCard}>
-              {providerNeedsAccess
-                ? `${providerLabel} key is saved. Backend access still needs setup.`
-                : `Connect ${providerLabel} before uploading media for transcription.`}
+              {providerAccessUnavailable
+                ? `${providerLabel} backend access is temporarily unavailable.`
+                : providerNeedsAccess
+                  ? `${providerLabel} key is saved. Backend access still needs setup.`
+                  : `Connect ${providerLabel} before uploading media for transcription.`}
               <div style={s.btnRow}>
-                {providerNeedsAccess ? (
+                {providerAccessUnavailable ? (
                   <button
                     style={s.btnPrimary}
                     disabled={saving}
-                    onClick={() => void finishTranscriptionProviderAccess(transcriptionProvider)}
+                    onClick={() => void recheckUnavailableBackend()}
+                  >
+                    {saving ? "Checking..." : "Try again"}
+                  </button>
+                ) : providerNeedsAccess ? (
+                  <button
+                    style={s.btnPrimary}
+                    disabled={saving}
+                    onClick={() =>
+                      void runSetupAction(
+                        () => finishTranscriptionProviderAccess(transcriptionProvider),
+                        true,
+                      )
+                    }
                   >
                     {saving ? "Connecting..." : "Finish setup"}
                   </button>
                 ) : (
-                  <button style={s.btnPrimary} onClick={() => setStep("transcription-key")}>
+                  <button
+                    style={s.btnPrimary}
+                    onClick={() => void runSetupAction(() => setStep("transcription-key"))}
+                  >
                     Connect {providerLabel}
                   </button>
                 )}
@@ -768,6 +989,11 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
               type="file"
               accept="audio/*,video/*"
               onChange={(event) => {
+                if (delegationStateRef.current === "unavailable") {
+                  void recheckUnavailableBackend();
+                  event.currentTarget.value = "";
+                  return;
+                }
                 const file = event.currentTarget.files?.[0] ?? null;
                 setTranscriptionFile(file);
                 setTranscriptionError(null);
@@ -798,7 +1024,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
             <button
               style={{ ...s.btnPrimary, ...(!canTranscribe ? s.btnDisabled : {}) }}
               disabled={!canTranscribe}
-              onClick={submitTranscription}
+              onClick={() => void runSetupAction(submitTranscription, true)}
             >
               {transcriptionSaving ? "Transcribing..." : `Transcribe with ${providerLabel}`}
             </button>
@@ -837,7 +1063,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
                 ...(transcriptionKey.trim() === "" || saving ? s.btnDisabled : {}),
               }}
               disabled={transcriptionKey.trim() === "" || saving}
-              onClick={saveTranscriptionProviderKey}
+              onClick={() => void runSetupAction(saveTranscriptionProviderKey, true)}
             >
               {saving ? "Connecting..." : "Save key and connect"}
             </button>
@@ -868,7 +1094,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
             <button
               style={{ ...s.btnPrimary, ...(apiKey.trim() === "" || saving ? s.btnDisabled : {}) }}
               disabled={apiKey.trim() === "" || saving}
-              onClick={saveFirefliesKey}
+              onClick={() => void runSetupAction(saveFirefliesKey, true)}
             >
               {saving ? "Connecting..." : "Save key and connect"}
             </button>
@@ -890,7 +1116,10 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
                 </div>
               </div>
               <div style={s.btnRow}>
-                <button style={s.btnGhost} onClick={() => setStep("fireflies-webhook")}>
+                <button
+                  style={s.btnGhost}
+                  onClick={() => void runSetupAction(() => setStep("fireflies-webhook"))}
+                >
                   Configure webhook
                 </button>
                 <button style={s.btnPrimary} onClick={onFirefliesComplete}>
@@ -902,11 +1131,18 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
             <>
               <div style={s.errorCard}>{testError}</div>
               <div style={s.btnRow}>
-                <button style={s.btnGhost} onClick={() => setStep("fireflies-key")}>
+                <button
+                  style={s.btnGhost}
+                  onClick={() => void runSetupAction(() => setStep("fireflies-key"))}
+                >
                   Edit key
                 </button>
                 {hasFirefliesKey && (
-                  <button style={s.btnPrimary} onClick={finishFirefliesAccess} disabled={saving}>
+                  <button
+                    style={s.btnPrimary}
+                    onClick={() => void runSetupAction(finishFirefliesAccess, true)}
+                    disabled={saving}
+                  >
                     {saving ? "Connecting..." : "Try access again"}
                   </button>
                 )}
@@ -925,11 +1161,13 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
             <code style={s.urlCode}>{webhookUrl}</code>
             <button
               style={s.btnSmall}
-              onClick={() => {
-                navigator.clipboard.writeText(webhookUrl);
-                setUrlCopied(true);
-                setTimeout(() => setUrlCopied(false), 2000);
-              }}
+              onClick={() =>
+                void runSetupAction(() => {
+                  navigator.clipboard.writeText(webhookUrl);
+                  setUrlCopied(true);
+                  setTimeout(() => setUrlCopied(false), 2000);
+                })
+              }
             >
               {urlCopied ? "Copied" : "Copy"}
             </button>
@@ -949,17 +1187,19 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
             />
             <button
               style={s.btnGhost}
-              onClick={() => {
-                const arr = new Uint8Array(24);
-                crypto.getRandomValues(arr);
-                setWebhookSecret(
-                  Array.from(arr, (b) => b.toString(36).padStart(2, "0"))
-                    .join("")
-                    .slice(0, 32),
-                );
-                setWebhookError(null);
-                setWebhookSaved(false);
-              }}
+              onClick={() =>
+                void runSetupAction(() => {
+                  const arr = new Uint8Array(24);
+                  crypto.getRandomValues(arr);
+                  setWebhookSecret(
+                    Array.from(arr, (b) => b.toString(36).padStart(2, "0"))
+                      .join("")
+                      .slice(0, 32),
+                  );
+                  setWebhookError(null);
+                  setWebhookSaved(false);
+                })
+              }
             >
               Generate
             </button>
@@ -976,18 +1216,21 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
                 ...(webhookSecret.length < 16 || webhookSaving ? s.btnDisabled : {}),
               }}
               disabled={webhookSecret.length < 16 || webhookSaving}
-              onClick={async () => {
-                setWebhookSaving(true);
-                setWebhookError(null);
-                try {
-                  await api.put("/api/config/webhook-secret", { secret: webhookSecret });
-                  setWebhookSaved(true);
-                } catch (err) {
-                  setWebhookError(err instanceof Error ? err.message : String(err));
-                } finally {
-                  setWebhookSaving(false);
-                }
-              }}
+              onClick={() =>
+                void runSetupAction(async () => {
+                  setWebhookSaving(true);
+                  setWebhookError(null);
+                  try {
+                    await api.put("/api/config/webhook-secret", { secret: webhookSecret });
+                    if (await guardUnavailableAction()) return;
+                    setWebhookSaved(true);
+                  } catch (err) {
+                    setWebhookError(err instanceof Error ? err.message : String(err));
+                  } finally {
+                    setWebhookSaving(false);
+                  }
+                }, true)
+              }
             >
               {webhookSaving ? "Saving..." : "Save secret"}
             </button>
@@ -1026,7 +1269,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
                 ...(granolaApiKey.trim() === "" || saving ? s.btnDisabled : {}),
               }}
               disabled={granolaApiKey.trim() === "" || saving}
-              onClick={saveGranolaKey}
+              onClick={() => void runSetupAction(saveGranolaKey, true)}
             >
               {saving ? "Connecting..." : "Save key and connect"}
             </button>
@@ -1042,11 +1285,18 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
             <>
               <div style={s.errorCard}>{testError}</div>
               <div style={s.btnRow}>
-                <button style={s.btnGhost} onClick={() => setStep("granola-key")}>
+                <button
+                  style={s.btnGhost}
+                  onClick={() => void runSetupAction(() => setStep("granola-key"))}
+                >
                   Edit key
                 </button>
                 {hasGranolaKey && (
-                  <button style={s.btnPrimary} onClick={finishGranolaAccess} disabled={saving}>
+                  <button
+                    style={s.btnPrimary}
+                    onClick={() => void runSetupAction(finishGranolaAccess, true)}
+                    disabled={saving}
+                  >
                     {saving ? "Connecting..." : "Try access again"}
                   </button>
                 )}
@@ -1102,7 +1352,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
             style={{ ...s.textarea, minHeight: 86 }}
           />
           <div style={s.btnRow}>
-            <button type="button" style={s.btnGhost} onClick={applySoundcoreEnvBlock}>
+            <button type="button" style={s.btnGhost} onClick={() => void applySoundcoreEnvBlock()}>
               Fill fields from pasted block
             </button>
           </div>
@@ -1149,7 +1399,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
                 ...(!ready || saving ? s.btnDisabled : {}),
               }}
               disabled={!ready || saving}
-              onClick={saveSoundcoreCredentials}
+              onClick={() => void runSetupAction(saveSoundcoreCredentials, true)}
             >
               {saving ? "Saving..." : "Save credentials"}
             </button>
@@ -1165,10 +1415,17 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
             <>
               <div style={s.errorCard}>{testError}</div>
               <div style={s.btnRow}>
-                <button style={s.btnGhost} onClick={() => setStep("soundcore-key")}>
+                <button
+                  style={s.btnGhost}
+                  onClick={() => void runSetupAction(() => setStep("soundcore-key"))}
+                >
                   Edit credentials
                 </button>
-                <button style={s.btnPrimary} onClick={finishSoundcoreAccess} disabled={saving}>
+                <button
+                  style={s.btnPrimary}
+                  onClick={() => void runSetupAction(finishSoundcoreAccess, true)}
+                  disabled={saving}
+                >
                   {saving ? "Connecting..." : "Try access again"}
                 </button>
               </div>
@@ -1185,10 +1442,17 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
                 </div>
               </div>
               <div style={s.btnRow}>
-                <button style={s.btnGhost} onClick={() => setStep("soundcore-key")}>
+                <button
+                  style={s.btnGhost}
+                  onClick={() => void runSetupAction(() => setStep("soundcore-key"))}
+                >
                   Edit credentials
                 </button>
-                <button style={s.btnPrimary} onClick={finishSoundcoreAccess} disabled={saving}>
+                <button
+                  style={s.btnPrimary}
+                  onClick={() => void runSetupAction(finishSoundcoreAccess, true)}
+                  disabled={saving}
+                >
                   {saving ? "Connecting..." : "Finish setup"}
                 </button>
               </div>
@@ -1209,7 +1473,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
                     ...(soundcoreSyncing ? s.btnDisabled : {}),
                   }}
                   disabled={soundcoreSyncing}
-                  onClick={syncSoundcoreNow}
+                  onClick={() => void runSetupAction(syncSoundcoreNow, true)}
                 >
                   {soundcoreSyncing ? "Syncing..." : "Sync Soundcore now"}
                 </button>
@@ -1245,7 +1509,11 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
             <button style={s.btnGhost} onClick={() => setStep("cards")}>
               Back
             </button>
-            <button style={s.btnPrimary} disabled={connecting} onClick={handleGoogleConnect}>
+            <button
+              style={s.btnPrimary}
+              disabled={connecting}
+              onClick={() => void runSetupAction(handleGoogleConnect, true)}
+            >
               {connecting ? "Connecting..." : "Connect Google"}
             </button>
           </div>
@@ -1318,7 +1586,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
               description="Paste text or upload .txt, .md, .srt, or .vtt."
               detail="manual import"
               actionLabel="Import ->"
-              onAction={() => setStep("transcript-import")}
+              onAction={() => void runSetupAction(() => setStep("transcript-import"))}
             />
 
             <SourceCard
@@ -1327,62 +1595,78 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
               description="Upload media using a connected transcription provider."
               detail="provider transcription"
               actionLabel="Upload ->"
-              onAction={() => setStep("transcription-upload")}
+              onAction={() => void runSetupAction(() => setStep("transcription-upload"))}
             />
 
             <TranscriptionProviderCard
               provider="assemblyai"
               connected={transcriptionProviderReady("assemblyai")}
               needsAccess={transcriptionProviderNeedsAccess("assemblyai")}
+              accessUnavailable={delegationUnavailable}
               saving={saving}
-              onConnect={() => {
-                setTranscriptionProvider("assemblyai");
-                setTranscriptionKey("");
-                setTranscriptionError(null);
-                setStep("transcription-key");
-              }}
-              onFinishSetup={() => void finishTranscriptionProviderAccess("assemblyai")}
+              onConnect={() =>
+                void runSetupAction(() => {
+                  setTranscriptionProvider("assemblyai");
+                  setTranscriptionKey("");
+                  setTranscriptionError(null);
+                  setStep("transcription-key");
+                })
+              }
+              onFinishSetup={() =>
+                void runSetupAction(() => finishTranscriptionProviderAccess("assemblyai"), true)
+              }
+              onRetry={() => void recheckUnavailableBackend()}
             />
 
             <TranscriptionProviderCard
               provider="deepgram"
               connected={transcriptionProviderReady("deepgram")}
               needsAccess={transcriptionProviderNeedsAccess("deepgram")}
+              accessUnavailable={delegationUnavailable}
               saving={saving}
-              onConnect={() => {
-                setTranscriptionProvider("deepgram");
-                setTranscriptionKey("");
-                setTranscriptionError(null);
-                setStep("transcription-key");
-              }}
-              onFinishSetup={() => void finishTranscriptionProviderAccess("deepgram")}
+              onConnect={() =>
+                void runSetupAction(() => {
+                  setTranscriptionProvider("deepgram");
+                  setTranscriptionKey("");
+                  setTranscriptionError(null);
+                  setStep("transcription-key");
+                })
+              }
+              onFinishSetup={() =>
+                void runSetupAction(() => finishTranscriptionProviderAccess("deepgram"), true)
+              }
+              onRetry={() => void recheckUnavailableBackend()}
             />
 
             <SourceCard
               title="Fireflies"
               meta="meeting bot - webhook"
               description={
-                firefliesNeedsAccess
-                  ? "API key saved. Backend access is still needed."
-                  : "Pull from your Fireflies workspace."
+                delegationUnavailable
+                  ? "Backend access is temporarily unavailable. Try again when it is reachable."
+                  : firefliesNeedsAccess
+                    ? "API key saved. Backend access is still needed."
+                    : "Pull from your Fireflies workspace."
               }
               detail="workspace oauth"
               connected={firefliesConnected}
               actionLabel={
                 firefliesConnected
                   ? "Connected"
-                  : firefliesNeedsAccess
-                    ? "Finish setup ->"
-                    : "Connect ->"
+                  : delegationUnavailable
+                    ? "Try again"
+                    : firefliesNeedsAccess
+                      ? "Finish setup ->"
+                      : "Connect ->"
               }
               disabled={saving || firefliesConnected}
               onAction={() => {
                 if (firefliesConnected) return;
                 if (firefliesNeedsAccess) {
-                  void finishFirefliesAccess();
-                  return;
+                  void runSetupAction(finishFirefliesAccess, true);
+                } else {
+                  void runSetupAction(() => setStep("fireflies-key"));
                 }
-                setStep("fireflies-key");
               }}
             />
 
@@ -1390,27 +1674,31 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
               title="Granola"
               meta="notes api"
               description={
-                granolaNeedsAccess
-                  ? "API key saved. Backend access is still needed."
-                  : "Pull summaries and transcripts from Granola."
+                delegationUnavailable
+                  ? "Backend access is temporarily unavailable. Try again when it is reachable."
+                  : granolaNeedsAccess
+                    ? "API key saved. Backend access is still needed."
+                    : "Pull summaries and transcripts from Granola."
               }
               detail="api key"
               connected={granolaConnected}
               actionLabel={
                 granolaConnected
                   ? "Connected"
-                  : granolaNeedsAccess
-                    ? "Finish setup ->"
-                    : "Connect ->"
+                  : delegationUnavailable
+                    ? "Try again"
+                    : granolaNeedsAccess
+                      ? "Finish setup ->"
+                      : "Connect ->"
               }
               disabled={saving || granolaConnected}
               onAction={() => {
                 if (granolaConnected) return;
                 if (granolaNeedsAccess) {
-                  void finishGranolaAccess();
-                  return;
+                  void runSetupAction(finishGranolaAccess, true);
+                } else {
+                  void runSetupAction(() => setStep("granola-key"));
                 }
-                setStep("granola-key");
               }}
             />
 
@@ -1418,27 +1706,31 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
               title="Soundcore"
               meta="advanced web session"
               description={
-                soundcoreNeedsAccess
-                  ? "Credentials saved. Backend access is still needed."
-                  : "Pull voice note transcripts using captured Soundcore web headers."
+                delegationUnavailable
+                  ? "Backend access is temporarily unavailable. Try again when it is reachable."
+                  : soundcoreNeedsAccess
+                    ? "Credentials saved. Backend access is still needed."
+                    : "Pull voice note transcripts using captured Soundcore web headers."
               }
               detail="not an official API key"
               connected={soundcoreConnected}
               actionLabel={
                 soundcoreConnected
                   ? "Connected"
-                  : soundcoreNeedsAccess
-                    ? "Finish setup ->"
-                    : "Connect ->"
+                  : delegationUnavailable
+                    ? "Try again"
+                    : soundcoreNeedsAccess
+                      ? "Finish setup ->"
+                      : "Connect ->"
               }
               disabled={saving || soundcoreConnected}
               onAction={() => {
                 if (soundcoreConnected) return;
                 if (soundcoreNeedsAccess) {
-                  void finishSoundcoreAccess();
-                  return;
+                  void runSetupAction(finishSoundcoreAccess, true);
+                } else {
+                  void runSetupAction(() => setStep("soundcore-key"));
                 }
-                setStep("soundcore-key");
               }}
             />
 
@@ -1446,26 +1738,34 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
               title="Google Meet"
               meta="caption sync"
               description={
-                googleMeetAvailable
-                  ? hasBackendDelegation === true
-                    ? "Pulls captions and recordings from Google."
-                    : "Backend access will be delegated before OAuth."
-                  : "Google Meet is not configured on this Listen server."
+                delegationUnavailable
+                  ? "Backend access is temporarily unavailable. Try again when it is reachable."
+                  : googleMeetAvailable
+                    ? hasBackendDelegation === true
+                      ? "Pulls captions and recordings from Google."
+                      : "Backend access will be delegated before OAuth."
+                    : "Google Meet is not configured on this Listen server."
               }
-              detail={googleMeetAvailable ? "google oauth" : "unavailable"}
+              detail={
+                googleMeetAvailable && !delegationUnavailable ? "google oauth" : "unavailable"
+              }
               connected={hasGoogleMeet === true}
               actionLabel={
                 hasGoogleMeet === true
                   ? "Connected"
-                  : googleMeetAvailable
-                    ? "Connect ->"
-                    : "Unavailable"
+                  : delegationUnavailable
+                    ? "Try again"
+                    : googleMeetAvailable
+                      ? "Connect ->"
+                      : "Unavailable"
               }
-              disabled={hasGoogleMeet === true || !googleMeetAvailable}
-              onAction={() => {
-                if (!googleMeetAvailable) return;
-                setStep("google-connect");
-              }}
+              disabled={hasGoogleMeet === true || (!googleMeetAvailable && !delegationUnavailable)}
+              onAction={() =>
+                void runSetupAction(() => {
+                  if (!googleMeetAvailable) return;
+                  setStep("google-connect");
+                })
+              }
             />
           </div>
         ) : (
@@ -1482,9 +1782,9 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
           <button
             style={{
               ...s.btnPrimary,
-              ...(connectedCount === 0 ? s.btnDisabled : {}),
+              ...(!delegationUnavailable && connectedCount === 0 ? s.btnDisabled : {}),
             }}
-            disabled={connectedCount === 0}
+            disabled={!delegationUnavailable && connectedCount === 0}
             onClick={onDone}
           >
             Continue to library &rarr;
@@ -1554,16 +1854,20 @@ function TranscriptionProviderCard({
   provider,
   connected,
   needsAccess,
+  accessUnavailable,
   saving,
   onConnect,
   onFinishSetup,
+  onRetry,
 }: {
   provider: TranscriptionProvider;
   connected: boolean;
   needsAccess: boolean;
+  accessUnavailable: boolean;
   saving: boolean;
   onConnect: () => void;
   onFinishSetup: () => void;
+  onRetry: () => void;
 }) {
   const label = TRANSCRIPTION_PROVIDER_LABELS[provider];
   return (
@@ -1571,17 +1875,28 @@ function TranscriptionProviderCard({
       title={label}
       meta="transcription api"
       description={
-        needsAccess
-          ? "API key saved. Backend access is still needed."
-          : `Use ${label} for uploaded media transcription.`
+        accessUnavailable
+          ? "Backend access is temporarily unavailable. Try again when it is reachable."
+          : needsAccess
+            ? "API key saved. Backend access is still needed."
+            : `Use ${label} for uploaded media transcription.`
       }
       detail="api key"
       connected={connected}
-      actionLabel={connected ? "Connected" : needsAccess ? "Finish setup ->" : `Connect ->`}
+      actionLabel={
+        connected
+          ? "Connected"
+          : accessUnavailable
+            ? "Try again"
+            : needsAccess
+              ? "Finish setup ->"
+              : `Connect ->`
+      }
       disabled={saving || connected}
       onAction={() => {
         if (connected) return;
-        if (needsAccess) onFinishSetup();
+        if (accessUnavailable) onRetry();
+        else if (needsAccess) onFinishSetup();
         else onConnect();
       }}
     />
@@ -1646,7 +1961,6 @@ function isMissingSecretError(err: unknown): boolean {
     message.includes("no granola api key configured") ||
     message.includes("no soundcore credentials configured") ||
     message.includes("missing soundcore secret") ||
-    message.includes("grant_not_found") ||
     message.includes("key_not_found") ||
     message.includes("storage_error")
   );

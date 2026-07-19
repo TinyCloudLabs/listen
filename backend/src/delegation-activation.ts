@@ -4,18 +4,24 @@ import {
   resolveSecretPath,
   type TinyCloudNode,
 } from "@tinycloud/node-sdk";
+import { delegationContentIdentity } from "@listen/server";
 
 type PortableDelegation = Parameters<TinyCloudNode["useDelegation"]>[0];
 export type PortableDelegationSet = PortableDelegation | PortableDelegation[];
 export type DelegatedAccess = Awaited<ReturnType<TinyCloudNode["useDelegation"]>>;
 
 interface DelegationActivationCache {
-  set(address: string, access: DelegatedAccess): void;
+  set(address: string, identity: string, revision: string, access: DelegatedAccess): void;
 }
 
 export interface DelegationActivator {
-  activate(address: string, serialized: string): Promise<DelegatedAccess>;
-  invalidate(address: string): void;
+  activate(
+    address: string,
+    serialized: string,
+    identity: string,
+    revision: string,
+  ): Promise<DelegatedAccess>;
+  invalidate(address: string, revision?: string): void;
 }
 
 const DELEGATION_BUNDLE_FORMAT = "listen.delegation-bundle";
@@ -132,20 +138,27 @@ export function createDelegationActivator(
 ): DelegationActivator {
   const activationInFlight = new Map<
     string,
-    { serialized: string; promise: Promise<DelegatedAccess> }
+    { serialized: string; revision: string; promise: Promise<DelegatedAccess> }
   >();
+  const invalidationGeneration = new Map<string, number>();
 
   return {
-    activate(address, serialized) {
+    activate(address, serialized, identity, revision) {
       const existing = activationInFlight.get(address);
-      if (existing?.serialized === serialized) return existing.promise;
+      if (existing?.serialized === serialized && existing.revision === revision) {
+        return existing.promise;
+      }
+
+      const generation = invalidationGeneration.get(address) ?? 0;
 
       const activation = activateSerialized(serialized);
       let shared: Promise<DelegatedAccess>;
       shared = activation
         .then((access) => {
           if (activationInFlight.get(address)?.promise === shared) {
-            cache.set(address, access);
+            if ((invalidationGeneration.get(address) ?? 0) === generation) {
+              cache.set(address, identity, revision, access);
+            }
           }
           return access;
         })
@@ -154,12 +167,15 @@ export function createDelegationActivator(
             activationInFlight.delete(address);
           }
         });
-      activationInFlight.set(address, { serialized, promise: shared });
+      activationInFlight.set(address, { serialized, revision, promise: shared });
       return shared;
     },
 
-    invalidate(address) {
+    invalidate(address, revision) {
+      const existing = activationInFlight.get(address);
+      if (revision && existing && existing.revision !== revision) return;
       activationInFlight.delete(address);
+      invalidationGeneration.set(address, (invalidationGeneration.get(address) ?? 0) + 1);
     },
   };
 }

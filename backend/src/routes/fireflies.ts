@@ -29,8 +29,8 @@ export function createFirefliesRouter(config: FirefliesRoutesConfig) {
 
     if (!secret.ok) {
       const prefix = secret.error.code ? `${secret.error.code}: ` : "";
-      res.status(404).json({
-        error: "no_api_key",
+      res.status(secret.reason === "missing" ? 404 : 503).json({
+        error: secret.reason === "missing" ? "no_api_key" : "fireflies_secret_unavailable",
         secretCode: secret.error.code,
         message: `${prefix}${
           secret.error.message ??

@@ -1,12 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { Wallet } from "ethers";
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
-import {
-  POLICY_STATUS_SCHEMA as ROOT_POLICY_STATUS_SCHEMA,
-  TranscriptRequester,
-  createTranscriptRequester,
-} from "@tinycloud/sdk-core-m1";
-import { POLICY_STATUS_SCHEMA } from "@tinycloud/sdk-core-m1/policy";
+import { POLICY_STATUS_SCHEMA } from "@tinycloud/sdk-core/policy";
+import { TranscriptRequester, createTranscriptRequester } from "@tinycloud/sdk-core/requester";
 
 import {
   assertConcreteRawPath,
@@ -136,8 +132,8 @@ describe("listen owner share validation", () => {
 });
 
 describe("listen owner share draft composition", () => {
-  it("uses the browser-compatible M1 policy schema", () => {
-    expect(ROOT_POLICY_STATUS_SCHEMA).toBe(POLICY_STATUS_SCHEMA);
+  it("uses the TinyCloud 2.8 policy schema", () => {
+    expect(POLICY_STATUS_SCHEMA).toBe("xyz.tinycloud.policy/status/v0");
   });
 
   it("composes capabilities for exactly the selected conversation IDs", () => {
@@ -293,7 +289,7 @@ describe("listen owner share publish and revoke", () => {
     expect(listPublishedListenOwnerShares()).toHaveLength(1);
   });
 
-  it("produces a bootstrap accepted by the vendored requester with the signed policy ceiling", async () => {
+  it("produces a bootstrap accepted by the 2.8 requester with the signed policy ceiling", async () => {
     const put = vi.fn(async () => ({ ok: true }));
     const { publishListenOwnerShare } = await importPublishModule();
     const published = await publishListenOwnerShare(signedTcw(put), draft());
@@ -317,6 +313,10 @@ describe("listen owner share publish and revoke", () => {
       ownerDid: policy.ownerDid,
       audience: published.bootstrap.policyEngine.audience,
       grantIssuerDid: published.bootstrap.policyEngine.signedRecord.grantIssuerDid,
+      trustedOwnerNode: {
+        endpoint: published.bootstrap.ownerNode.endpoint,
+        spaceId: published.bootstrap.ownerNode.spaceId,
+      },
       transport: {
         request: vi.fn(async () => {
           throw new Error("construction must not make an HTTP request");

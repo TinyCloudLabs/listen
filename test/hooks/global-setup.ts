@@ -328,7 +328,7 @@ async function materializeBackendDelegation(
   const groups = new Map<string, any[]>();
   const seen = new Set<string>();
   for (const permission of target.permissions) {
-    // SDK 2.7 parses signed ReCaps as one action per resource entry. Ask for
+    // The SDK parses signed ReCaps as one action per resource entry. Ask for
     // the same shape so its subset check can match the signed capabilities.
     for (const action of permission.actions) {
       const normalized = { ...permission, actions: [action] };

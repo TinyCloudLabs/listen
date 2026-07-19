@@ -40,6 +40,14 @@ When `APP_URL` is set, the Playwright config does not start Vite.
 
 ## Local TinyCloud hooks E2E
 
+Before the local E2E browser flow begins, global setup starts the fresh local
+node and performs the manual owner bootstrap. Load a disposable Ethereum-owner
+credential into `LISTEN_E2E_OWNER_PRIVATE_KEY` from the local or CI secret
+manager before starting the harness. Global setup validates the credential,
+bootstraps the owner account, and only then starts the Listen backend, frontend,
+and browser authentication. The credential value is never printed, committed,
+or passed through browser code.
+
 Run the full local stack from the repository root:
 
 ```bash
@@ -49,12 +57,11 @@ bun run test:hooks:e2e
 ```
 
 The hooks harness starts a fresh TinyCloud node, the Listen backend, and the
-frontend. Before exercising the browser-style signer and backend delegation,
-it explicitly bootstraps the disposable Ethereum owner account with the
-non-interactive private-key client. This provisions the canonical account
-spaces and schemas once, matching the server-provisioned account expected by
-interactive OpenKey signers without requiring repeated wallet prompts in the
-test.
+frontend. Its global setup performs the explicit owner bootstrap before
+browser-style signing and backend delegation. This provisions the canonical
+account spaces and schemas once, matching the server-provisioned account
+expected by interactive OpenKey signers without requiring repeated wallet
+prompts in the test.
 
 The test then verifies SIWE authentication, backend delegation activation,
 conversation import, hook ticket and event-stream setup, and a live inbox
@@ -62,9 +69,8 @@ update without reloading the page. Override `LISTEN_E2E_OWNER_PRIVATE_KEY` only
 with a disposable local test key; never use a production owner key.
 
 `LISTEN_E2E_OWNER_PRIVATE_KEY` is required. Store a throwaway Ethereum key in
-the local or CI secret manager and expose it only to the test process; the
-harness performs the manual bootstrap before starting browser authentication.
-The key must never control production funds or a production TinyCloud account.
+the local or CI secret manager and expose it only to the test process. The key
+must never control production funds or a production TinyCloud account.
 
 To exercise browser recovery after a node loses the persisted parent
 registration, run:
@@ -125,6 +131,18 @@ credentials. Production OpenKey testing should use an operator-owned test accoun
 credential generated outside CI.
 
 ## Notes
+
+- Delegation status reads are non-destructive. Expired and policy-stale rows
+  remain stored, so repeated reads keep returning the same status until a
+  replacement is accepted or an explicit DELETE is confirmed.
+- Listen DELETE removes Listen's stored copy and local derived cache only. It
+  is not cryptographic node revocation, and capability material already issued
+  to a node or an in-flight operation may remain usable until expiry or true
+  node-side revocation.
+- Listen replicas converge on the shared stored serialized grant. Nonce,
+  OAuth callback, background-job, and rate-limit state, plus durable node
+  activation and revocation, are not fully HA yet; those require shared or
+  node/SDK follow-up work.
 
 - `ncli` was not available on PATH during TC-1384 implementation.
 - The smoke test intentionally uses semantic waits and role/text locators instead of fixed sleeps.

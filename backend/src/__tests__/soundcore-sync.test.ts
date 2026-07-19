@@ -175,4 +175,29 @@ describe("Soundcore sync", () => {
       },
     });
   });
+
+  it("keeps an operational legacy-secret read distinct from missing credentials", async () => {
+    const result = await readSoundcoreCredentialsResult({
+      secrets: {
+        get: async (name: string) => {
+          if (name === "SOUNDCORE_SESSION") {
+            return { ok: false, error: { code: "key_not_found" } };
+          }
+          if (name === "SOUNDCORE_UID") {
+            return {
+              ok: false,
+              error: { code: "node_unavailable", message: "Secrets unavailable" },
+            };
+          }
+          return { ok: false, error: { code: "key_not_found" } };
+        },
+      },
+    } as any);
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "operational",
+      error: { code: "node_unavailable" },
+    });
+  });
 });

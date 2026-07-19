@@ -117,6 +117,18 @@ describe("ListenOwnerPublishedShares", () => {
     await waitFor(() => expect(screen.getByText(REVOKE_COPY)).toBeInTheDocument());
   });
 
+  it("does not start a revoke while workspace mutations are unavailable", async () => {
+    await publishStoredShare();
+    const put = vi.fn(async () => ({ ok: true }));
+
+    render(<ListenOwnerPublishedShares tcw={tcw(put)} mutationsDisabled />);
+
+    const revokeButton = await screen.findByRole("button", { name: /^Revoke access$/i });
+    expect(revokeButton).toBeDisabled();
+    fireEvent.click(revokeButton);
+    expect(put).not.toHaveBeenCalled();
+  });
+
   it("keeps a failed revoke active with a retry affordance", async () => {
     await publishStoredShare();
     const put = vi.fn(async () => ({ ok: false, error: { message: "status write failed" } }));

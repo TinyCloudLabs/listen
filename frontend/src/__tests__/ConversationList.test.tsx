@@ -600,6 +600,28 @@ describe("ConversationList", () => {
     expect(onSelectConversation).not.toHaveBeenCalled();
   });
 
+  it("disables credentialed bulk sharing without blocking read selection", async () => {
+    const onShareSelectedConversations = vi.fn();
+    api = mockApi({
+      get: vi.fn().mockResolvedValue({ conversations: CONVERSATIONS, total: CONVERSATIONS.length }),
+    });
+    render(
+      <ConversationList
+        api={api}
+        onSelectConversation={onSelectConversation}
+        onShareSelectedConversations={onShareSelectedConversations}
+        mutationsDisabled
+      />,
+    );
+
+    await screen.findByText("Sprint Planning");
+    fireEvent.click(screen.getByLabelText(/select sprint planning/i));
+    const shareButton = await screen.findByRole("button", { name: /credentialed share/i });
+    expect(shareButton).toBeDisabled();
+    fireEvent.click(shareButton);
+    expect(onShareSelectedConversations).not.toHaveBeenCalled();
+  });
+
   it("opens a right-click context menu on row", async () => {
     api = mockApi({
       get: vi.fn().mockResolvedValue({ conversations: CONVERSATIONS, total: CONVERSATIONS.length }),
@@ -614,5 +636,27 @@ describe("ConversationList", () => {
 
     expect(screen.getByText(/open transcript/i)).toBeInTheDocument();
     expect(screen.getByText(/copy summary/i)).toBeInTheDocument();
+  });
+
+  it("blocks per-conversation sharing while keeping the context menu readable", async () => {
+    const onShareConversation = vi.fn();
+    api = mockApi({
+      get: vi.fn().mockResolvedValue({ conversations: CONVERSATIONS, total: CONVERSATIONS.length }),
+    });
+    render(
+      <ConversationList
+        api={api}
+        onSelectConversation={onSelectConversation}
+        onShareConversation={onShareConversation}
+        mutationsDisabled
+      />,
+    );
+
+    await screen.findByText("Sprint Planning");
+    fireEvent.contextMenu(screen.getByText("Sprint Planning"));
+    const share = screen.getByRole("menuitem", { name: /share/i });
+    expect(share).toBeDisabled();
+    fireEvent.click(share);
+    expect(onShareConversation).not.toHaveBeenCalled();
   });
 });

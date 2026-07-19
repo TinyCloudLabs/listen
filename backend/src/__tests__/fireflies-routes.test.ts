@@ -26,6 +26,8 @@ function createMockKV() {
   };
 }
 
+let secretReadOverride: (() => Promise<any>) | null = null;
+
 // ── Mock Fireflies Client ────────────────────────────────────────────
 
 function createMockClientFactory() {
@@ -67,6 +69,7 @@ function createApp(
       kv: mockKV,
       secrets: {
         get: async () => {
+          if (secretReadOverride) return secretReadOverride();
           const val = mockKV._data.get(KV_KEY);
           if (val === undefined) return { ok: false, error: { code: "KEY_NOT_FOUND" } };
           return { ok: true, data: val };
@@ -113,6 +116,7 @@ describe("Fireflies Routes", () => {
   let port: number;
 
   beforeEach(async () => {
+    secretReadOverride = null;
     mockKV = createMockKV();
     clientFactory = createMockClientFactory();
     const app = createApp(mockKV, clientFactory);
@@ -150,6 +154,32 @@ describe("Fireflies Routes", () => {
       expect(res.status).toBe(404);
       const body = await res.json();
       expect(body.error).toBe("no_api_key");
+    });
+
+    it("returns 503 when reading the delegated API key is unavailable", async () => {
+      secretReadOverride = async () => {
+        throw Object.assign(new Error("grant missing"), { code: "grant_not_found" });
+      };
+
+      const res = await fetch(`http://localhost:${port}/api/fireflies/user`);
+
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({
+        error: "fireflies_secret_unavailable",
+        secretCode: "grant_not_found",
+      });
+    });
+
+    it("returns 503 when a successful delegated API key payload is malformed", async () => {
+      secretReadOverride = async () => ({ ok: true, data: "" });
+
+      const res = await fetch(`http://localhost:${port}/api/fireflies/user`);
+
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({
+        error: "fireflies_secret_unavailable",
+        secretCode: "INVALID_SECRET_RESPONSE",
+      });
     });
 
     it("returns 401 when Fireflies rejects the API key (HTTP 401)", async () => {

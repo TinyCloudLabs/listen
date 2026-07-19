@@ -13,7 +13,7 @@ function createMockKV() {
     _data: data,
     get: async (key: string) => {
       const val = data.get(key);
-      if (val === undefined) return { ok: true, data: { data: null } };
+      if (val === undefined) return { ok: false, error: { code: "KV_NOT_FOUND" } };
       return { ok: true, data: { data: val } };
     },
     put: async (key: string, value: string) => {
@@ -144,6 +144,7 @@ function createApp(opts?: {
   verifyToken?: (header: string, aud: string, email: string) => boolean;
   createClient?: (accessToken: string, onTokenRefresh?: any, refreshToken?: string) => any;
   tokens?: object | null;
+  delegationResult?: unknown | (() => unknown);
 }) {
   const backendKV = opts?.backendKV ?? createMockKV();
   const access = opts?.access === undefined ? createMockAccess() : opts.access;
@@ -160,7 +161,12 @@ function createApp(opts?: {
     "/api/webhooks/google-meet",
     createGoogleMeetPushRouter({
       backendKV,
-      tryGetDelegatedAccess: async () => access as any,
+      tryGetDelegatedAccess: async () => {
+        if (opts?.delegationResult === undefined) return access as any;
+        return typeof opts.delegationResult === "function"
+          ? await opts.delegationResult()
+          : (opts.delegationResult as any);
+      },
       expectedAudience: EXPECTED_AUDIENCE,
       expectedEmail: EXPECTED_EMAIL,
       verifyToken: opts?.verifyToken ?? (() => true),
@@ -348,6 +354,40 @@ describe("Google Meet Push Handler", () => {
     const pending = JSON.parse(backendKV._data.get(PENDING_KV_KEY)!);
     expect(pending).toHaveLength(1);
     expect(pending[0].conferenceRecordName).toBe(TEST_CONFERENCE_NAME);
+  });
+
+  it("preserves operational delegation activation failure in the pending reason", async () => {
+    const backendKV = createMockKV();
+    const { app } = createApp({
+      access: null,
+      backendKV,
+      delegationResult: { access: null, reason: "delegation_unavailable" },
+    });
+    ({ server, port } = await startServer(app));
+
+    const res = await postWebhook(port, buildPubSubMessage(), "Bearer fake-token");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      status: "pending",
+      reason: "delegation_unavailable",
+    });
+  });
+
+  it("converts an unexpected delegation lookup rejection into an unavailable pending reason", async () => {
+    const backendKV = createMockKV();
+    const { app } = createApp({
+      access: null,
+      backendKV,
+      delegationResult: () => Promise.reject(new Error("delegation store unavailable")),
+    });
+    ({ server, port } = await startServer(app));
+
+    const res = await postWebhook(port, buildPubSubMessage(), "Bearer fake-token");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      status: "pending",
+      reason: "delegation_unavailable",
+    });
   });
 
   // ── No Google Tokens ───────────────────────────────────────────────

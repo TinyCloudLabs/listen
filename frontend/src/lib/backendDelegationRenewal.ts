@@ -1,53 +1,7 @@
 import { isMissingParentDelegationError, type ApiClient } from "@listen/client";
+import { classifyDelegationFailure } from "./delegationState";
 
-// ── Grant records ────────────────────────────────────────────────────
-//
-// The backend deletes expired delegation rows on first touch, so "no
-// delegation" is ambiguous: it can mean "never granted" or "granted but the
-// expired row was already cleaned up". We persist a small marker whenever a
-// grant is known to exist so silent renewal never turns into an implicit
-// first-time grant. The `listen:` prefix means sign-out's local-data purge
-// removes it.
-
-const GRANT_RECORD_PREFIX = "listen:backend-delegation-grant:v1:";
 const RENEWAL_RETRY_COOLDOWN_MS = 30_000;
-
-function storage(): Storage | null {
-  try {
-    return typeof window !== "undefined" ? window.localStorage : null;
-  } catch {
-    return null;
-  }
-}
-
-function grantRecordKey(address: string, backendDid: string): string {
-  return `${GRANT_RECORD_PREFIX}${address.toLowerCase()}:${backendDid}`;
-}
-
-export function recordBackendDelegationGrant(address: string, backendDid: string): void {
-  try {
-    storage()?.setItem(grantRecordKey(address, backendDid), new Date().toISOString());
-  } catch {
-    // Storage may be unavailable or full; renewal then falls back to the
-    // explicit re-grant UI.
-  }
-}
-
-export function hasBackendDelegationGrantRecord(address: string, backendDid: string): boolean {
-  try {
-    return storage()?.getItem(grantRecordKey(address, backendDid)) !== null;
-  } catch {
-    return false;
-  }
-}
-
-export function clearBackendDelegationGrantRecord(address: string, backendDid: string): void {
-  try {
-    storage()?.removeItem(grantRecordKey(address, backendDid));
-  } catch {
-    // Ignore storage failures.
-  }
-}
 
 // ── Renewal trigger logic ────────────────────────────────────────────
 
@@ -61,13 +15,11 @@ export interface BackendDelegationRenewerDeps {
   checkStatus: () => Promise<{ status: string }>;
   /** Materialize a child delegation locally to prove the restored parent still exists on the node. */
   validateParent: () => Promise<void>;
-  /** Whether the frontend has evidence a backend grant previously existed. */
-  hasPriorGrant: () => boolean;
   /**
    * Create and send a fresh delegation. Must throw on failure (including
    * when the session cannot derive the delegation silently).
    */
-  renew: () => Promise<void>;
+  renew: () => Promise<{ activation?: string } | void>;
   /** Called exactly once after a successful renewal. */
   onRenewed?: () => void;
   /** Called when a renewal attempt fails, including whether the failure latched renewal off. */
@@ -79,8 +31,7 @@ export interface BackendDelegationRenewerDeps {
 export interface BackendDelegationRenewer {
   /**
    * Proactive check on sign-in / session restore. Renews when the stored
-   * delegation is expired or stale (policy hash rotated), or missing with
-   * evidence of a prior grant. Never throws; returns whether a renewal
+   * delegation is expired or stale (policy hash rotated). Never throws; returns whether a renewal
    * happened.
    */
   ensureFreshDelegation(): Promise<boolean>;
@@ -93,8 +44,8 @@ export interface BackendDelegationRenewer {
   validateRestoredSession(options?: { replaceBackendGrant?: boolean }): Promise<boolean>;
   /**
    * Reactive renewal after a gated API call failed. `delegation_expired`
-   * and `delegation_stale` always renew (the row existed until this
-   * request); `no_delegation` renews only with prior-grant evidence. Never
+   * and `delegation_stale` always renew. `no_delegation` never renews because
+   * absence is not owner consent. Never
    * throws; returns whether a renewal happened (callers should retry the
    * original request once).
    */
@@ -105,15 +56,7 @@ export interface BackendDelegationRenewer {
 
 function isPermanentRenewalFailure(err: unknown): boolean {
   if (isMissingParentDelegationError(err)) return true;
-  if (typeof err !== "object" || err === null) return false;
-  const name = (err as { name?: unknown }).name;
-  const message = err instanceof Error ? err.message : "";
-  if (name === "SessionExpiredError" || name === "PermissionNotInManifestError") return true;
-  if (/SessionExpiredError|PermissionNotInManifestError/.test(message)) return true;
-  if (message.includes("Missing backend session token")) return true;
-  const status = (err as { status?: unknown }).status;
-  // Backend rejected the delegation itself (4xx) — but 429 is a rate limit, retry-able.
-  return typeof status === "number" && status >= 400 && status < 500 && status !== 429;
+  return classifyDelegationFailure(err) === "needs_consent";
 }
 
 export function createBackendDelegationRenewer(
@@ -154,7 +97,15 @@ export function createBackendDelegationRenewer(
     if (!inFlight) {
       inFlight = deps
         .renew()
-        .then(() => {
+        .then((response) => {
+          if (response !== undefined && response.activation !== "active") {
+            throw Object.assign(
+              new Error("Backend accepted the delegation but activation is pending"),
+              {
+                code: "delegation_activation_pending",
+              },
+            );
+          }
           lastTransientFailureAt = null;
           log("renewed");
           deps.onRenewed?.();
@@ -178,6 +129,7 @@ export function createBackendDelegationRenewer(
       try {
         ({ status } = await deps.checkStatus());
       } catch (err) {
+        recordFailure(err);
         log("status-check-failed", {
           error: err instanceof Error ? err.message : String(err),
         });
@@ -185,7 +137,6 @@ export function createBackendDelegationRenewer(
       }
 
       if (status === "expired" || status === "stale") return renewOnce();
-      if (status === "none" && deps.hasPriorGrant()) return renewOnce();
       log("no-renewal-needed", { status });
       return false;
     },
@@ -209,6 +160,10 @@ export function createBackendDelegationRenewer(
       try {
         ({ status } = await deps.checkStatus());
       } catch (err) {
+        // A status rejection is an operationally unknown result, not proof
+        // that the owner must consent again. Keep the restored session usable
+        // for read-only rechecks while latching the transient outcome.
+        recordFailure(err);
         log("status-check-failed", {
           error: err instanceof Error ? err.message : String(err),
         });
@@ -223,17 +178,12 @@ export function createBackendDelegationRenewer(
         const renewed = await renewOnce();
         return renewed || !disabled;
       }
-      if (status === "none" && deps.hasPriorGrant()) {
-        const renewed = await renewOnce();
-        return renewed || !disabled;
-      }
       log("no-restored-grant", { status });
       return true;
     },
 
     async renewForApiError(code: DelegationRenewalErrorCode): Promise<boolean> {
       if (code === "delegation_expired" || code === "delegation_stale") return renewOnce();
-      if (code === "no_delegation" && deps.hasPriorGrant()) return renewOnce();
       return false;
     },
 

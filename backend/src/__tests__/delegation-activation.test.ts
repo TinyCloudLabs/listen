@@ -1,4 +1,5 @@
 import { describe, expect, it, mock } from "bun:test";
+import { delegationContentIdentity } from "@listen/server";
 import { activatePortableDelegation, createDelegationActivator } from "../delegation-activation.js";
 
 const TEST_DID = "did:pkh:eip155:1:0xTEST";
@@ -100,10 +101,12 @@ describe("delegation activation secrets", () => {
     const cache = { set: mock(() => {}) };
     const activator = createDelegationActivator({} as any, cache, activateSerialized);
     const serialized = "serialized-delegation";
+    const identity = delegationContentIdentity(serialized);
+    const revision = "revision-1";
 
-    const middlewareActivation = activator.activate("0xOWNER", serialized);
-    const workspaceStateActivation = activator.activate("0xOWNER", serialized);
-    const webhookActivation = activator.activate("0xOWNER", serialized);
+    const middlewareActivation = activator.activate("0xOWNER", serialized, identity, revision);
+    const workspaceStateActivation = activator.activate("0xOWNER", serialized, identity, revision);
+    const webhookActivation = activator.activate("0xOWNER", serialized, identity, revision);
 
     expect(middlewareActivation).toBe(workspaceStateActivation);
     expect(workspaceStateActivation).toBe(webhookActivation);
@@ -116,7 +119,7 @@ describe("delegation activation secrets", () => {
       await Promise.all([middlewareActivation, workspaceStateActivation, webhookActivation]),
     ).toEqual([access, access, access]);
     expect(cache.set).toHaveBeenCalledTimes(1);
-    expect(cache.set).toHaveBeenCalledWith("0xOWNER", access);
+    expect(cache.set).toHaveBeenCalledWith("0xOWNER", identity, revision, access);
   });
 
   it("starts a new generation and prevents superseded activation from overwriting cache", async () => {
@@ -131,8 +134,18 @@ describe("delegation activation secrets", () => {
     const cache = { set: mock(() => {}) };
     const activator = createDelegationActivator({} as any, cache, activateSerialized);
 
-    const oldActivation = activator.activate("0xOWNER", "old-delegation");
-    const newActivation = activator.activate("0xOWNER", "new-delegation");
+    const oldActivation = activator.activate(
+      "0xOWNER",
+      "old-delegation",
+      delegationContentIdentity("old-delegation"),
+      "revision-old",
+    );
+    const newActivation = activator.activate(
+      "0xOWNER",
+      "new-delegation",
+      delegationContentIdentity("new-delegation"),
+      "revision-new",
+    );
 
     expect(oldActivation).not.toBe(newActivation);
     expect(activateSerialized).toHaveBeenCalledTimes(2);
@@ -141,13 +154,25 @@ describe("delegation activation secrets", () => {
     finishOld(oldAccess);
     expect(await oldActivation).toBe(oldAccess);
     expect(cache.set).not.toHaveBeenCalled();
-    expect(activator.activate("0xOWNER", "new-delegation")).toBe(newActivation);
+    expect(
+      activator.activate(
+        "0xOWNER",
+        "new-delegation",
+        delegationContentIdentity("new-delegation"),
+        "revision-new",
+      ),
+    ).toBe(newActivation);
 
     const newAccess = { spaceId: "new" } as any;
     finishNew(newAccess);
     expect(await newActivation).toBe(newAccess);
     expect(cache.set).toHaveBeenCalledTimes(1);
-    expect(cache.set).toHaveBeenCalledWith("0xOWNER", newAccess);
+    expect(cache.set).toHaveBeenCalledWith(
+      "0xOWNER",
+      delegationContentIdentity("new-delegation"),
+      "revision-new",
+      newAccess,
+    );
   });
 
   it("does not populate cache when an in-flight activation is invalidated", async () => {
@@ -161,7 +186,12 @@ describe("delegation activation secrets", () => {
     const cache = { set: mock(() => {}) };
     const activator = createDelegationActivator({} as any, cache, activateSerialized);
 
-    const activation = activator.activate("0xOWNER", "revoked-delegation");
+    const activation = activator.activate(
+      "0xOWNER",
+      "revoked-delegation",
+      delegationContentIdentity("revoked-delegation"),
+      "revision-revoked",
+    );
     activator.invalidate("0xOWNER");
     finishActivation({ spaceId: "revoked" });
 

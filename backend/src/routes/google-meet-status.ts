@@ -59,7 +59,10 @@ export function createGoogleMeetStatusRouter(config: GoogleMeetStatusRoutesConfi
       }
     } catch (err) {
       console.error("[google-meet-status] check failed:", err);
-      res.status(500).json({ error: "check_failed", message: "Failed to check connection" });
+      res.status(503).json({
+        error: "google_tokens_unavailable",
+        message: err instanceof Error ? err.message : "Failed to read Google tokens",
+      });
     }
   });
 

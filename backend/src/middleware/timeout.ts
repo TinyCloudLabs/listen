@@ -4,7 +4,7 @@
 // the boundary. The ingress still caps a single request's response at 60s,
 // but the server-side activation completes and is cached, so the client's
 // retry succeeds.
-const TC_TIMEOUT_MS = parseInt(process.env.TC_TIMEOUT_MS ?? "180000", 10);
+export const TINY_CLOUD_OPERATION_TIMEOUT_MS = parseInt(process.env.TC_TIMEOUT_MS ?? "180000", 10);
 
 export class TinyCloudOperationTimeoutError extends Error {
   override name = "TinyCloudOperationTimeoutError";
@@ -14,7 +14,10 @@ export class TinyCloudOperationTimeoutError extends Error {
   }
 }
 
-export function withTimeout<T>(promise: Promise<T>, timeoutMs = TC_TIMEOUT_MS): Promise<T> {
+export function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs = TINY_CLOUD_OPERATION_TIMEOUT_MS,
+): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new TinyCloudOperationTimeoutError()), timeoutMs);
     promise.then(

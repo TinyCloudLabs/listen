@@ -17,7 +17,8 @@ import {
   resolveAudioKey,
 } from "../services/conversation-normalization.js";
 import { FirefliesClient } from "../services/fireflies-client.js";
-import { readFirefliesApiKeyFromAccess } from "../services/fireflies-secret.js";
+import { readFirefliesApiKeyResult } from "../services/fireflies-secret.js";
+import { readSourceApiKeyResult } from "../services/source-secret.js";
 import {
   TRANSCRIPTION_SECRET_NAMES,
   createTranscriptionProvider,
@@ -563,16 +564,20 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
       const fileName = cleanRequiredString(body.fileName, "fileName");
       const contentType = cleanOptionalString(body.contentType) ?? "application/octet-stream";
       const contentBase64 = cleanRequiredString(body.contentBase64, "contentBase64");
-      const apiKeyResult = await access.secrets?.get(TRANSCRIPTION_SECRET_NAMES[providerName]);
-
-      if (!apiKeyResult) {
-        res.status(500).json({
-          error: "missing_secret_access",
-          message: "Delegation does not include TinyCloud Secrets access",
+      const apiKeyResult = await readSourceApiKeyResult(
+        access,
+        TRANSCRIPTION_SECRET_NAMES[providerName],
+      );
+      if (!apiKeyResult.ok && apiKeyResult.reason === "unavailable") {
+        res.status(503).json({
+          error: "transcription_secret_unavailable",
+          secretCode: apiKeyResult.error.code,
+          message:
+            apiKeyResult.error.message ?? "Transcription API key is temporarily unavailable.",
         });
         return;
       }
-      if (!apiKeyResult.ok || typeof apiKeyResult.data !== "string" || apiKeyResult.data === "") {
+      if (!apiKeyResult.ok) {
         res.status(400).json({
           error: "missing_provider_key",
           message: `${TRANSCRIPTION_SECRET_NAMES[providerName]} is not available to the backend`,
@@ -787,8 +792,16 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         return;
       }
 
-      const apiKey = await readFirefliesApiKeyFromAccess(access);
-      if (!apiKey) {
+      const secret = await readFirefliesApiKeyResult(access);
+      if (!secret.ok && secret.reason === "unavailable") {
+        res.status(503).json({
+          error: "fireflies_secret_unavailable",
+          secretCode: secret.error.code,
+          message: secret.error.message ?? "Fireflies API key is temporarily unavailable.",
+        });
+        return;
+      }
+      if (!secret.ok) {
         res.status(404).json({
           error: "no_api_key",
           message:
@@ -796,6 +809,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         });
         return;
       }
+      const apiKey = secret.data;
 
       const sourceId = String(row.source_id);
       const fireflies = createFirefliesClient(apiKey);

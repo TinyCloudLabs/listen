@@ -167,7 +167,6 @@ vi.mock("@listen/client", () => {
 import { App } from "../App";
 import { conversationPageCacheKey } from "../conversationPageCache";
 import { backendWorkspaceCacheKey, writeBackendWorkspaceCache } from "../lib/backendWorkspaceCache";
-import { recordBackendDelegationGrant } from "../lib/backendDelegationRenewal";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -296,6 +295,7 @@ function mockAuthFlow() {
   vi.mocked(sendDelegation).mockResolvedValue({
     status: "active",
     expiresAt: "2026-05-18T00:00:00.000Z",
+    activation: "active",
   });
   vi.mocked(checkDelegationStatus).mockResolvedValue({ status: "none", expiresAt: null });
   vi.mocked(composeManifestWithDelegatees).mockImplementation((manifest, delegatees) => ({
@@ -843,6 +843,18 @@ describe("App manual sign-in processing", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /reconnect backend/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /sync fireflies/i })).not.toBeInTheDocument();
+
+    const clearPersistedSessionCalls = vi.mocked(clearPersistedSession).mock.calls.length;
+    vi.mocked(connectWallet).mockClear();
+    vi.mocked(createManifestDelegation).mockClear();
+    vi.mocked(sendDelegation).mockClear();
+    fireEvent.click(screen.getByRole("button", { name: /reconnect backend/i }));
+
+    await waitFor(() => expect(screen.getByText(/Backend reconnect failed:/i)).toBeInTheDocument());
+    expect(connectWallet).not.toHaveBeenCalled();
+    expect(createManifestDelegation).not.toHaveBeenCalled();
+    expect(sendDelegation).not.toHaveBeenCalled();
+    expect(vi.mocked(clearPersistedSession).mock.calls.length).toBe(clearPersistedSessionCalls);
   });
 
   it("does not silently fall back to direct mode during explicit backend reconnect", async () => {
@@ -976,16 +988,134 @@ describe("App manual sign-in processing", () => {
     expect(createPermissionDelegation).not.toHaveBeenCalled();
   });
 
-  it("renews at sign-in when the delegation row is gone but a prior grant is recorded", async () => {
-    recordBackendDelegationGrant("0xabc123", "did:key:backend");
-    // Default checkDelegationStatus mock reports status "none" (row deleted).
+  it("keeps pending activation in a non-wallet unavailable state", async () => {
+    vi.mocked(checkDelegationStatus).mockResolvedValue({
+      status: "expired",
+      expiresAt: "2026-05-01T00:00:00.000Z",
+    });
+    vi.mocked(sendDelegation).mockResolvedValue({
+      status: "active",
+      expiresAt: "2027-05-01T00:00:00.000Z",
+      activation: "pending",
+    });
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(
+          workspaceState({
+            delegation: { status: "active", activation: "pending" },
+          }),
+        );
+      }
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({ conversations: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
 
     await renderAndSignIn();
 
-    await waitFor(() => {
-      expect(sendDelegation).toHaveBeenCalledTimes(1);
+    expect(
+      await screen.findByText("Backend access is temporarily unavailable."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/backend access expired/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^reconnect$/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps a transient renewal failure unavailable when workspace state is stale", async () => {
+    vi.mocked(checkDelegationStatus).mockResolvedValue({
+      status: "expired",
+      expiresAt: "2026-05-01T00:00:00.000Z",
     });
-    expect(createManifestDelegation).toHaveBeenCalledTimes(1);
+    vi.mocked(createManifestDelegation).mockRejectedValueOnce(new TypeError("network down"));
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(
+          workspaceState({
+            delegation: {
+              status: "stale",
+              stored: true,
+              validPolicy: false,
+              activation: "unknown",
+            },
+          }),
+        );
+      }
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({ conversations: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
+
+    await renderAndSignIn();
+
+    expect(
+      await screen.findByText("Backend access is temporarily unavailable."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/backend access expired/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^reconnect$/i })).not.toBeInTheDocument();
+
+    vi.mocked(connectWallet).mockClear();
+    fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+    await waitFor(() => expect(mockGet).toHaveBeenCalledWith("/api/workspace-state"));
+    expect(connectWallet).not.toHaveBeenCalled();
+  });
+
+  it("rechecks reads after transient cooldown without renewing an unavailable delegation", async () => {
+    vi.mocked(checkDelegationStatus).mockResolvedValue({
+      status: "expired",
+      expiresAt: "2026-05-01T00:00:00.000Z",
+    });
+    vi.mocked(createManifestDelegation).mockRejectedValueOnce(new TypeError("network down"));
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(
+          workspaceState({
+            delegation: {
+              status: "stale",
+              stored: true,
+              validPolicy: false,
+              activation: "unknown",
+            },
+          }),
+        );
+      }
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({ conversations: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
+
+    await renderAndSignIn();
+    expect(
+      await screen.findByText("Backend access is temporarily unavailable."),
+    ).toBeInTheDocument();
+
+    const workspaceReadsBeforeRetry = mockGet.mock.calls.filter(
+      ([url]) => url === "/api/workspace-state",
+    ).length;
+    const ownerReadsBeforeRetry = mockSecretGet.mock.calls.length;
+    vi.mocked(createManifestDelegation).mockClear();
+    vi.mocked(sendDelegation).mockClear();
+    vi.mocked(connectWallet).mockClear();
+
+    vi.useFakeTimers();
+    try {
+      vi.advanceTimersByTime(30_001);
+      fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+
+      await vi.waitFor(() => {
+        expect(
+          mockGet.mock.calls.filter(([url]) => url === "/api/workspace-state").length,
+        ).toBeGreaterThan(workspaceReadsBeforeRetry);
+        expect(mockSecretGet.mock.calls.length).toBeGreaterThan(ownerReadsBeforeRetry);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(createManifestDelegation).not.toHaveBeenCalled();
+    expect(sendDelegation).not.toHaveBeenCalled();
+    expect(connectWallet).not.toHaveBeenCalled();
   });
 
   it("silently renews the backend delegation during session restore", async () => {
@@ -1020,6 +1150,58 @@ describe("App manual sign-in processing", () => {
     expect(connectWallet).not.toHaveBeenCalled();
   });
 
+  it("keeps status-check rejection unavailable when workspace state later reports expiry", async () => {
+    storeBackendSession();
+    vi.mocked(loadPersistedSession).mockReturnValue({
+      address: "0xabc123",
+      chainId: 1,
+      did: "did:pkh:eip155:1:0xabc123",
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      spaceId: "tinycloud:pkh:eip155:1:0xabc123:applications",
+    });
+    vi.mocked(restoreTinyCloudWeb).mockResolvedValue({
+      tcw: {
+        did: "did:pkh:eip155:1:0xabc123",
+        hosts: ["http://localhost:5112"],
+        spaceId: "tinycloud:pkh:eip155:1:0xabc123:applications",
+        signOut: vi.fn(),
+      },
+    } as never);
+    const statusError = Object.assign(new Error("gateway timeout"), {
+      code: "gateway_timeout",
+      status: 504,
+    });
+    vi.mocked(checkDelegationStatus).mockRejectedValue(statusError);
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(
+          workspaceState({
+            delegation: { status: "expired", activation: "unknown" },
+          }),
+        );
+      }
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({ conversations: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: /open app/i })[0]);
+
+    expect(
+      await screen.findByText("Backend access is temporarily unavailable."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /reconnect|finish setup|finish access/i }),
+    ).toBeNull();
+    // The local materialization validates that the restored parent still
+    // exists; the transient status failure must not send a backend grant.
+    expect(createManifestDelegation).toHaveBeenCalledTimes(1);
+    expect(sendDelegation).not.toHaveBeenCalled();
+    expect(connectWallet).not.toHaveBeenCalled();
+  });
+
   it("validates the restored parent without sending a first backend grant", async () => {
     storeBackendSession();
     vi.mocked(loadPersistedSession).mockReturnValue({
@@ -1037,9 +1219,8 @@ describe("App manual sign-in processing", () => {
         signOut: vi.fn(),
       },
     } as never);
-    // Default checkDelegationStatus mock reports "none" and no grant record
-    // exists. Materialization validates the parent, but delivery remains
-    // behind evidence that the user previously granted backend access.
+    // Default checkDelegationStatus mock reports "none". Materialization
+    // validates the parent, but absence never triggers a silent first grant.
 
     render(<App />);
     fireEvent.click(screen.getAllByRole("button", { name: /open app/i })[0]);
@@ -1156,6 +1337,13 @@ describe("App manual sign-in processing", () => {
   });
 
   it("does not treat an unreadable Fireflies secret as connected during sign-in", async () => {
+    mockSecretGet.mockImplementation((secretName: string) =>
+      Promise.resolve(
+        secretName === "FIREFLIES_API_KEY"
+          ? { ok: false, error: { code: "key_not_found", message: "Secret not found" } }
+          : { ok: true, data: "saved-secret" },
+      ),
+    );
     mockGet.mockImplementation((url: string) => {
       if (url === "/api/workspace-state") {
         return Promise.resolve(
@@ -1189,8 +1377,35 @@ describe("App manual sign-in processing", () => {
     await waitFor(() => {
       expect(mockGet).toHaveBeenCalledWith("/api/workspace-state");
     });
-    expect(screen.queryByText(/finish fireflies access/i)).not.toBeInTheDocument();
+    expect(screen.queryAllByText(/finish fireflies access/i)).toHaveLength(0);
     expect(mockGet).not.toHaveBeenCalledWith("/api/webhooks/fireflies/pending");
+  });
+
+  it("treats unknown Google token status as unavailable and hides Google OAuth", async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(
+          workspaceState({
+            googleMeet: {
+              available: true,
+              connected: null,
+              error: "kv_unavailable: token lookup failed",
+            },
+          }),
+        );
+      }
+      if (url.startsWith("/api/conversations"))
+        return Promise.resolve({ conversations: [], total: 0 });
+      return Promise.resolve({});
+    });
+
+    await renderAndSignIn();
+
+    expect(
+      await screen.findByText("Backend access is temporarily unavailable."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /connect google/i })).toBeNull();
+    expect(screen.queryByText(/google oauth/i)).toBeNull();
   });
 
   it("opens Soundcore credential setup from Connections when another source is connected", async () => {
@@ -1592,6 +1807,256 @@ describe("App onboarding readiness", () => {
       expect(screen.getByText("Transcript import")).toBeInTheDocument();
     });
   });
+
+  it("discovers a saved owner secret when the ready backend cannot read it", async () => {
+    mockSecretGet.mockImplementation((secretName: string) =>
+      Promise.resolve(
+        secretName === "FIREFLIES_API_KEY"
+          ? { ok: true, data: "saved-fireflies-key" }
+          : { ok: false, error: { code: "key_not_found", message: "Secret not found" } },
+      ),
+    );
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(
+          workspaceState({
+            backendReadableSecrets: {
+              fireflies: { readable: false },
+              granola: { readable: false },
+              soundcoreSession: { readable: false },
+              soundcoreAuthToken: { readable: false },
+              soundcoreUid: { readable: false },
+              soundcoreOpenudid: { readable: false },
+              assemblyai: { readable: false },
+              deepgram: { readable: false },
+            },
+          }),
+        );
+      }
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({ conversations: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
+
+    await renderAndSignIn();
+
+    expect(await screen.findByRole("button", { name: /finish access/i })).toBeInTheDocument();
+    expect(mockSecretGet).toHaveBeenCalledWith("FIREFLIES_API_KEY");
+  });
+
+  it("treats an operational source read failure as unavailable instead of consent", async () => {
+    mockSecretGet.mockImplementation((secretName: string) =>
+      Promise.resolve(
+        secretName === "FIREFLIES_API_KEY"
+          ? { ok: true, data: "saved-fireflies-key" }
+          : { ok: false, error: { code: "key_not_found", message: "Secret not found" } },
+      ),
+    );
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(
+          workspaceState({
+            backendReadableSecrets: {
+              fireflies: { readable: null, error: "node unavailable" },
+              granola: { readable: false },
+              soundcoreSession: { readable: false },
+              soundcoreAuthToken: { readable: false },
+              soundcoreUid: { readable: false },
+              soundcoreOpenudid: { readable: false },
+              assemblyai: { readable: false },
+              deepgram: { readable: false },
+            },
+          }),
+        );
+      }
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({ conversations: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
+
+    await renderAndSignIn();
+
+    expect(
+      await screen.findByText(/backend access is temporarily unavailable/i),
+    ).toBeInTheDocument();
+    expect(screen.queryAllByRole("button", { name: /finish access|finish setup/i })).toHaveLength(
+      0,
+    );
+    expect(mockSecretGet).toHaveBeenCalledWith("FIREFLIES_API_KEY");
+  });
+
+  it("treats mixed Soundcore missing and operational reads as unavailable", async () => {
+    mockSecretGet.mockImplementation((secretName: string) =>
+      Promise.resolve(
+        secretName.startsWith("SOUNDCORE_")
+          ? { ok: false, error: { code: "key_not_found", message: "Secret not found" } }
+          : { ok: false, error: { code: "key_not_found", message: "Secret not found" } },
+      ),
+    );
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(
+          workspaceState({
+            backendReadableSecrets: {
+              soundcoreSession: { readable: false },
+              soundcoreAuthToken: { readable: false },
+              soundcoreUid: { readable: null, error: "node unavailable" },
+              soundcoreOpenudid: { readable: false },
+            },
+          }),
+        );
+      }
+      if (url.startsWith("/api/conversations"))
+        return Promise.resolve({ conversations: [], total: 0 });
+      return Promise.resolve({});
+    });
+
+    await renderAndSignIn();
+
+    expect(
+      await screen.findByText("Backend access is temporarily unavailable."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /finish setup|finish access/i })).toBeNull();
+    expect(createManifestDelegation).toHaveBeenCalledTimes(0);
+    expect(sendDelegation).toHaveBeenCalledTimes(0);
+  });
+
+  it("treats owner grant loss as unavailable and retries checks without a wallet", async () => {
+    mockSecretGet.mockImplementation((secretName: string) =>
+      Promise.resolve(
+        secretName === "FIREFLIES_API_KEY"
+          ? { ok: false, error: { code: "grant_not_found", message: "grant missing" } }
+          : { ok: false, error: { code: "key_not_found", message: "Secret not found" } },
+      ),
+    );
+
+    await renderAndSignIn();
+
+    expect(
+      await screen.findByText("Backend access is temporarily unavailable."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("grant_not_found")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /finish access/i })).not.toBeInTheDocument();
+
+    const secretChecksBeforeRetry = mockSecretGet.mock.calls.length;
+    vi.mocked(connectWallet).mockClear();
+    fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+    await waitFor(() => {
+      expect(mockSecretGet.mock.calls.length).toBeGreaterThan(secretChecksBeforeRetry);
+    });
+    expect(connectWallet).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["", "empty"],
+    [undefined, "undefined"],
+    [null, "null"],
+    [[], "array"],
+    [{ secret: "value" }, "object"],
+    [true, "boolean"],
+    [1, "number"],
+  ])("treats %s successful owner-secret data as unavailable", async (data) => {
+    mockSecretGet.mockImplementation((secretName: string) =>
+      Promise.resolve(
+        secretName === "FIREFLIES_API_KEY"
+          ? { ok: true, data }
+          : { ok: false, error: { code: "key_not_found", message: "Secret not found" } },
+      ),
+    );
+
+    await renderAndSignIn();
+
+    expect(
+      await screen.findByText("Backend access is temporarily unavailable."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /finish access/i })).not.toBeInTheDocument();
+  });
+
+  it("recovers nested SourcesSetup after a transient owner-secret read failure", async () => {
+    let ownerSecretReads = 0;
+    mockSecretGet.mockImplementation(() => {
+      ownerSecretReads += 1;
+      if (ownerSecretReads === 1) {
+        return Promise.resolve({
+          ok: false,
+          error: { code: "node_unavailable", message: "owner secret read unavailable" },
+        });
+      }
+      return Promise.resolve({ ok: true, data: "saved-secret" });
+    });
+
+    await renderAndSignIn();
+
+    expect(
+      await screen.findByText("Backend access is temporarily unavailable."),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Fireflies$/i }));
+    await screen.findByText("Connections.");
+    fireEvent.click(screen.getAllByRole("button", { name: /add source or transcript/i }).at(-1)!);
+    await screen.findByText("Backend access is temporarily unavailable.");
+
+    const ownerSecretReadsBeforeRetry = ownerSecretReads;
+    vi.mocked(createManifestDelegation).mockClear();
+    vi.mocked(sendDelegation).mockClear();
+    vi.mocked(connectWallet).mockClear();
+
+    fireEvent.click(screen.getAllByRole("button", { name: /try again/i }).at(-1)!);
+
+    await waitFor(() => {
+      expect(ownerSecretReads).toBeGreaterThan(ownerSecretReadsBeforeRetry);
+      expect(screen.queryByText("Backend access is temporarily unavailable.")).toBeNull();
+    });
+    expect(screen.getAllByText("Connected").length).toBeGreaterThanOrEqual(1);
+    expect(createManifestDelegation).not.toHaveBeenCalled();
+    expect(sendDelegation).not.toHaveBeenCalled();
+    expect(connectWallet).not.toHaveBeenCalled();
+  });
+
+  it("keeps every nested action guarded while owner-secret discovery is pending", async () => {
+    const resolvers: Array<(value: { ok: true; data: string }) => void> = [];
+    mockSecretGet.mockImplementation(
+      () =>
+        new Promise((resolve) =>
+          resolvers.push(resolve as (value: { ok: true; data: string }) => void),
+        ),
+    );
+    mockTinyCloudConversationPage([
+      {
+        id: "01PENDING",
+        title: "Pending workspace",
+        source: "fireflies",
+        source_url: null,
+        started_at: "2026-05-14T14:00:00Z",
+        duration_secs: 1200,
+        summary: "Roadmap",
+        created_at: "2026-05-14T14:30:00Z",
+        participant_count: 1,
+      },
+    ]);
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(workspaceState({ conversations: { hasAny: true, total: 1 } }));
+      }
+      if (url.startsWith("/api/conversations"))
+        return Promise.resolve({ conversations: [], total: 1 });
+      return Promise.resolve({});
+    });
+
+    await renderAndSignIn();
+    await screen.findByText("Pending workspace");
+    expect(
+      screen.queryByRole("button", { name: /finish setup|finish access|connect google/i }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /sync now/i })).toBeNull();
+
+    for (const resolve of resolvers) resolve({ ok: true, data: "saved-secret" });
+    await waitFor(() =>
+      expect(screen.queryByText("Backend access is temporarily unavailable.")).toBeNull(),
+    );
+  });
 });
 
 describe("App workspace stale-while-revalidate", () => {
@@ -1656,6 +2121,175 @@ describe("App workspace stale-while-revalidate", () => {
     await waitFor(() => {
       expect(mockGet).toHaveBeenCalledWith("/api/workspace-state");
     });
+  });
+
+  it("preserves cached conversations while aggregated existence is operationally unknown", async () => {
+    seedRestoredBackendSessionWithCachedWorkspace();
+    writeBackendWorkspaceCache(
+      "0xabc123",
+      "did:key:backend",
+      workspaceState({ conversations: { hasAny: true, total: 1 } }),
+    );
+    localStorage.setItem(
+      conversationPageCacheKey("/api/conversations?limit=20&offset=0", "0xabc123"),
+      JSON.stringify({
+        conversations: [
+          {
+            id: "cached-1",
+            title: "Cached evidence",
+            source: "fireflies",
+            source_url: null,
+            started_at: "2026-05-14T14:00:00Z",
+            duration_secs: 120,
+            summary: "Cached summary",
+            created_at: "2026-05-14T14:30:00Z",
+            participant_count: 1,
+          },
+        ],
+        total: 1,
+        cachedAt: "2026-05-14T14:30:00.000Z",
+      }),
+    );
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        return Promise.resolve(workspaceState({ conversations: { hasAny: null, total: null } }));
+      }
+      if (url === "/api/conversations?limit=1&offset=0") {
+        return Promise.resolve({ total: 1 });
+      }
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({
+          conversations: [
+            {
+              id: "cached-1",
+              title: "Cached evidence",
+              source: "fireflies",
+              source_url: null,
+              started_at: "2026-05-14T14:00:00Z",
+              duration_secs: 120,
+              summary: "Cached summary",
+              created_at: "2026-05-14T14:30:00Z",
+              participant_count: 1,
+            },
+          ],
+          total: 1,
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: /open app/i })[0]);
+
+    expect(await screen.findByText("Cached evidence")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Backend access is temporarily unavailable."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /finish setup|finish access|connect google/i }),
+    ).toBeNull();
+  });
+
+  it.each([
+    ["activation failure", "delegation_activation_failed", 503],
+    ["activation timeout", "gateway_timeout", 504],
+    ["source-secret 503", "fireflies_secret_unavailable", 503],
+    ["transport failure", undefined, undefined],
+  ])("downgrades ready UI after a %s", async (_label, code, status) => {
+    seedRestoredBackendSessionWithCachedWorkspace();
+    const failure = Object.assign(
+      code === undefined ? new TypeError("Failed to fetch") : new Error("operational failure"),
+      { code, status },
+    );
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") return Promise.resolve(workspaceState());
+      if (url === "/api/webhooks/fireflies/pending" || url === "/api/config/fireflies-key/exists") {
+        return Promise.reject(failure);
+      }
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({ conversations: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: /open app/i })[0]);
+
+    expect(
+      await screen.findByText("Backend access is temporarily unavailable."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /finish setup|finish access|connect google/i }),
+    ).toBeNull();
+  });
+
+  it("keeps ready state when an optional integration is not configured", async () => {
+    seedRestoredBackendSessionWithCachedWorkspace();
+    const notConfigured = Object.assign(new Error("Google Meet is not configured"), {
+      code: "not_configured",
+      status: 501,
+    });
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") return Promise.resolve(workspaceState());
+      if (url === "/api/sync/google-meet/jobs/current") return Promise.reject(notConfigured);
+      if (url.endsWith("/jobs/current")) return Promise.resolve(null);
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({ conversations: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: /open app/i })[0]);
+
+    await waitFor(() => {
+      expect(mockGet).toHaveBeenCalledWith("/api/sync/google-meet/jobs/current");
+    });
+    expect(screen.queryByText("Backend access is temporarily unavailable.")).toBeNull();
+  });
+
+  it("preserves cached conversations after a rejected live existence recheck", async () => {
+    seedRestoredBackendSessionWithCachedWorkspace();
+    writeBackendWorkspaceCache(
+      "0xabc123",
+      "did:key:backend",
+      workspaceState({ conversations: { hasAny: true, total: 1 } }),
+    );
+    localStorage.setItem(
+      conversationPageCacheKey("/api/conversations?limit=20&offset=0", "0xabc123"),
+      JSON.stringify({
+        conversations: [
+          {
+            id: "cached-recheck",
+            title: "Cached after rejection",
+            source: "fireflies",
+            source_url: null,
+            started_at: "2026-05-14T14:00:00Z",
+            duration_secs: 120,
+            summary: "Cached summary",
+            created_at: "2026-05-14T14:30:00Z",
+            participant_count: 1,
+          },
+        ],
+        total: 1,
+        cachedAt: "2026-05-14T14:30:00.000Z",
+      }),
+    );
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") return Promise.resolve(workspaceState());
+      if (url.startsWith("/api/conversations")) {
+        return Promise.reject(new Error("live existence recheck failed"));
+      }
+      return Promise.resolve({});
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: /open app/i })[0]);
+
+    expect(await screen.findByText("Cached after rejection")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Backend access is temporarily unavailable."),
+    ).toBeInTheDocument();
   });
 
   it("conversation refreshes do not refetch workspace state", async () => {
@@ -1742,6 +2376,101 @@ describe("App workspace stale-while-revalidate", () => {
 
     expect(screen.getByText(/connected · 4 sources/i)).toBeInTheDocument();
     expect(screen.queryByText("Checking workspace state.")).toBeNull();
+  });
+
+  it("keeps an in-flight onboarding transcript import mounted across its access refresh", async () => {
+    mockTinyCloudConversationPage([], 0);
+    let refreshWorkspaceState = false;
+    let resolveRefresh: ((state: ReturnType<typeof workspaceState>) => void) | undefined;
+    let resolveImport: ((result: { conversationId: string; title: string }) => void) | undefined;
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") {
+        if (refreshWorkspaceState) {
+          return new Promise((resolve) => {
+            resolveRefresh = resolve as (state: ReturnType<typeof workspaceState>) => void;
+          });
+        }
+        return Promise.resolve(
+          workspaceState({
+            delegation: {
+              status: "none",
+              stored: false,
+              validPolicy: false,
+              activation: "inactive",
+            },
+            backendReadableSecrets: {
+              fireflies: { readable: null },
+              granola: { readable: null },
+              soundcoreSession: { readable: null },
+              soundcoreAuthToken: { readable: null },
+              soundcoreUid: { readable: null },
+              soundcoreOpenudid: { readable: null },
+              assemblyai: { readable: null },
+              deepgram: { readable: null },
+            },
+            googleMeet: { available: true, connected: null },
+            conversations: { hasAny: false, total: 0 },
+          }),
+        );
+      }
+      return Promise.resolve({});
+    });
+    mockPost.mockImplementation((url: string) => {
+      if (url === "/api/conversations/import") {
+        return new Promise((resolve) => {
+          resolveImport = resolve as (result: { conversationId: string; title: string }) => void;
+        });
+      }
+      return Promise.resolve({ updated: 0, still_missing: 0 });
+    });
+
+    await renderAndSignIn();
+    await waitFor(() => expect(screen.getByRole("button", { name: /import ->/i })).toBeEnabled());
+    refreshWorkspaceState = true;
+
+    fireEvent.click(screen.getByRole("button", { name: /import ->/i }));
+    fireEvent.change(screen.getByLabelText(/^Title$/i), { target: { value: "Imported" } });
+    fireEvent.change(screen.getByLabelText(/^Transcript$/i), {
+      target: { value: "Speaker: hello" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Import transcript$/i }));
+
+    await waitFor(() => expect(sendDelegation).toHaveBeenCalled());
+    await waitFor(() => expect(mockGet).toHaveBeenCalledWith("/api/workspace-state"));
+    expect(screen.getByRole("button", { name: /importing/i })).toBeInTheDocument();
+    expect(resolveRefresh).toBeDefined();
+
+    resolveImport?.({ conversationId: "conv-import", title: "Imported" });
+    await screen.findByText("Transcript imported");
+  });
+
+  it("downgrades cached readiness after a rejected live recheck without exposing mutations", async () => {
+    seedRestoredBackendSessionWithCachedWorkspace();
+    writeBackendWorkspaceCache(
+      "0xabc123",
+      "did:key:backend",
+      workspaceState({ conversations: { hasAny: true, total: 1 } }),
+    );
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") return Promise.reject(new Error("backend unavailable"));
+      if (url.startsWith("/api/conversations"))
+        return Promise.resolve({ conversations: [], total: 1 });
+      return Promise.resolve({});
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: /open app/i })[0]);
+
+    expect(
+      await screen.findByText("Backend access is temporarily unavailable."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /try again/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /finish setup|finish access|connect google/i }),
+    ).toBeNull();
+    expect(createManifestDelegation).not.toHaveBeenCalled();
+    expect(sendDelegation).not.toHaveBeenCalled();
+    expect(connectWallet).not.toHaveBeenCalled();
   });
 });
 
