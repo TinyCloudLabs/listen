@@ -331,6 +331,9 @@ jobs:
                 break
                 ;;
               FAILED|CRASHED|REMOVED|REMOVING)
+                echo "Railway deployment failed; fetching build and deploy logs." >&2
+                railway logs --build --lines 200 "$DEPLOYMENT_ID" || true
+                railway logs --deployment --lines 100 "$DEPLOYMENT_ID" || true
                 exit 1
                 ;;
             esac
