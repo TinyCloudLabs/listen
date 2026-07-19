@@ -15,7 +15,9 @@ export default defineConfig({
   reporter: process.env.CI ? "github" : "list",
   use: {
     baseURL,
-    trace: "retain-on-failure",
+    // This test injects a browser-restorable session. Do not persist traces
+    // containing the backend bearer token or TinyCloud session key material.
+    trace: "off",
   },
   projects: [
     {

@@ -40,6 +40,7 @@ interface ConversationListProps {
   refreshKey?: number;
   focusSearchKey?: number;
   cacheScope?: ConversationCacheScope;
+  mutationsDisabled?: boolean;
 }
 
 const PAGE_SIZE = 20;
@@ -94,6 +95,7 @@ export const ConversationList: FC<ConversationListProps> = ({
   refreshKey,
   focusSearchKey,
   cacheScope,
+  mutationsDisabled = false,
 }) => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [total, setTotal] = useState(0);
@@ -111,6 +113,8 @@ export const ConversationList: FC<ConversationListProps> = ({
   const [searchQuery, setSearchQuery] = useState("");
   const containerRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const mutationsDisabledRef = useRef(mutationsDisabled);
+  mutationsDisabledRef.current = mutationsDisabled;
   const requestRef = useRef(0);
   const refreshKeyRef = useRef(refreshKey);
   const searchQueryRef = useRef(searchQuery);
@@ -314,6 +318,13 @@ export const ConversationList: FC<ConversationListProps> = ({
       <div style={s.errorCard}>
         <span style={s.errorIcon}>!</span>
         {error}
+        <button
+          type="button"
+          style={s.noticeRetry}
+          onClick={() => void fetchConversations(currentPage, sourceFilter, searchQuery)}
+        >
+          Retry
+        </button>
       </div>
     );
   }
@@ -322,7 +333,7 @@ export const ConversationList: FC<ConversationListProps> = ({
     return (
       <div style={s.emptyCard}>
         <p style={s.emptyTitle}>No conversations yet</p>
-        <p style={s.emptySub}>Sync your first meetings above.</p>
+        <p style={s.emptySub}>Connect a source or add a transcript to get started.</p>
       </div>
     );
   }
@@ -378,12 +389,15 @@ export const ConversationList: FC<ConversationListProps> = ({
           onCopySummaries={copySelectedSummaries}
           onCredentialedShare={
             onShareSelectedConversations
-              ? () =>
+              ? () => {
+                  if (mutationsDisabledRef.current) return;
                   onShareSelectedConversations(
                     selectedConversations.map((conversation) => conversation.id),
-                  )
+                  );
+                }
               : undefined
           }
+          mutationsDisabled={mutationsDisabled}
           onClear={clearSelection}
         />
       )}
@@ -487,7 +501,9 @@ export const ConversationList: FC<ConversationListProps> = ({
                   type="button"
                   style={s.contextItem}
                   role="menuitem"
+                  disabled={mutationsDisabled}
                   onClick={() => {
+                    if (mutationsDisabledRef.current) return;
                     setContextMenu(null);
                     onSelectConversation(conversation.id);
                   }}
@@ -511,9 +527,14 @@ export const ConversationList: FC<ConversationListProps> = ({
                 {onShareConversation && (
                   <button
                     type="button"
-                    style={s.contextItem}
+                    style={{
+                      ...s.contextItem,
+                      ...(mutationsDisabled ? s.contextItemDisabled : {}),
+                    }}
                     role="menuitem"
+                    disabled={mutationsDisabled}
                     onClick={() => {
+                      if (mutationsDisabledRef.current) return;
                       setContextMenu(null);
                       onShareConversation(conversation.id);
                     }}

@@ -2,7 +2,7 @@ import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
 import { OtterApiError, OtterClient } from "../services/otter-client.js";
 import type { OtterCookie } from "../services/otter-secret.js";
-import { readOtterCookie } from "../services/otter-secret.js";
+import { readOtterCookieResult } from "../services/otter-secret.js";
 import { runOtterSync } from "../services/otter-sync-runner.js";
 
 interface OtterSyncRoutesConfig {
@@ -38,14 +38,21 @@ export function createOtterSyncRouter(config: OtterSyncRoutesConfig) {
     };
 
     try {
-      const cookie = await readOtterCookie(access);
-      if (!cookie) {
-        send("error", { message: "No Otter cookie configured." });
+      const cookieResult = await readOtterCookieResult(access);
+      if (!cookieResult.ok) {
+        send("error", {
+          code: cookieResult.reason === "missing" ? "no_cookie" : "otter_secret_unavailable",
+          message:
+            cookieResult.error.message ??
+            (cookieResult.reason === "missing"
+              ? "No Otter cookie configured."
+              : "Otter cookie is temporarily unavailable."),
+        });
         res.end();
         return;
       }
       const mode = req.query.mode === "full" ? "full" : "incremental";
-      const summary = await runOtterSync(access, makeClient(cookie), {
+      const summary = await runOtterSync(access, makeClient(cookieResult.data), {
         mode,
         shouldContinue: () => !aborted,
         onProgress: (p) => send(p.phase === "listing" ? "status" : "progress", p),

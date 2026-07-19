@@ -4,6 +4,7 @@ import {
   deleteOtterCookie,
   otterCookieExists,
   readOtterCookie,
+  readOtterCookieResult,
   writeOtterCookie,
 } from "../services/otter-secret.js";
 
@@ -47,7 +48,52 @@ describe("otter-secret", () => {
   it("rejects a malformed stored cookie", async () => {
     const access = fakeAccess();
     access.store.set(OTTER_COOKIE_SECRET_NAME, JSON.stringify({ sessionid: "only" }));
-    expect(await readOtterCookie(access)).toBeNull();
+    await expect(readOtterCookieResult(access)).resolves.toMatchObject({
+      ok: false,
+      reason: "unavailable",
+    });
+  });
+
+  it.each([
+    ["", "empty"],
+    [undefined, "undefined"],
+    [null, "null"],
+    [[], "array"],
+    [{ sessionid: "sid", csrftoken: "csrf" }, "object"],
+    ["not-json", "malformed serialized cookie"],
+    [
+      { ok: "true", data: JSON.stringify({ sessionid: "sid", csrftoken: "csrf" }) },
+      "malformed envelope",
+    ],
+  ])("classifies %s successful secret data as unavailable", async (data) => {
+    const access = {
+      secrets: { get: async () => ({ ok: true, data }) },
+    } as any;
+
+    const result = await readOtterCookieResult(access);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("unavailable");
+  });
+
+  it.each([
+    [undefined, "missing Secrets capability"],
+    [{ ok: false, error: { code: "grant_not_found" } }, "grant failure"],
+    [{ ok: false, error: { code: "timeout" } }, "timeout"],
+  ])("classifies %s as unavailable", async (result) => {
+    const access =
+      result === undefined ? ({} as any) : ({ secrets: { get: async () => result } } as any);
+    const classified = await readOtterCookieResult(access);
+    expect(classified).toMatchObject({ ok: false, reason: "unavailable" });
+  });
+
+  it("classifies only explicit not-found errors as missing", async () => {
+    const access = {
+      secrets: { get: async () => ({ ok: false, error: { code: "KEY_NOT_FOUND" } }) },
+    } as any;
+    await expect(readOtterCookieResult(access)).resolves.toMatchObject({
+      ok: false,
+      reason: "missing",
+    });
   });
 
   it("throws if the delegation lacks Secrets write access", async () => {

@@ -4,7 +4,7 @@ import {
   type EncodedShareData,
   type TinyCloudWeb,
 } from "@tinycloud/web-sdk";
-import { ServiceContext, type ServiceSession } from "@tinycloud/sdk-core";
+import { ServiceContext, type ServiceSession } from "@tinycloud/sdk-services";
 import type { ApiClient } from "@listen/client";
 
 import {

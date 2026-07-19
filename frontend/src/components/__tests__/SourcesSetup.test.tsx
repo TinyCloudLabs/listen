@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { SourcesSetup } from "../SourcesSetup";
 
 const api = {
@@ -39,6 +39,9 @@ function renderSources(overrides: Partial<Parameters<typeof SourcesSetup>[0]> = 
 describe("SourcesSetup", () => {
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.resetAllMocks();
   });
 
   it("links TinyCloud Secrets for managed provider secrets", () => {
@@ -64,5 +67,54 @@ describe("SourcesSetup", () => {
 
     expect(screen.getByText("Google Meet")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /^Connect ->$/ }).at(-1)).not.toBeDisabled();
+  });
+
+  it("re-enables Connect Google when the popup is closed without completing", async () => {
+    vi.useFakeTimers();
+    const popup = { closed: false, close: vi.fn() };
+    const open = vi.fn(() => popup);
+    vi.stubGlobal("open", open);
+    api.get.mockResolvedValue({ authUrl: "https://accounts.google.com/o/oauth2" });
+
+    renderSources({
+      googleMeetAvailable: true,
+      onEnsureBackendAccess: vi.fn().mockResolvedValue(undefined),
+    });
+
+    fireEvent.click(screen.getAllByRole("button", { name: /^Connect ->$/ }).at(-1)!);
+    fireEvent.click(screen.getByRole("button", { name: "Connect Google" }));
+
+    await vi.waitFor(() => expect(open).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: "Connecting..." })).toBeDisabled();
+
+    popup.closed = true;
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+
+    expect(screen.getByRole("button", { name: "Connect Google" })).not.toBeDisabled();
+  });
+
+  it("shows an error when the popup is blocked", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "open",
+      vi.fn(() => null),
+    );
+    api.get.mockResolvedValue({ authUrl: "https://accounts.google.com/o/oauth2" });
+
+    renderSources({
+      googleMeetAvailable: true,
+      onEnsureBackendAccess: vi.fn().mockResolvedValue(undefined),
+    });
+
+    fireEvent.click(screen.getAllByRole("button", { name: /^Connect ->$/ }).at(-1)!);
+    fireEvent.click(screen.getByRole("button", { name: "Connect Google" }));
+
+    await vi.waitFor(() => {
+      expect(screen.getByText(/popup blocked/i)).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: "Connect Google" })).not.toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Connecting..." })).not.toBeInTheDocument();
   });
 });

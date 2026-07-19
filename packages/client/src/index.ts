@@ -58,6 +58,12 @@ export {
   revokeDelegation,
 } from "./delegation.js";
 
+export {
+  MissingParentDelegationError,
+  isMissingParentDelegationError,
+  normalizeMissingParentDelegationError,
+} from "./missing-parent.js";
+
 export { requestNonce, verifySession, type VerifyResponse } from "./auth.js";
 
 export { SessionStore, type StoredSession } from "./tokens.js";

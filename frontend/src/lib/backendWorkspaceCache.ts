@@ -1,7 +1,7 @@
 import type { WorkspaceStateResponse } from "@listen/core";
 
-const CACHE_VERSION = 1;
-const CACHE_PREFIX = "listen:backend-workspace-state:v1:";
+const CACHE_VERSION = 2;
+const CACHE_PREFIX = "listen:backend-workspace-state:v2:";
 const EXPIRY_BUFFER_MS = 30_000;
 
 export interface CachedBackendWorkspaceState {
@@ -10,6 +10,7 @@ export interface CachedBackendWorkspaceState {
   backendDid: string;
   cachedAt: string;
   expiresAt: string;
+  activation: "active";
   backendReadableSecrets: WorkspaceStateResponse["backendReadableSecrets"];
   googleMeet: WorkspaceStateResponse["googleMeet"];
   conversations: WorkspaceStateResponse["conversations"];
@@ -54,6 +55,7 @@ export function readBackendWorkspaceCache(
       parsed.backendDid !== backendDid ||
       typeof parsed.expiresAt !== "string" ||
       !isFresh(parsed.expiresAt) ||
+      parsed.activation !== "active" ||
       !parsed.backendReadableSecrets ||
       !parsed.googleMeet ||
       !parsed.conversations
@@ -74,10 +76,19 @@ export function writeBackendWorkspaceCache(
   state: WorkspaceStateResponse,
 ): void {
   const expiresAt = state.delegation.expiresAt;
-  if (state.delegation.status !== "active" || !expiresAt || !isFresh(expiresAt)) return;
+  if (
+    state.delegation.status !== "active" ||
+    state.delegation.activation !== "active" ||
+    !expiresAt ||
+    !isFresh(expiresAt)
+  ) {
+    return;
+  }
 
   const localStorage = storage();
   if (!localStorage) return;
+
+  const previous = readBackendWorkspaceCache(address, backendDid);
 
   const cached: CachedBackendWorkspaceState = {
     version: CACHE_VERSION,
@@ -85,9 +96,15 @@ export function writeBackendWorkspaceCache(
     backendDid,
     cachedAt: new Date().toISOString(),
     expiresAt,
+    activation: "active",
     backendReadableSecrets: state.backendReadableSecrets,
     googleMeet: state.googleMeet,
-    conversations: state.conversations,
+    // SQL availability is independent from delegation readiness. Never let a
+    // transient unknown overwrite the last proven conversation-existence value.
+    conversations:
+      state.conversations.hasAny === null && previous
+        ? previous.conversations
+        : state.conversations,
   };
 
   try {
@@ -124,7 +141,7 @@ export function workspaceStateFromCache(
       stored: true,
       validPolicy: true,
       expiresAt: cached.expiresAt,
-      activation: "active",
+      activation: cached.activation,
     },
     backendReadableSecrets: cached.backendReadableSecrets,
     googleMeet: cached.googleMeet,

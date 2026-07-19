@@ -23,6 +23,7 @@ interface ConnectionsScreenProps {
   onAddTranscript?: () => void;
   onFinishTranscriptionProviderAccess?: (provider: "assemblyai" | "deepgram") => Promise<void>;
   onRefresh: () => void;
+  actionsDisabled?: boolean;
 }
 
 type SourceId = "fireflies" | "granola" | "soundcore" | "google-meet" | "assemblyai" | "deepgram";
@@ -72,6 +73,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
   onAddTranscript,
   onFinishTranscriptionProviderAccess,
   onRefresh,
+  actionsDisabled = false,
 }) => {
   const [busySource, setBusySource] = useState<SourceId | "all" | "migration" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -246,11 +248,16 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
               type="button"
               style={{ ...s.btnGhost, ...(syncableConnected.length === 0 ? s.btnDisabled : {}) }}
               onClick={syncAll}
-              disabled={syncableConnected.length === 0 || busySource !== null}
+              disabled={actionsDisabled || syncableConnected.length === 0 || busySource !== null}
             >
               {busySource === "all" ? "Syncing" : "Sync connected"}
             </button>
-            <button type="button" style={s.btnPrimary} onClick={onAddSource}>
+            <button
+              type="button"
+              style={s.btnPrimary}
+              onClick={onAddSource}
+              disabled={actionsDisabled}
+            >
               Add source or transcript
             </button>
           </div>
@@ -295,7 +302,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
                     type="button"
                     style={s.btnGhostSm}
                     onClick={() => void syncSource(source.id)}
-                    disabled={busySource !== null}
+                    disabled={actionsDisabled || busySource !== null}
                   >
                     {busySource === source.id ? "Syncing" : "Sync now"}
                   </button>
@@ -316,16 +323,26 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
                         .catch((err) => setError(err instanceof Error ? err.message : String(err)))
                         .finally(() => setBusySource(null));
                     }}
-                    disabled={busySource !== null}
+                    disabled={actionsDisabled || busySource !== null}
                   >
                     {busySource === source.id ? "Connecting" : "Finish setup"}
                   </button>
                 ) : !source.ready ? (
-                  <button type="button" style={s.btnGhostSm} onClick={onAddSource}>
+                  <button
+                    type="button"
+                    style={s.btnGhostSm}
+                    onClick={onAddSource}
+                    disabled={actionsDisabled}
+                  >
                     Finish setup
                   </button>
                 ) : null}
-                <button type="button" style={s.btnGhostSm} onClick={onAddSource}>
+                <button
+                  type="button"
+                  style={s.btnGhostSm}
+                  onClick={onAddSource}
+                  disabled={actionsDisabled}
+                >
                   Settings
                 </button>
               </div>
@@ -357,7 +374,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
                 onClick={
                   source.id === "soundcore" ? (onConnectSoundcore ?? onAddSource) : onAddSource
                 }
-                disabled={!source.available}
+                disabled={actionsDisabled || !source.available}
               >
                 {source.available
                   ? source.id === "soundcore"
@@ -387,7 +404,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
             type="button"
             style={s.btnGhostSm}
             onClick={() => void migrateTranscripts()}
-            disabled={busySource !== null}
+            disabled={actionsDisabled || busySource !== null}
           >
             {busySource === "migration" ? "Migrating" : "Migrate transcripts"}
           </button>
@@ -406,7 +423,12 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
               Paste text or upload a transcript file with editable fields.
             </p>
           </div>
-          <button type="button" style={s.btnGhostSm} onClick={openTranscriptImport}>
+          <button
+            type="button"
+            style={s.btnGhostSm}
+            onClick={openTranscriptImport}
+            disabled={actionsDisabled}
+          >
             Import
           </button>
         </div>

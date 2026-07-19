@@ -297,19 +297,33 @@ export function delegationCoversBackendPolicy(
   backendDid: string,
   ownerDid?: string,
 ): boolean {
-  const requested = backendDelegationResolvedPermissions(backendDid, ownerDid).map(
-    normalizePermissionForPolicyComparison,
+  const requested = normalizePermissionsForSdkComparison(
+    backendDelegationResolvedPermissions(backendDid, ownerDid),
   );
-  const granted = permissions
-    .map((permission) => ({
+  const granted = normalizePermissionsForSdkComparison(
+    permissions.map((permission) => ({
       service: permission.service,
       space: permission.space,
       path: permission.path,
       actions: [...permission.actions],
-    }))
-    .map(normalizePermissionForPolicyComparison);
+    })),
+  );
 
   return isCapabilitySubset(requested, granted).subset;
+}
+
+function normalizePermissionsForSdkComparison(
+  permissions: readonly {
+    service: string;
+    space?: string;
+    path: string;
+    actions: string[];
+  }[],
+) {
+  return permissions.flatMap((permission) => {
+    const normalized = normalizePermissionForPolicyComparison(permission);
+    return normalized.actions.map((action) => ({ ...normalized, actions: [action] }));
+  });
 }
 
 function normalizePermissionForPolicyHash(permission: {

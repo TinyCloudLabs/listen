@@ -1,6 +1,6 @@
 import type { DelegatedAccess } from "@listen/server";
 import { OtterClient } from "./otter-client.js";
-import { readOtterCookie } from "./otter-secret.js";
+import { readOtterCookieResult } from "./otter-secret.js";
 import { runOtterSync } from "./otter-sync-runner.js";
 
 interface AutoSyncConfig {
@@ -27,9 +27,12 @@ export function startOtterAutoSync(config: AutoSyncConfig): () => void {
     try {
       const access = await config.getAccess();
       if (!access) return;
-      const cookie = await readOtterCookie(access);
-      if (!cookie) return;
-      const summary = await runOtterSync(access, makeClient(cookie));
+      const cookieResult = await readOtterCookieResult(access);
+      if (!cookieResult.ok) {
+        if (cookieResult.reason === "unavailable") log("Otter cookie read unavailable");
+        return;
+      }
+      const summary = await runOtterSync(access, makeClient(cookieResult.data));
       if (summary.synced || summary.failed) {
         log(`synced ${summary.synced}, skipped ${summary.skipped}, failed ${summary.failed}`);
       }

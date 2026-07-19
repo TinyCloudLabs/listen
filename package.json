@@ -10,14 +10,14 @@
     "test"
   ],
   "overrides": {
-    "@tinycloud/sdk-core": "2.6.2",
-    "@tinycloud/sdk-services": "2.6.2",
-    "@tinycloud/web-sdk": "2.6.2",
-    "@tinycloud/node-sdk": "2.6.2",
+    "@tinycloud/sdk-core": "2.8.0",
+    "@tinycloud/sdk-services": "2.8.0",
+    "@tinycloud/web-sdk": "2.8.0",
+    "@tinycloud/node-sdk": "2.8.0",
     "@tinycloud/web-core": "1.7.0",
-    "@tinycloud/node-sdk-wasm": "1.7.4",
-    "@tinycloud/web-sdk-wasm": "1.7.4",
-    "@tinycloud/bootstrap": "2.5.1"
+    "@tinycloud/node-sdk-wasm": "1.7.5",
+    "@tinycloud/web-sdk-wasm": "1.7.5",
+    "@tinycloud/bootstrap": "2.6.0"
   },
   "scripts": {
     "build": "bun install --frozen-lockfile && bunx turbo run build",
@@ -37,6 +37,7 @@
     "test:app:install:ci": "bun run --cwd test install:browsers:ci",
     "test:app": "bunx turbo run build --filter=@listen/client... && bun run --cwd test app:smoke",
     "test:hooks:e2e": "bunx turbo run build --filter=@listen/core --filter=@listen/server --filter=@listen/client --filter=listen-backend --filter=listen-frontend && bun run --cwd test hooks:e2e",
+    "test:recovery:e2e": "bunx turbo run build --filter=@listen/core --filter=@listen/server --filter=@listen/client --filter=listen-backend --filter=listen-frontend && bun run --cwd test recovery:e2e",
     "lint": "turbo run lint",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
@@ -49,8 +50,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@tinycloud/node-sdk": "2.4.0",
-    "@tinycloud/node-sdk-m1": "file:./test/vendor/tinycloud-node-sdk-m1",
+    "@tinycloud/node-sdk": "2.8.0",
     "ethers": "^5.7.2",
     "eslint": "^10.1.0",
     "husky": "^9.1.7",

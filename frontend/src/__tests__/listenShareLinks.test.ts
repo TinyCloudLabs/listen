@@ -45,8 +45,8 @@ vi.mock("@tinycloud/web-sdk", async (importOriginal) => {
   };
 });
 
-vi.mock("@tinycloud/sdk-core", async (importOriginal) => {
-  const original = await importOriginal<typeof import("@tinycloud/sdk-core")>();
+vi.mock("@tinycloud/sdk-services", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@tinycloud/sdk-services")>();
   return {
     ...original,
     ServiceContext: vi.fn(function ServiceContext(this: { setSession: () => void }) {

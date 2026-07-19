@@ -13,7 +13,8 @@ import {
   persistTranscriptBlob,
   updateConversationTranscriptFields,
 } from "../services/persist-conversation.js";
-import { readFirefliesApiKey } from "../services/fireflies-secret.js";
+import { readFirefliesApiKeyResult } from "../services/fireflies-secret.js";
+import type { SourceSecretResult } from "../services/source-secret.js";
 import { resolveAppPath } from "../manifest.js";
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -43,6 +44,21 @@ interface BackendKV {
     ok: boolean;
     error?: { code?: string; message?: string };
   }>;
+}
+
+function sendFirefliesSecretFailure(res: Response, result: SourceSecretResult): boolean {
+  if (result.ok) return false;
+  const missing = result.reason === "missing";
+  res.status(missing ? 404 : 503).json({
+    error: missing ? "no_api_key" : "fireflies_secret_unavailable",
+    secretCode: result.error.code,
+    message:
+      result.error.message ??
+      (missing
+        ? "No Fireflies API key configured. Store FIREFLIES_API_KEY with TinyCloud Secrets."
+        : "Fireflies API key is temporarily unavailable."),
+  });
+  return true;
 }
 
 interface ExistingFirefliesConversation {
@@ -595,8 +611,12 @@ export function createSyncRouter(config: SyncRoutesConfig) {
       const current = await readCurrentFirefliesJob(ownerAddress);
       if (isActiveJob(current)) {
         if (!runningFirefliesJobs.has(ownerAddress)) {
-          const apiKey = await readFirefliesApiKey(req);
-          if (!apiKey) {
+          const secret = await readFirefliesApiKeyResult(req.delegatedAccess);
+          if (!secret.ok && secret.reason === "unavailable") {
+            sendFirefliesSecretFailure(res, secret);
+            return;
+          }
+          if (!secret.ok) {
             const failedJob = {
               ...current,
               status: "failed",
@@ -613,7 +633,7 @@ export function createSyncRouter(config: SyncRoutesConfig) {
               runningJobs: runningFirefliesJobs,
               job: current,
               access: req.delegatedAccess!,
-              client: makeClient(apiKey),
+              client: makeClient(secret.data),
               limit,
               delayMs,
               persistJob: persistFirefliesJob,
@@ -625,15 +645,12 @@ export function createSyncRouter(config: SyncRoutesConfig) {
         return;
       }
 
-      const apiKey = await readFirefliesApiKey(req);
-      if (!apiKey) {
-        res.status(404).json({
-          error: "no_api_key",
-          message:
-            "No Fireflies API key configured. Store FIREFLIES_API_KEY with TinyCloud Secrets.",
-        });
+      const secret = await readFirefliesApiKeyResult(req.delegatedAccess);
+      if (!secret.ok) {
+        sendFirefliesSecretFailure(res, secret);
         return;
       }
+      const apiKey = secret.data;
 
       const job = createQueuedJob(ownerAddress, mode);
       await persistFirefliesJob(job);
@@ -668,18 +685,18 @@ export function createSyncRouter(config: SyncRoutesConfig) {
       const ownerAddress = normalizeOwnerAddress(req);
       const job = await readCurrentFirefliesJob(ownerAddress);
       if (isActiveJob(job) && !runningFirefliesJobs.has(ownerAddress)) {
-        const apiKey = await readFirefliesApiKey(req);
-        if (apiKey) {
+        const secret = await readFirefliesApiKeyResult(req.delegatedAccess);
+        if (secret.ok) {
           runFirefliesJob({
             runningJobs: runningFirefliesJobs,
             job,
             access: req.delegatedAccess!,
-            client: makeClient(apiKey),
+            client: makeClient(secret.data),
             limit: DEFAULT_LIMIT,
             delayMs,
             persistJob: persistFirefliesJob,
           });
-        } else {
+        } else if (secret.reason === "missing") {
           const failedJob = {
             ...job,
             status: "failed",
@@ -690,6 +707,9 @@ export function createSyncRouter(config: SyncRoutesConfig) {
           } satisfies FirefliesSyncJob;
           await persistFirefliesJob(failedJob);
           res.json(failedJob);
+          return;
+        } else {
+          sendFirefliesSecretFailure(res, secret);
           return;
         }
       }
@@ -786,14 +806,12 @@ export function createSyncRouter(config: SyncRoutesConfig) {
     const access = req.delegatedAccess!;
 
     // 1. Read Fireflies API key from TinyCloud Secrets
-    const apiKey = await readFirefliesApiKey(req);
-    if (!apiKey) {
-      res.status(404).json({
-        error: "no_api_key",
-        message: "No Fireflies API key configured. Store FIREFLIES_API_KEY with TinyCloud Secrets.",
-      });
+    const secret = await readFirefliesApiKeyResult(req.delegatedAccess);
+    if (!secret.ok) {
+      sendFirefliesSecretFailure(res, secret);
       return;
     }
+    const apiKey = secret.data;
 
     // 2. Validate and clamp limit
     let limit = DEFAULT_LIMIT;
@@ -868,6 +886,13 @@ export function createSyncRouter(config: SyncRoutesConfig) {
   router.get("/fireflies/stream", async (req: Request, res: Response) => {
     const access = req.delegatedAccess!;
 
+    const secret = await readFirefliesApiKeyResult(req.delegatedAccess);
+    if (!secret.ok) {
+      sendFirefliesSecretFailure(res, secret);
+      return;
+    }
+    const apiKey = secret.data;
+
     // SSE headers
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -887,14 +912,6 @@ export function createSyncRouter(config: SyncRoutesConfig) {
     };
 
     try {
-      // 1. Read Fireflies API key
-      const apiKey = await readFirefliesApiKey(req);
-      if (!apiKey) {
-        sendEvent("error", { message: "No Fireflies API key configured." });
-        res.end();
-        return;
-      }
-
       await ensureSchema(access);
       const sqlDb = conversationSql(access);
       const client = makeClient(apiKey);
@@ -989,14 +1006,12 @@ export function createSyncRouter(config: SyncRoutesConfig) {
     const access = req.delegatedAccess!;
 
     // 1. Read Fireflies API key from TinyCloud Secrets
-    const apiKey = await readFirefliesApiKey(req);
-    if (!apiKey) {
-      res.status(404).json({
-        error: "no_api_key",
-        message: "No Fireflies API key configured. Store FIREFLIES_API_KEY with TinyCloud Secrets.",
-      });
+    const secret = await readFirefliesApiKeyResult(req.delegatedAccess);
+    if (!secret.ok) {
+      sendFirefliesSecretFailure(res, secret);
       return;
     }
+    const apiKey = secret.data;
 
     try {
       await ensureSchema(access);

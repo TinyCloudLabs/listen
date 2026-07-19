@@ -29,6 +29,9 @@ jobs:
       - name: Build
         run: bun run build
 
+      - name: Verify backend Docker runtime
+        run: bun run --cwd backend verify:docker
+
       - name: Test
         run: bun run test
 

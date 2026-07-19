@@ -109,4 +109,13 @@ describe("manifest", () => {
 
     expect(delegationCoversBackendPolicy(granted, "did:key:backend", ownerDid)).toBe(true);
   });
+
+  test("matches SDK grants split into one action per resource entry", () => {
+    const ownerDid = "did:pkh:eip155:1:0xd559ccd9eb87c530a9a349262669386de93cf412";
+    const granted = backendDelegationResolvedPermissions("did:key:backend", ownerDid).flatMap(
+      (permission) => permission.actions.map((action) => ({ ...permission, actions: [action] })),
+    );
+
+    expect(delegationCoversBackendPolicy(granted, "did:key:backend", ownerDid)).toBe(true);
+  });
 });

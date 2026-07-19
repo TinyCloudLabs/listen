@@ -1,26 +1,24 @@
 import { Router } from "express";
 import type { Request, RequestHandler } from "express";
-import type { TinyCloudNode } from "@tinycloud/node-sdk";
 import type { DelegationCache, DelegationStore } from "@listen/server";
 import type { WorkspaceStateResponse, WorkspaceSecretKey } from "@listen/core";
 import { backendDelegationPolicyHash, ownerDidFromAddress } from "../manifest.js";
-import {
-  activatePortableDelegation,
-  deserializePortableDelegationSet,
-} from "../delegation-activation.js";
-import { withTimeout } from "../middleware/timeout.js";
+import type { DelegationActivator } from "../delegation-activation.js";
+import { createDelegationResolver } from "../delegation-resolver.js";
 import { conversationSql } from "../schema.js";
 import { googleTokensExist } from "../services/google-tokens.js";
+import { readSourceApiKeyResult } from "../services/source-secret.js";
 
 interface WorkspaceStateRoutesConfig {
-  node: TinyCloudNode;
   did: string;
   store: DelegationStore;
   cache: DelegationCache;
+  activator: DelegationActivator;
   authMiddleware: RequestHandler;
+  activationTimeoutMs?: number;
 }
 
-const ACTIVATION_TIMEOUT_MS = 5_000;
+const ACTIVATION_TIMEOUT_MS = 45_000;
 const WORKSPACE_SECRET_NAMES: Record<WorkspaceSecretKey, string> = {
   fireflies: "FIREFLIES_API_KEY",
   granola: "GRANOLA_API_KEY",
@@ -35,8 +33,15 @@ const WORKSPACE_SECRET_NAMES: Record<WorkspaceSecretKey, string> = {
 type DelegatedAccess = NonNullable<Request["delegatedAccess"]>;
 
 export function createWorkspaceStateRouter(config: WorkspaceStateRoutesConfig) {
-  const { node, store, cache, authMiddleware } = config;
+  const { store, cache, activator, authMiddleware } = config;
   const router = Router();
+  const resolver = createDelegationResolver({
+    store,
+    cache,
+    activator,
+    policyHashForAddress: (address) =>
+      backendDelegationPolicyHash(config.did, ownerDidFromAddress(address)),
+  });
 
   router.use(authMiddleware);
 
@@ -77,73 +82,45 @@ export function createWorkspaceStateRouter(config: WorkspaceStateRoutesConfig) {
     };
 
     try {
-      const stored = await store.load(address);
-      if (!stored) {
+      const resolution = await resolver.resolve(address, {
+        activationTimeoutMs: config.activationTimeoutMs ?? ACTIVATION_TIMEOUT_MS,
+      });
+
+      if (resolution.kind === "none") {
         res.json(base);
         return;
       }
 
-      if (new Date(stored.expiresAt).getTime() <= Date.now()) {
-        await store.remove(address);
-        cache.evict(address);
+      if (resolution.kind === "expired" || resolution.kind === "stale") {
         res.json({
           ...base,
           delegation: {
-            status: "expired",
-            stored: false,
+            status: resolution.kind,
+            stored: true,
             validPolicy: false,
-            expiresAt: stored.expiresAt,
+            expiresAt: resolution.stored.expiresAt,
             activation: "unknown",
           },
         } satisfies WorkspaceStateResponse);
         return;
       }
 
-      const validPolicy = stored.policyHash === backendDelegationPolicyHash(config.did, ownerDid);
-      if (!validPolicy) {
-        await store.remove(address);
-        cache.evict(address);
-        res.json({
-          ...base,
-          delegation: {
-            status: "stale",
-            stored: false,
-            validPolicy: false,
-            expiresAt: stored.expiresAt,
-            activation: "unknown",
-          },
-        } satisfies WorkspaceStateResponse);
-        return;
-      }
-
-      let access = cache.get(address) as DelegatedAccess | null;
-      let activation: WorkspaceStateResponse["delegation"]["activation"] = access
-        ? "active"
-        : "pending";
-      let activationError: string | undefined;
-
-      if (!access) {
-        try {
-          const delegation = deserializePortableDelegationSet(stored.serialized);
-          access = await withTimeout(
-            activatePortableDelegation(node, delegation) as Promise<DelegatedAccess>,
-            ACTIVATION_TIMEOUT_MS,
-          );
-          cache.set(address, access);
-          activation = "active";
-        } catch (err) {
-          activation = "failed";
-          activationError = err instanceof Error ? err.message : String(err);
-        }
-      }
-
+      const access = resolution.kind === "active" ? resolution.access : null;
+      const activation: WorkspaceStateResponse["delegation"]["activation"] =
+        resolution.kind === "active"
+          ? "active"
+          : resolution.kind === "timeout"
+            ? "pending"
+            : "failed";
+      const activationError =
+        resolution.kind === "failed" ? describeWorkspaceError(resolution.error) : undefined;
       const response: WorkspaceStateResponse = {
         ...base,
         delegation: {
           status: "active",
           stored: true,
           validPolicy: true,
-          expiresAt: stored.expiresAt,
+          expiresAt: resolution.stored.expiresAt,
           activation,
           ...(activationError ? { error: activationError } : {}),
         },
@@ -171,9 +148,15 @@ export function createWorkspaceStateRouter(config: WorkspaceStateRoutesConfig) {
       } satisfies WorkspaceStateResponse);
     } catch (err) {
       console.error("[workspace-state] failed to load workspace state:", err);
-      res.status(500).json({
-        error: "workspace_state_failed",
-        message: "Failed to load workspace state",
+      const code = errorCode(err) ?? "workspace_state_failed";
+      res.status(code === "workspace_state_failed" ? 500 : 503).json({
+        error: code,
+        message:
+          code === "workspace_state_failed"
+            ? "Failed to load workspace state"
+            : err instanceof Error
+              ? err.message
+              : String(err),
       });
     }
   });
@@ -198,35 +181,34 @@ async function readSecret(
   access: DelegatedAccess,
   secretName: string,
 ): Promise<{ readable: boolean | null; error?: string }> {
-  if (!access.secrets?.get) {
-    return { readable: false, error: "missing_secret_access" };
-  }
+  const result = await readSourceApiKeyResult(access, secretName);
+  if (result.ok) return { readable: true };
+  if (result.reason === "missing") return { readable: false };
+  return {
+    readable: null,
+    error: result.error.code ?? result.error.message ?? "secret_check_failed",
+  };
+}
 
-  try {
-    const result = await access.secrets.get(secretName);
-    if (result.ok) return { readable: true };
+function errorCode(error: unknown): string | null {
+  if (typeof error !== "object" || error === null) return null;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : null;
+}
 
-    const code = result.error?.code?.toLowerCase();
-    if (code === "key_not_found" || code === "not_found" || code === "grant_not_found") {
-      return { readable: false };
-    }
-
-    return {
-      readable: null,
-      error: result.error?.message ?? result.error?.code ?? "secret_check_failed",
-    };
-  } catch (err) {
-    return { readable: null, error: err instanceof Error ? err.message : String(err) };
-  }
+function describeWorkspaceError(error: unknown): string {
+  const code = errorCode(error);
+  const message = error instanceof Error ? error.message : String(error);
+  return code && !message.includes(code) ? `${code}: ${message}` : message;
 }
 
 async function readGoogleMeetState(
   access: DelegatedAccess,
-): Promise<Pick<WorkspaceStateResponse["googleMeet"], "connected">> {
+): Promise<Pick<WorkspaceStateResponse["googleMeet"], "connected" | "error">> {
   try {
     return { connected: await googleTokensExist(access) };
-  } catch {
-    return { connected: null };
+  } catch (error) {
+    return { connected: null, error: describeWorkspaceError(error) };
   }
 }
 

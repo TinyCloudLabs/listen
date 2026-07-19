@@ -179,7 +179,35 @@ bun run build
 bun run test
 bun run test:app:install
 bun run test:app
+
 ```
+
+## Delegation lifecycle and HA boundaries
+
+Listen reads the durable delegation row without deleting it. Expired and
+policy-stale rows persist until a replacement delegation is accepted or an
+explicit DELETE is confirmed, so status remains stable across repeated reads.
+The frontend reports `ready`, `needs_consent`, or `unavailable`; operational
+activation, node, backend, network, timeout, and rate-limit failures do not
+silently open a wallet prompt.
+
+DELETE removes Listen's stored copy and derived local cache. It does not by
+itself revoke capability material already issued at the TinyCloud node or
+cancel work already in flight; those remain usable until expiry or true
+node-side revocation.
+
+Shared durable delegation rows let backend replicas reject replaced serialized
+grants on their next access without an invalidation bus. Nonce, OAuth callback,
+background-job, rate-limit, node activation, and cryptographic revocation
+state are not fully HA yet. Persisted root activation/replay and durable node
+revocation remain SDK/node follow-ups.
 
 See [App Automated Testing](docs/app-automated-testing.md) for the CI-safe Playwright smoke test and
 the opt-in real OpenKey passkey harness.
+
+## M1 compatibility dependencies
+
+The `test/` package may use the pinned `-m1` SDK/bootstrap packages and vendored artifacts for the
+M1 owner-flow harness only. They are test-harness dependencies, not application dependencies:
+production frontend and backend packages must use the current published TinyCloud packages and
+must not declare, bundle, or import any `-m1` compatibility package or artifact.

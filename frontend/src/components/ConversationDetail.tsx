@@ -1,4 +1,4 @@
-import { useState, useEffect, type FC } from "react";
+import { useState, useEffect, useRef, type FC } from "react";
 import type { ApiClient } from "@listen/client";
 import { TranscriptPane, speakerColor, type TranscriptSentence } from "./TranscriptPane";
 import { NotesPane } from "./NotesPane";
@@ -54,6 +54,7 @@ interface ConversationDetailProps {
   cacheMode?: "default" | "disabled";
   cacheScope?: ConversationCacheScope;
   onUpdated?: () => void;
+  mutationsDisabled?: boolean;
 }
 
 const DETAIL_LOAD_TIMEOUT_MS = 45_000;
@@ -349,6 +350,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
   cacheMode = "default",
   cacheScope,
   onUpdated,
+  mutationsDisabled = false,
 }) => {
   const [data, setData] = useState<DetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -359,12 +361,15 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
   const [titleDraft, setTitleDraft] = useState("");
   const [titleSaving, setTitleSaving] = useState(false);
   const [summaryView, setSummaryView] = useState<"formatted" | "markdown">("formatted");
+  const [reloadKey, setReloadKey] = useState(0);
   const useCache = cacheMode !== "disabled";
   const canEditTitle = cacheMode !== "disabled";
+  const mutationsDisabledRef = useRef(mutationsDisabled);
+  mutationsDisabledRef.current = mutationsDisabled;
 
   const saveTitle = async () => {
     const nextTitle = titleDraft.trim();
-    if (!data || titleSaving || !canEditTitle) return;
+    if (!data || titleSaving || !canEditTitle || mutationsDisabledRef.current) return;
     if (!nextTitle || nextTitle === data.conversation.title) {
       setEditingTitle(false);
       return;
@@ -453,7 +458,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [api, cacheScope, conversationId, useCache]);
+  }, [api, cacheScope, conversationId, reloadKey, useCache]);
 
   useEffect(() => {
     if (!notice) return;
@@ -480,7 +485,12 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
         <button style={s.backBtn} onClick={onBack}>
           &larr; Back
         </button>
-        <div style={s.errorCard}>{error}</div>
+        <div style={s.errorCard}>
+          {error}
+          <button type="button" style={s.actionBtn} onClick={() => setReloadKey((k) => k + 1)}>
+            Retry
+          </button>
+        </div>
       </div>
     );
   }
@@ -506,6 +516,7 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
   };
 
   const repairTranscript = async () => {
+    if (mutationsDisabledRef.current) return;
     setRepairingTranscript(true);
     setNotice(null);
     try {
@@ -559,7 +570,14 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
           Export
         </button>
         {onShare && (
-          <button style={s.actionBtn} type="button" onClick={() => onShare(conversation.id)}>
+          <button
+            style={{ ...s.actionBtn, ...(mutationsDisabled ? s.actionBtnDisabled : {}) }}
+            type="button"
+            disabled={mutationsDisabled}
+            onClick={() => {
+              if (!mutationsDisabledRef.current) onShare(conversation.id);
+            }}
+          >
             Share
           </button>
         )}
@@ -590,7 +608,9 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
                 style={s.titleEditBtn}
                 aria-label="Rename conversation"
                 title="Rename"
+                disabled={mutationsDisabled}
                 onClick={() => {
+                  if (mutationsDisabledRef.current) return;
                   setTitleDraft(conversation.title);
                   setEditingTitle(true);
                 }}
@@ -720,9 +740,12 @@ export const ConversationDetail: FC<ConversationDetailProps> = ({
               </div>
               {transcriptStatus.repairable && (
                 <button
-                  style={{ ...s.actionBtn, ...(repairingTranscript ? s.actionBtnDisabled : {}) }}
+                  style={{
+                    ...s.actionBtn,
+                    ...(repairingTranscript || mutationsDisabled ? s.actionBtnDisabled : {}),
+                  }}
                   type="button"
-                  disabled={repairingTranscript}
+                  disabled={repairingTranscript || mutationsDisabled}
                   onClick={() => void repairTranscript()}
                 >
                   {repairingTranscript ? "Recovering..." : "Recover from Fireflies"}
@@ -1086,6 +1109,11 @@ const s: Record<string, React.CSSProperties> = {
   },
   errorCard: {
     fontFamily: FONT,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    flexWrap: "wrap" as const,
     fontSize: 13,
     color: "var(--lst-blue)",
     background: "var(--lst-ink-08)",

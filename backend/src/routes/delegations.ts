@@ -1,29 +1,37 @@
 import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
-import type { TinyCloudNode } from "@tinycloud/node-sdk";
-import type { DelegationStore, DelegationCache } from "@listen/server";
-import { DEFAULT_DELEGATION_EXPIRY_MS, type ServerInfoPermission } from "@listen/core";
+import {
+  delegationContentIdentity,
+  type DelegationStore,
+  type DelegationCache,
+} from "@listen/server";
+import {
+  DEFAULT_DELEGATION_EXPIRY_MS,
+  type ServerInfoPermission,
+  type StoredDelegation,
+} from "@listen/core";
 import {
   backendDelegationPolicyHash,
   delegationCoversBackendPolicy,
   ownerDidFromAddress,
 } from "../manifest.js";
 import {
-  activatePortableDelegation,
   DelegationActivationError,
   deserializePortableDelegationSet,
   portableDelegationExpiry,
   portableDelegations,
+  type DelegationActivator,
   type PortableDelegationSet,
 } from "../delegation-activation.js";
+import { classifyStoredDelegation } from "../delegation-resolver.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
 interface DelegationRoutesConfig {
-  node: TinyCloudNode;
   did: string;
   store: DelegationStore;
   cache: DelegationCache;
+  activator: DelegationActivator;
   authMiddleware: RequestHandler;
   writeLimiter?: RequestHandler;
 }
@@ -40,7 +48,7 @@ const GRANT_EXPIRY_MARGIN_MS = 30_000;
 // ── Delegation Routes ────────────────────────────────────────────────
 
 export function createDelegationRouter(config: DelegationRoutesConfig) {
-  const { node, store, cache, authMiddleware, writeLimiter } = config;
+  const { store, cache, activator, authMiddleware, writeLimiter } = config;
   const router = Router();
 
   // All delegation routes require authentication
@@ -87,38 +95,69 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
         ? expiry.toISOString()
         : new Date(Date.now() + DEFAULT_DELEGATION_EXPIRY_MS).toISOString();
 
-      // Store the delegation keyed by wallet address
-      await store.store(address, serialized, {
-        expiresAt,
-        actions: resources.flatMap((resource) => resource.actions),
-        path: resources.map((resource) => `${resource.service}:${resource.path}`).join(","),
-        resources,
-        policyHash: backendDelegationPolicyHash(config.did, ownerDid),
-      });
+      // Store the delegation keyed by wallet address. A durable-store failure
+      // is operational and must not look like an invalid owner grant.
+      let stored: StoredDelegation;
+      try {
+        stored = await store.store(address, serialized, {
+          expiresAt,
+          actions: resources.flatMap((resource) => resource.actions),
+          path: resources.map((resource) => `${resource.service}:${resource.path}`).join(","),
+          resources,
+          policyHash: backendDelegationPolicyHash(config.did, ownerDid),
+        });
+      } catch (storeErr) {
+        console.error("[delegations] failed to store delegation:", storeErr);
+        res.status(503).json({
+          error: "delegation_store_unavailable",
+          message: "Delegation storage is temporarily unavailable",
+        });
+        return;
+      }
+      activator.invalidate(address);
+      cache.evict(address);
 
+      const identity = delegationContentIdentity(stored.serialized);
+      let activation: "active" | "pending" = "active";
       try {
         // Cache the active DelegatedAccess keyed by address when activation is available now.
-        const access = await activatePortableDelegation(node, delegation);
-        cache.set(address, access);
-
-        res.json({
-          status: "active",
-          expiresAt,
-          activation: "active",
-        });
+        await activator.activate(address, stored.serialized, identity, stored.revision);
       } catch (activationErr) {
+        activation = "pending";
         console.warn(
           "[delegations] stored delegation but activation is pending:",
           describeActivationError(activationErr),
         );
-        cache.evict(address);
-
-        res.json({
-          status: "active",
-          expiresAt,
-          activation: "pending",
-        });
       }
+
+      let current: StoredDelegation | null;
+      try {
+        current = await store.load(address);
+      } catch (storeErr) {
+        activator.invalidate(address, stored.revision);
+        cache.evictIfRevision(address, stored.revision);
+        console.error("[delegations] failed to confirm stored delegation:", storeErr);
+        res.status(503).json({
+          error: "delegation_store_unavailable",
+          message: "Delegation storage is temporarily unavailable",
+        });
+        return;
+      }
+      if (current?.revision !== stored.revision) {
+        activator.invalidate(address, stored.revision);
+        cache.evictIfRevision(address, stored.revision);
+        res.status(409).json({
+          error: "delegation_superseded",
+          message: "Delegation was replaced or removed before activation completed",
+        });
+        return;
+      }
+
+      res.json({
+        status: "active",
+        expiresAt,
+        activation,
+      });
     } catch (err) {
       console.error("[delegations] failed to process delegation:", err);
       res.status(400).json({
@@ -140,7 +179,9 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
       const { address } = req.user;
 
       try {
+        activator.invalidate(address);
         await store.remove(address);
+        activator.invalidate(address);
         cache.evict(address);
 
         res.json({
@@ -166,10 +207,12 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
     const { address } = req.user;
 
     try {
-      const stored = await store.load(address);
-      const ownerDid = ownerDidFromAddress(address);
+      const classification = classifyStoredDelegation(
+        await store.load(address),
+        backendDelegationPolicyHash(config.did, ownerDidFromAddress(address)),
+      );
 
-      if (!stored) {
+      if (classification.kind === "none") {
         res.json({
           status: "none",
           expiresAt: null,
@@ -177,34 +220,33 @@ export function createDelegationRouter(config: DelegationRoutesConfig) {
         return;
       }
 
-      const isExpired = new Date(stored.expiresAt).getTime() <= Date.now();
-
-      if (isExpired) {
-        // Clean up expired delegation
-        await store.remove(address);
-        cache.evict(address);
+      if (classification.kind === "expired") {
+        activator.invalidate(address, classification.stored.revision);
+        cache.evictIfRevision(address, classification.stored.revision);
 
         res.json({
           status: "expired",
-          expiresAt: stored.expiresAt,
+          expiresAt: classification.stored.expiresAt,
         });
         return;
       }
 
-      if (stored.policyHash !== backendDelegationPolicyHash(config.did, ownerDid)) {
-        await store.remove(address);
-        cache.evict(address);
+      if (classification.kind === "stale") {
+        activator.invalidate(address, classification.stored.revision);
+        cache.evictIfRevision(address, classification.stored.revision);
 
+        // A stale row is evidence of a prior grant, so surface it as "stale"
+        // (not "none") — the frontend renews unconditionally on stale.
         res.json({
-          status: "none",
-          expiresAt: null,
+          status: "stale",
+          expiresAt: classification.stored.expiresAt,
         });
         return;
       }
 
       res.json({
         status: "active",
-        expiresAt: stored.expiresAt,
+        expiresAt: classification.stored.expiresAt,
       });
     } catch (err) {
       console.error("[delegations] failed to check delegation status:", err);

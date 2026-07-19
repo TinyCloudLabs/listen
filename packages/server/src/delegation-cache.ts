@@ -1,11 +1,18 @@
 import { DELEGATION_CACHE_TTL_MS } from "@listen/core";
 import type { DelegatedAccess } from "@tinycloud/node-sdk";
+import { createHash } from "node:crypto";
 
 // ── Types ────────────────────────────────────────────────────────────
 
 interface CacheEntry {
+  identity: string;
+  revision: string;
   delegatedAccess: DelegatedAccess;
   cachedAt: number;
+}
+
+export function delegationContentIdentity(serialized: string): string {
+  return createHash("sha256").update(serialized, "utf8").digest("hex");
 }
 
 // ── Delegation Cache ─────────────────────────────────────────────────
@@ -34,10 +41,15 @@ export class DelegationCache {
    * Get a cached DelegatedAccess for the given address.
    * Returns null if not cached or if the entry has expired.
    */
-  get(address: string): DelegatedAccess | null {
+  get(address: string, identity: string, revision: string): DelegatedAccess | null {
     const entry = this.cache.get(address);
 
     if (!entry) return null;
+
+    if (entry.identity !== identity || entry.revision !== revision) {
+      // A delayed read for an older generation must not evict a newer one.
+      return null;
+    }
 
     if (Date.now() - entry.cachedAt > this.ttlMs) {
       // TTL expired — remove stale entry
@@ -55,12 +67,14 @@ export class DelegationCache {
   /**
    * Cache a DelegatedAccess for the given address.
    */
-  set(address: string, delegatedAccess: DelegatedAccess): void {
+  set(address: string, identity: string, revision: string, delegatedAccess: DelegatedAccess): void {
     if (this.cache.size >= this.maxSize) {
       const oldest = this.cache.keys().next().value;
       if (oldest) this.cache.delete(oldest);
     }
     this.cache.set(address, {
+      identity,
+      revision,
       delegatedAccess,
       cachedAt: Date.now(),
     });
@@ -74,11 +88,16 @@ export class DelegationCache {
     this.cache.delete(address);
   }
 
+  /** Evict only when the cache still contains the observed durable revision. */
+  evictIfRevision(address: string, revision: string): void {
+    if (this.cache.get(address)?.revision === revision) this.cache.delete(address);
+  }
+
   /**
    * Check whether the cache has a valid (non-expired) entry for the address.
    */
-  has(address: string): boolean {
-    return this.get(address) !== null;
+  has(address: string, identity: string, revision: string): boolean {
+    return this.get(address, identity, revision) !== null;
   }
 
   /**
