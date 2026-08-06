@@ -5,7 +5,7 @@ import {
   SoundcoreClient,
   type SoundcoreCredentials,
 } from "../services/soundcore-client.js";
-import { readSoundcoreCredentials } from "../services/soundcore-secret.js";
+import { readSoundcoreCredentialsResult } from "../services/soundcore-secret.js";
 import { syncSoundcoreNotes } from "../services/soundcore-sync.js";
 
 interface SoundcoreSyncRoutesConfig {
@@ -29,16 +29,23 @@ export function createSoundcoreSyncRouter(config: SoundcoreSyncRoutesConfig) {
   router.post("/", async (req: Request, res: Response) => {
     const requestId = `soundcore-${Date.now().toString(36)}`;
     console.info(`[soundcore-sync:${requestId}] request received`);
-    const credentials = await readSoundcoreCredentials(req);
-    if (!credentials) {
-      console.warn(`[soundcore-sync:${requestId}] missing credentials`);
-      res.status(404).json({
-        error: "no_soundcore_credentials",
+    const credentialsResult = await readSoundcoreCredentialsResult(req.delegatedAccess);
+    if (!credentialsResult.ok) {
+      const operational = credentialsResult.reason === "operational";
+      console.warn(
+        `[soundcore-sync:${requestId}] ${operational ? "credential read unavailable" : "missing credentials"}`,
+      );
+      res.status(operational ? 503 : 404).json({
+        error: operational ? "soundcore_credentials_unavailable" : "no_soundcore_credentials",
+        secretCode: credentialsResult.error.code,
+        missing: credentialsResult.error.missing,
         message:
+          credentialsResult.error.message ??
           "No Soundcore credentials configured. Store SOUNDCORE_AUTH_TOKEN, SOUNDCORE_UID, and SOUNDCORE_OPENUDID with TinyCloud Secrets.",
       });
       return;
     }
+    const credentials = credentialsResult.data;
 
     try {
       const includeEmpty = req.body?.includeEmpty === true;

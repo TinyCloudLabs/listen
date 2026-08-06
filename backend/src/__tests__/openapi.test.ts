@@ -23,6 +23,7 @@ describe("OpenAPI spec", () => {
     expect(paths).toContain("/api/server-info");
     expect(paths).toContain("/api/delegations");
     expect(paths).toContain("/api/delegations/status");
+    expect(paths).toContain("/api/workspace-state");
     expect(paths).toContain("/api/webhooks/fireflies");
     expect(paths).toContain("/api/webhooks/fireflies/pending");
     expect(paths).toContain("/api/config/webhook-secret");
@@ -42,10 +43,42 @@ describe("OpenAPI spec", () => {
     expect(delegations.delete).toBeDefined();
   });
 
+  test("documents stored-copy removal and the authoritative workspace state", () => {
+    const paths = spec.paths as Record<string, Record<string, any>>;
+    expect(paths["/api/delegations"].delete.responses["200"].description).toBe(
+      "Stored delegation copy removed",
+    );
+    expect(paths["/api/delegations"].delete.responses["500"].description).toBe(
+      "Stored-copy removal failed",
+    );
+    expect(
+      paths["/api/workspace-state"].get.responses["200"].content["application/json"].schema.$ref,
+    ).toBe("#/components/schemas/WorkspaceStateResponse");
+    expect(paths["/api/workspace-state"].get.responses["503"].description).toBe(
+      "Operational workspace state dependencies are temporarily unavailable",
+    );
+    expect(
+      paths["/api/workspace-state"].get.responses["503"].content["application/json"].schema.$ref,
+    ).toBe("#/components/schemas/ApiError");
+  });
+
+  test("documents delegation status read failures", () => {
+    const paths = spec.paths as Record<string, Record<string, any>>;
+    expect(paths["/api/delegations/status"].get.responses["500"].description).toBe(
+      "Delegation status read failed",
+    );
+    expect(
+      paths["/api/delegations/status"].get.responses["500"].content["application/json"].schema.$ref,
+    ).toBe("#/components/schemas/ApiError");
+  });
+
   test("defines all expected schemas", () => {
     const components = spec.components as Record<string, Record<string, unknown>>;
     const schemas = Object.keys(components.schemas as object);
     expect(schemas).toContain("DelegationResponse");
+    expect(schemas).toContain("WorkspaceStateResponse");
+    expect(schemas).toContain("WorkspaceDelegationState");
+    expect(schemas).toContain("WorkspaceSecretReadability");
     expect(schemas).toContain("Manifest");
     expect(schemas).toContain("PermissionEntry");
     expect(schemas).toContain("ServerInfo");
@@ -56,6 +89,24 @@ describe("OpenAPI spec", () => {
     expect(schemas).toContain("SyncResult");
     expect(schemas).toContain("PendingProcessResult");
     expect(schemas).toContain("WebhookStatus");
+  });
+
+  test("uses OpenAPI 3.1 JSON Schema unions for nullable response fields", () => {
+    const schemas = (spec.components as Record<string, any>).schemas;
+    expect(schemas.DelegationResponse.properties.expiresAt.type).toEqual(["string", "null"]);
+    expect(schemas.WorkspaceDelegationState.properties.expiresAt.type).toEqual(["string", "null"]);
+    expect(schemas.WorkspaceSecretReadability.properties.readable.type).toEqual([
+      "boolean",
+      "null",
+    ]);
+    expect(JSON.stringify(schemas)).not.toContain('"nullable"');
+  });
+
+  test("documents optional Google Meet workspace-state errors", () => {
+    const schemas = (spec.components as Record<string, any>).schemas;
+    expect(schemas.WorkspaceStateResponse.properties.googleMeet.properties.error).toEqual({
+      type: "string",
+    });
   });
 
   test("webhook POST endpoint has no security (public, HMAC-verified)", () => {

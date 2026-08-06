@@ -55,6 +55,7 @@ const SECRET_KV_KEYS: Record<string, string> = {
   ASSEMBLYAI_API_KEY: "config/assemblyai-key",
   DEEPGRAM_API_KEY: "config/deepgram-key",
 };
+let secretResultOverride: ((name: string) => Promise<any>) | null = null;
 
 function mockAuthMiddleware(req: Request, _res: Response, next: NextFunction) {
   req.user = { sub: TEST_SUB };
@@ -67,6 +68,7 @@ function createApp(mockKV: ReturnType<typeof createMockKV>) {
       kv: mockKV,
       secrets: {
         get: async (secretName: string) => {
+          if (secretResultOverride) return secretResultOverride(secretName);
           const result = await mockKV.get(SECRET_KV_KEYS[secretName] ?? secretName);
           if (result.ok) return { ok: true, data: result.data?.data };
           if (result.error?.code === "KV_NOT_FOUND") {
@@ -114,6 +116,7 @@ describe("Config Routes", () => {
   let port: number;
 
   beforeEach(async () => {
+    secretResultOverride = null;
     mockKV = createMockKV();
     const app = createApp(mockKV);
     ({ server, port } = await startServer(app));
@@ -142,24 +145,24 @@ describe("Config Routes", () => {
       expect(await res.json()).toEqual({ exists: false });
     });
 
-    it("returns 500 when TinyCloud rejects the existence check", async () => {
+    it("returns 503 when TinyCloud rejects the existence check", async () => {
       mockKV._failNextGet("delegation missing kv/get");
 
       const res = await fetch(`http://localhost:${port}/api/config/fireflies-key/exists`);
 
-      expect(res.status).toBe(500);
+      expect(res.status).toBe(503);
       const body = await res.json();
-      expect(body.error).toBe("check_failed");
+      expect(body.error).toBe("secret_unavailable");
     });
 
-    it("returns 500 when decrypt access is denied", async () => {
+    it("returns 503 when decrypt access is denied", async () => {
       mockKV._failNextGet("decrypt denied");
 
       const res = await fetch(`http://localhost:${port}/api/config/fireflies-key/exists`);
 
-      expect(res.status).toBe(500);
+      expect(res.status).toBe(503);
       const body = await res.json();
-      expect(body.error).toBe("check_failed");
+      expect(body.error).toBe("secret_unavailable");
     });
 
     it("does not reveal the key value", async () => {
@@ -170,6 +173,21 @@ describe("Config Routes", () => {
       const body = await res.json();
       expect(JSON.stringify(body)).not.toContain("secret-api-key");
     });
+
+    it.each(["", undefined, { value: "malformed" }])(
+      "returns 503 for a malformed successful secret payload (%s)",
+      async (data) => {
+        secretResultOverride = async () => ({ ok: true, data });
+
+        const res = await fetch(`http://localhost:${port}/api/config/fireflies-key/exists`);
+
+        expect(res.status).toBe(503);
+        expect(await res.json()).toMatchObject({
+          error: "secret_unavailable",
+          secretCode: "INVALID_SECRET_RESPONSE",
+        });
+      },
+    );
   });
 
   describe("GET /api/config transcription key existence", () => {

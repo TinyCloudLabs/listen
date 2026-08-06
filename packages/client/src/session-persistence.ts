@@ -18,9 +18,9 @@ const TC_SESSION_KEY_PREFIX = "tinycloud:session:";
 /**
  * Check if a TinyCloud session is persisted in BrowserSessionStorage.
  *
- * SDK's signIn() always creates a fresh SIWE session — it never reads
- * from BrowserSessionStorage. So we read localStorage directly and
- * return the session metadata needed for a headless restore.
+ * SDK sign-in restores BrowserSessionStorage first, but does not validate the
+ * restored parent against the node. We read the metadata directly so the app
+ * can run its explicit restore-and-validation path before accepting it.
  */
 export function loadPersistedSession(address: string): PersistedTinyCloudSession | null {
   try {

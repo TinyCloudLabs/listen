@@ -6,6 +6,7 @@ interface InboxBulkBarProps {
   onCopySummaries: () => void;
   onCredentialedShare?: () => void;
   onClear: () => void;
+  mutationsDisabled?: boolean;
 }
 
 export const InboxBulkBar: FC<InboxBulkBarProps> = ({
@@ -14,6 +15,7 @@ export const InboxBulkBar: FC<InboxBulkBarProps> = ({
   onCopySummaries,
   onCredentialedShare,
   onClear,
+  mutationsDisabled = false,
 }) => (
   <div style={s.wrap} role="region" aria-label="Bulk actions">
     <input type="checkbox" checked readOnly style={s.checkbox} />
@@ -28,7 +30,12 @@ export const InboxBulkBar: FC<InboxBulkBarProps> = ({
       Copy summaries
     </button>
     {onCredentialedShare && (
-      <button type="button" style={s.btn} onClick={onCredentialedShare}>
+      <button
+        type="button"
+        style={{ ...s.btn, ...(mutationsDisabled ? s.btnDisabled : {}) }}
+        disabled={mutationsDisabled}
+        onClick={onCredentialedShare}
+      >
         Credentialed share
       </button>
     )}

@@ -67,7 +67,8 @@ paths:
       summary: Submit a delegation to the backend
       description: |
         Receive a serialized PortableDelegation, verify it, and store it.
-        The delegation is activated immediately and cached.
+        The delegation is activated when the node is available; activation may
+        remain pending after the durable row is accepted.
       tags: [Delegations]
       parameters:
         - $ref: "#/components/parameters/CsrfHeader"
@@ -84,7 +85,7 @@ paths:
                   description: Serialized PortableDelegation string
       responses:
         "200":
-          description: Delegation stored and activated
+          description: Delegation stored; activation may be active or pending
           content:
             application/json:
               schema:
@@ -104,6 +105,18 @@ paths:
                   value:
                     error: invalid_delegation
                     message: Failed to process delegation
+        "503":
+          description: Delegation storage is temporarily unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: A newer delegation or removal superseded this activation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -113,14 +126,14 @@ paths:
 
     delete:
       operationId: revokeDelegation
-      summary: Revoke the current delegation
-      description: Removes the stored delegation and evicts the cache entry.
+      summary: Remove the stored delegation copy
+      description: Removes the backend's stored delegation copy and evicts its cache entry. It does not revoke an already-issued cryptographic delegation.
       tags: [Delegations]
       parameters:
         - $ref: "#/components/parameters/CsrfHeader"
       responses:
         "200":
-          description: Delegation revoked
+          description: Stored delegation copy removed
           content:
             application/json:
               schema:
@@ -135,7 +148,7 @@ paths:
         "429":
           $ref: "#/components/responses/DelegationRateLimited"
         "500":
-          description: Revocation failed
+          description: Stored-copy removal failed
           content:
             application/json:
               schema:
@@ -146,8 +159,8 @@ paths:
       operationId: getDelegationStatus
       summary: Check delegation status
       description: |
-        Returns whether an active delegation exists for the authenticated user.
-        Auto-cleans expired delegations.
+        Returns the durable delegation status for the authenticated user without
+        deleting expired or policy-stale rows.
       tags: [Delegations]
       responses:
         "200":
@@ -173,6 +186,45 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "429":
           $ref: "#/components/responses/DelegationRateLimited"
+        "500":
+          description: Delegation status read failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/workspace-state:
+    get:
+      operationId: getWorkspaceState
+      summary: Resolve the current workspace delegation and access state
+      description: |
+        Returns the durable delegation classification, current activation state,
+        backend secret readability, Google Meet availability, and conversation
+        presence. This read never deletes expired or policy-stale delegation rows.
+      tags: [Delegations]
+      responses:
+        "200":
+          description: Authoritative workspace lifecycle state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceStateResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          description: Operational workspace state dependencies are temporarily unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "500":
+          description: Workspace state is temporarily unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
 
   # ── Webhook endpoints ─────────────────────────────────────────────
 
@@ -398,11 +450,98 @@ components:
       properties:
         status:
           type: string
-          enum: [active, expired, none]
+          enum: [active, expired, stale, none]
         expiresAt:
-          type: string
+          type: [string, "null"]
           format: date-time
-          nullable: true
+        activation:
+          type: string
+          enum: [active, pending, failed, unknown]
+
+    WorkspaceStateResponse:
+      type: object
+      required: [delegation, backendReadableSecrets, googleMeet, conversations]
+      properties:
+        delegation:
+          $ref: "#/components/schemas/WorkspaceDelegationState"
+        backendReadableSecrets:
+          type: object
+          required:
+            [
+              fireflies,
+              granola,
+              soundcoreSession,
+              soundcoreAuthToken,
+              soundcoreUid,
+              soundcoreOpenudid,
+              assemblyai,
+              deepgram,
+            ]
+          properties:
+            fireflies:
+              $ref: "#/components/schemas/WorkspaceSecretReadability"
+            granola:
+              $ref: "#/components/schemas/WorkspaceSecretReadability"
+            soundcoreSession:
+              $ref: "#/components/schemas/WorkspaceSecretReadability"
+            soundcoreAuthToken:
+              $ref: "#/components/schemas/WorkspaceSecretReadability"
+            soundcoreUid:
+              $ref: "#/components/schemas/WorkspaceSecretReadability"
+            soundcoreOpenudid:
+              $ref: "#/components/schemas/WorkspaceSecretReadability"
+            assemblyai:
+              $ref: "#/components/schemas/WorkspaceSecretReadability"
+            deepgram:
+              $ref: "#/components/schemas/WorkspaceSecretReadability"
+        googleMeet:
+          type: object
+          required: [available, connected]
+          properties:
+            available:
+              type: boolean
+            connected:
+              type: [boolean, "null"]
+            error:
+              type: string
+        conversations:
+          type: object
+          required: [hasAny, total]
+          properties:
+            hasAny:
+              type: [boolean, "null"]
+            total:
+              type: [integer, "null"]
+              minimum: 0
+
+    WorkspaceDelegationState:
+      type: object
+      required: [status, stored, validPolicy, expiresAt, activation]
+      properties:
+        status:
+          type: string
+          enum: [active, expired, stale, none]
+        stored:
+          type: boolean
+        validPolicy:
+          type: boolean
+        expiresAt:
+          type: [string, "null"]
+          format: date-time
+        activation:
+          type: string
+          enum: [active, pending, failed, unknown]
+        error:
+          type: string
+
+    WorkspaceSecretReadability:
+      type: object
+      required: [readable]
+      properties:
+        readable:
+          type: [boolean, "null"]
+        error:
+          type: string
 
     ServerInfo:
       type: object
@@ -508,7 +647,15 @@ components:
           enum: [pending]
         reason:
           type: string
-          enum: [delegation_expired, no_api_key]
+          enum:
+            [
+              delegation_expired,
+              delegation_unavailable,
+              no_delegation,
+              no_api_key,
+              no_google_tokens,
+              auth_revoked,
+            ]
 
     WebhookIgnored:
       type: object

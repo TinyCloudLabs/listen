@@ -13,12 +13,15 @@ mock.module("@tinycloud/node-sdk", () => ({
 }));
 
 import express from "express";
+import { delegationContentIdentity } from "@listen/server";
 import type { Server } from "http";
 import type { Request, Response, NextFunction } from "express";
 import { createDelegationMiddleware } from "../middleware/delegation.js";
+import { createDelegationActivator } from "../delegation-activation.js";
 import { backendDelegationPolicyHash } from "../manifest.js";
 
 interface StoredEntry {
+  revision: string;
   serialized: string;
   grantedAt: string;
   expiresAt: string;
@@ -29,18 +32,22 @@ interface StoredEntry {
 
 function createMockDelegationStore() {
   const data = new Map<string, StoredEntry>();
+  let revision = 0;
 
   return {
     _data: data,
     store: async (identifier: string, serialized: string, metadata: any) => {
-      data.set(identifier, {
+      const entry = {
+        revision: `revision-${++revision}`,
         serialized,
         grantedAt: metadata.grantedAt ?? new Date().toISOString(),
         expiresAt: metadata.expiresAt,
         actions: metadata.actions,
         path: metadata.path,
         policyHash: metadata.policyHash,
-      });
+      };
+      data.set(identifier, entry);
+      return entry;
     },
     load: async (identifier: string) => {
       return data.get(identifier) ?? null;
@@ -57,16 +64,23 @@ function createMockDelegationStore() {
 }
 
 function createMockDelegationCache() {
-  const cache = new Map<string, any>();
+  const cache = new Map<string, { identity: string; revision: string; access: any }>();
 
   return {
     _cache: cache,
-    get: (key: string) => cache.get(key) ?? null,
-    set: (key: string, access: any) => {
-      cache.set(key, access);
+    get: (key: string, identity: string, revision: string) => {
+      const entry = cache.get(key);
+      if (!entry || entry.identity !== identity || entry.revision !== revision) return null;
+      return entry.access;
+    },
+    set: (key: string, identity: string, revision: string, access: any) => {
+      cache.set(key, { identity, revision, access });
     },
     evict: (key: string) => {
       cache.delete(key);
+    },
+    evictIfRevision: (key: string, revision: string) => {
+      if (cache.get(key)?.revision === revision) cache.delete(key);
     },
     has: (key: string) => cache.has(key),
     clear: () => cache.clear(),
@@ -88,17 +102,23 @@ function mockAuthMiddleware(req: Request, _res: Response, next: NextFunction) {
 function createApp(
   store: ReturnType<typeof createMockDelegationStore>,
   cache: ReturnType<typeof createMockDelegationCache>,
+  activationTimeoutMs?: number,
 ) {
   const mockUseDelegation = mock(async () => ({
     kv: {},
     sql: {},
   }));
   const app = express();
+  const activator = createDelegationActivator(
+    { useDelegation: mockUseDelegation } as any,
+    cache as any,
+  );
   const delegationMiddleware = createDelegationMiddleware({
-    node: { useDelegation: mockUseDelegation } as any,
     store: store as any,
     cache: cache as any,
+    activator,
     backendDid: TEST_DID,
+    activationTimeoutMs,
   });
 
   app.use(mockAuthMiddleware);
@@ -154,7 +174,11 @@ describe("Delegation Middleware", () => {
       path: "",
       policyHash: backendDelegationPolicyHash(TEST_DID, TEST_PRINCIPAL_DID),
     });
-    cache.set(TEST_ADDRESS, { kv: {}, sql: {} });
+    const current = await store.load(TEST_ADDRESS);
+    cache.set(TEST_ADDRESS, delegationContentIdentity("current-delegation"), current!.revision, {
+      kv: {},
+      sql: {},
+    });
 
     const res = await fetch(`${baseUrl}/protected`);
     const body = await res.json();
@@ -165,53 +189,74 @@ describe("Delegation Middleware", () => {
     expect(mockUseDelegation).not.toHaveBeenCalled();
   });
 
-  it("evicts a cached delegation when the stored policy is stale", async () => {
+  it("does not mutate a cache entry when the stored policy is stale", async () => {
     await store.store(TEST_ADDRESS, "old-delegation", {
       expiresAt: new Date(Date.now() + 1000).toISOString(),
       actions: [],
       path: "",
       policyHash: "old-policy",
     });
-    cache.set(TEST_ADDRESS, { kv: {}, sql: {} });
+    cache.set(TEST_ADDRESS, "test-identity", "test-revision", { kv: {}, sql: {} });
 
     const res = await fetch(`${baseUrl}/protected`);
     const body = await res.json();
 
     expect(res.status).toBe(403);
     expect(body.error).toBe("delegation_stale");
-    expect(await store.load(TEST_ADDRESS)).toBeNull();
-    expect(cache.has(TEST_ADDRESS)).toBe(false);
+    expect(await store.load(TEST_ADDRESS)).not.toBeNull();
+    expect(cache.has(TEST_ADDRESS)).toBe(true);
     expect(mockUseDelegation).not.toHaveBeenCalled();
   });
 
-  it("evicts a cached delegation when the stored delegation is expired", async () => {
+  it("does not mutate a cache entry when the stored delegation is expired", async () => {
     await store.store(TEST_ADDRESS, "expired-delegation", {
       expiresAt: new Date(Date.now() - 1000).toISOString(),
       actions: [],
       path: "",
       policyHash: backendDelegationPolicyHash(TEST_DID, TEST_PRINCIPAL_DID),
     });
-    cache.set(TEST_ADDRESS, { kv: {}, sql: {} });
+    cache.set(TEST_ADDRESS, "test-identity", "test-revision", { kv: {}, sql: {} });
 
     const res = await fetch(`${baseUrl}/protected`);
     const body = await res.json();
 
     expect(res.status).toBe(401);
     expect(body.error).toBe("delegation_expired");
-    expect(await store.load(TEST_ADDRESS)).toBeNull();
-    expect(cache.has(TEST_ADDRESS)).toBe(false);
+    expect(await store.load(TEST_ADDRESS)).not.toBeNull();
+    expect(cache.has(TEST_ADDRESS)).toBe(true);
     expect(mockUseDelegation).not.toHaveBeenCalled();
   });
 
-  it("evicts a cached delegation when the stored delegation is missing", async () => {
-    cache.set(TEST_ADDRESS, { kv: {}, sql: {} });
+  it("does not mutate a cache entry when the stored delegation is missing", async () => {
+    cache.set(TEST_ADDRESS, "test-identity", "test-revision", { kv: {}, sql: {} });
 
     const res = await fetch(`${baseUrl}/protected`);
     const body = await res.json();
 
     expect(res.status).toBe(403);
     expect(body.error).toBe("no_delegation");
-    expect(cache.has(TEST_ADDRESS)).toBe(false);
+    expect(cache.has(TEST_ADDRESS)).toBe(true);
     expect(mockUseDelegation).not.toHaveBeenCalled();
+  });
+
+  it("returns 504 when activation exceeds the middleware timeout", async () => {
+    await store.store(TEST_ADDRESS, "slow-delegation", {
+      expiresAt: new Date(Date.now() + 1000).toISOString(),
+      actions: [],
+      path: "",
+      policyHash: backendDelegationPolicyHash(TEST_DID, TEST_PRINCIPAL_DID),
+    });
+    const slowApp = createApp(store, cache, 5);
+    slowApp.mockUseDelegation.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve({ kv: {}, sql: {} }), 50)),
+    );
+    const slowServer = await startServer(slowApp.app);
+    try {
+      const res = await fetch(`http://localhost:${slowServer.port}/protected`);
+      expect(res.status).toBe(504);
+      expect((await res.json()).error).toBe("gateway_timeout");
+    } finally {
+      await closeServer(slowServer.server);
+    }
   });
 });

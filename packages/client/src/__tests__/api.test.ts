@@ -190,9 +190,15 @@ describe("createApiClient", () => {
 
     const client = createApiClient(backendUrl, { sessionStore });
 
-    await expect(client.get("/protected")).rejects.toThrow(
-      "Session expired. Please sign in again.",
-    );
+    try {
+      await client.get("/protected");
+      throw new Error("expected request to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiRequestError);
+      expect((err as ApiRequestError).status).toBe(401);
+      expect((err as ApiRequestError).code).toBe("unauthorized");
+      expect((err as ApiRequestError).message).toBe("API error (401): Token expired");
+    }
     expect(clearCalled).toBe(true);
   });
 
@@ -226,6 +232,120 @@ describe("createApiClient", () => {
       expect((err as ApiRequestError).message).toBe("API error (401): Delegation has expired.");
     }
     expect(clearCalled).toBe(false);
+  });
+
+  test("throws ApiRequestError with code session_expired when the local session is expired and clears the session", async () => {
+    let clearCalled = false;
+    let fetchCalls = 0;
+
+    globalThis.fetch = (async () => {
+      fetchCalls += 1;
+      return new Response(null, { status: 200 });
+    }) as typeof fetch;
+
+    const sessionStore = createMockSessionStore({
+      isExpired: () => true,
+      clear: () => {
+        clearCalled = true;
+      },
+    });
+
+    const client = createApiClient(backendUrl, { sessionStore });
+
+    try {
+      await client.get("/protected");
+      throw new Error("expected request to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiRequestError);
+      expect((err as ApiRequestError).status).toBe(401);
+      expect((err as ApiRequestError).code).toBe("session_expired");
+      expect((err as ApiRequestError).message).toBe("Session expired. Please sign in again.");
+    }
+    expect(clearCalled).toBe(true);
+    expect(fetchCalls).toBe(0);
+  });
+
+  test("throws ApiRequestError with code missing_token when no token is present", async () => {
+    let fetchCalls = 0;
+
+    globalThis.fetch = (async () => {
+      fetchCalls += 1;
+      return new Response(null, { status: 200 });
+    }) as typeof fetch;
+
+    const sessionStore = createMockSessionStore({
+      getToken: () => null,
+    });
+
+    const client = createApiClient(backendUrl, { sessionStore });
+
+    try {
+      await client.get("/protected");
+      throw new Error("expected request to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiRequestError);
+      expect((err as ApiRequestError).status).toBe(401);
+      expect((err as ApiRequestError).code).toBe("missing_token");
+      expect((err as ApiRequestError).message).toBe("Not authenticated. Please sign in.");
+    }
+    expect(fetchCalls).toBe(0);
+  });
+
+  test("throws ApiRequestError with the backend code on 401 invalid_token and clears the session", async () => {
+    let clearCalled = false;
+
+    globalThis.fetch = (async () => {
+      return new Response(
+        JSON.stringify({ error: "invalid_token", message: "Invalid or expired token" }),
+        { status: 401, headers: { "Content-Type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    const sessionStore = createMockSessionStore({
+      clear: () => {
+        clearCalled = true;
+      },
+    });
+
+    const client = createApiClient(backendUrl, { sessionStore });
+
+    try {
+      await client.get("/protected");
+      throw new Error("expected request to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiRequestError);
+      expect((err as ApiRequestError).status).toBe(401);
+      expect((err as ApiRequestError).code).toBe("invalid_token");
+      expect((err as ApiRequestError).message).toBe("API error (401): Invalid or expired token");
+    }
+    expect(clearCalled).toBe(true);
+  });
+
+  test("throws ApiRequestError with code unauthorized when a 401 body cannot be parsed", async () => {
+    let clearCalled = false;
+
+    globalThis.fetch = (async () => {
+      return new Response("nope", { status: 401, statusText: "Unauthorized" });
+    }) as typeof fetch;
+
+    const sessionStore = createMockSessionStore({
+      clear: () => {
+        clearCalled = true;
+      },
+    });
+
+    const client = createApiClient(backendUrl, { sessionStore });
+
+    try {
+      await client.get("/protected");
+      throw new Error("expected request to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiRequestError);
+      expect((err as ApiRequestError).status).toBe(401);
+      expect((err as ApiRequestError).code).toBe("unauthorized");
+      expect((err as ApiRequestError).message).toBe("API error (401): Unauthorized");
+    }
+    expect(clearCalled).toBe(true);
   });
 
   // ── Non-ok errors carry status + code ──────────────────────────────

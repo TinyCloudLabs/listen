@@ -1,6 +1,11 @@
 import { describe, test, expect, beforeEach } from "bun:test";
-import { DelegationCache } from "../delegation-cache.js";
+import { DelegationCache, delegationContentIdentity } from "../delegation-cache.js";
 import type { DelegatedAccess } from "@tinycloud/node-sdk";
+
+const IDENTITY_A = "sha256:a";
+const IDENTITY_B = "sha256:b";
+const REVISION_A = "revision-a";
+const REVISION_B = "revision-b";
 
 function makeDelegatedAccess(): DelegatedAccess {
   return { kv: { fake: "kv" }, sql: { fake: "sql" } };
@@ -14,95 +19,115 @@ describe("DelegationCache", () => {
   });
 
   test("get returns null for unknown address", () => {
-    expect(cache.get("0xUnknown")).toBeNull();
+    expect(cache.get("0xUnknown", IDENTITY_A, REVISION_A)).toBeNull();
   });
 
   test("set + get stores and retrieves DelegatedAccess", () => {
     const access = makeDelegatedAccess();
-    cache.set("0xABC", access);
-    expect(cache.get("0xABC")).toBe(access);
+    cache.set("0xABC", IDENTITY_A, REVISION_A, access);
+    expect(cache.get("0xABC", IDENTITY_A, REVISION_A)).toBe(access);
   });
 
   test("keys are case-sensitive (JWT sub values)", () => {
     const access = makeDelegatedAccess();
-    cache.set("user-ABC", access);
+    cache.set("user-ABC", IDENTITY_A, REVISION_A, access);
 
-    expect(cache.get("user-ABC")).toBe(access);
-    expect(cache.get("user-abc")).toBeNull();
+    expect(cache.get("user-ABC", IDENTITY_A, REVISION_A)).toBe(access);
+    expect(cache.get("user-abc", IDENTITY_A, REVISION_A)).toBeNull();
+  });
+
+  test("same address with a replacement identity misses", () => {
+    const access = makeDelegatedAccess();
+    cache.set("0xABC", IDENTITY_A, REVISION_A, access);
+
+    expect(cache.get("0xABC", IDENTITY_B, REVISION_A)).toBeNull();
+    expect(cache.has("0xABC", IDENTITY_B, REVISION_A)).toBe(false);
+    expect(cache.get("0xABC", IDENTITY_A, REVISION_A)).toBe(access);
+  });
+
+  test("same content with a new durable revision misses", () => {
+    cache.set("0xABC", IDENTITY_A, REVISION_A, makeDelegatedAccess());
+    expect(cache.get("0xABC", IDENTITY_A, REVISION_B)).toBeNull();
+  });
+
+  test("evictIfRevision preserves a newer replacement", () => {
+    cache.set("0xABC", IDENTITY_B, REVISION_B, makeDelegatedAccess());
+
+    cache.evictIfRevision("0xABC", REVISION_A);
+    expect(cache.get("0xABC", IDENTITY_B, REVISION_B)).not.toBeNull();
+
+    cache.evictIfRevision("0xABC", REVISION_B);
+    expect(cache.get("0xABC", IDENTITY_B, REVISION_B)).toBeNull();
+  });
+
+  test("content identity changes with exact serialized content", () => {
+    expect(delegationContentIdentity("grant-a")).not.toBe(delegationContentIdentity("grant-a "));
   });
 
   test("get returns null after TTL expires", async () => {
-    const shortCache = new DelegationCache(50); // 50ms TTL
+    const shortCache = new DelegationCache(50);
     const access = makeDelegatedAccess();
-    shortCache.set("0xABC", access);
+    shortCache.set("0xABC", IDENTITY_A, REVISION_A, access);
 
-    expect(shortCache.get("0xABC")).toBe(access);
-
+    expect(shortCache.get("0xABC", IDENTITY_A, REVISION_A)).toBe(access);
     await new Promise((r) => setTimeout(r, 60));
-
-    expect(shortCache.get("0xABC")).toBeNull();
+    expect(shortCache.get("0xABC", IDENTITY_A, REVISION_A)).toBeNull();
   });
 
   test("evict removes an entry", () => {
     const access = makeDelegatedAccess();
-    cache.set("0xABC", access);
-    expect(cache.get("0xABC")).toBe(access);
+    cache.set("0xABC", IDENTITY_A, REVISION_A, access);
+    expect(cache.get("0xABC", IDENTITY_A, REVISION_A)).toBe(access);
 
     cache.evict("0xABC");
-    expect(cache.get("0xABC")).toBeNull();
+    expect(cache.get("0xABC", IDENTITY_A, REVISION_A)).toBeNull();
   });
 
   test("evict requires exact key match", () => {
-    cache.set("user-ABC", makeDelegatedAccess());
+    cache.set("user-ABC", IDENTITY_A, REVISION_A, makeDelegatedAccess());
     cache.evict("user-abc");
-    expect(cache.get("user-ABC")).not.toBeNull(); // different case = different key
+    expect(cache.get("user-ABC", IDENTITY_A, REVISION_A)).not.toBeNull();
 
     cache.evict("user-ABC");
-    expect(cache.get("user-ABC")).toBeNull();
+    expect(cache.get("user-ABC", IDENTITY_A, REVISION_A)).toBeNull();
   });
 
   test("has returns true for a cached entry", () => {
-    cache.set("0xABC", makeDelegatedAccess());
-    expect(cache.has("0xABC")).toBe(true);
+    cache.set("0xABC", IDENTITY_A, REVISION_A, makeDelegatedAccess());
+    expect(cache.has("0xABC", IDENTITY_A, REVISION_A)).toBe(true);
   });
 
   test("has returns false for a missing entry", () => {
-    expect(cache.has("0xMissing")).toBe(false);
+    expect(cache.has("0xMissing", IDENTITY_A, REVISION_A)).toBe(false);
   });
 
   test("has returns false after TTL expires", async () => {
     const shortCache = new DelegationCache(50);
-    shortCache.set("0xABC", makeDelegatedAccess());
+    shortCache.set("0xABC", IDENTITY_A, REVISION_A, makeDelegatedAccess());
 
-    expect(shortCache.has("0xABC")).toBe(true);
-
+    expect(shortCache.has("0xABC", IDENTITY_A, REVISION_A)).toBe(true);
     await new Promise((r) => setTimeout(r, 60));
-
-    expect(shortCache.has("0xABC")).toBe(false);
+    expect(shortCache.has("0xABC", IDENTITY_A, REVISION_A)).toBe(false);
   });
 
   test("clear removes all entries", () => {
-    cache.set("0xA", makeDelegatedAccess());
-    cache.set("0xB", makeDelegatedAccess());
-    cache.set("0xC", makeDelegatedAccess());
+    cache.set("0xA", IDENTITY_A, REVISION_A, makeDelegatedAccess());
+    cache.set("0xB", IDENTITY_A, REVISION_A, makeDelegatedAccess());
+    cache.set("0xC", IDENTITY_A, REVISION_A, makeDelegatedAccess());
 
     expect(cache.size).toBe(3);
-
     cache.clear();
-
     expect(cache.size).toBe(0);
-    expect(cache.get("0xA")).toBeNull();
-    expect(cache.get("0xB")).toBeNull();
-    expect(cache.get("0xC")).toBeNull();
+    expect(cache.get("0xA", IDENTITY_A, REVISION_A)).toBeNull();
+    expect(cache.get("0xB", IDENTITY_A, REVISION_A)).toBeNull();
+    expect(cache.get("0xC", IDENTITY_A, REVISION_A)).toBeNull();
   });
 
   test("size returns count of entries", () => {
     expect(cache.size).toBe(0);
-
-    cache.set("0xA", makeDelegatedAccess());
+    cache.set("0xA", IDENTITY_A, REVISION_A, makeDelegatedAccess());
     expect(cache.size).toBe(1);
-
-    cache.set("0xB", makeDelegatedAccess());
+    cache.set("0xB", IDENTITY_A, REVISION_A, makeDelegatedAccess());
     expect(cache.size).toBe(2);
   });
 
@@ -112,36 +137,27 @@ describe("DelegationCache", () => {
     const a2 = makeDelegatedAccess();
     const a3 = makeDelegatedAccess();
 
-    smallCache.set("0xA", a1);
-    smallCache.set("0xB", a2);
-    smallCache.set("0xC", a3);
+    smallCache.set("0xA", IDENTITY_A, REVISION_A, a1);
+    smallCache.set("0xB", IDENTITY_A, REVISION_A, a2);
+    smallCache.set("0xC", IDENTITY_A, REVISION_A, a3);
+    smallCache.get("0xA", IDENTITY_A, REVISION_A);
 
-    // Access 0xA to move it to end (most recently used)
-    smallCache.get("0xA");
-
-    // Adding a 4th entry should evict 0xB (least recently used), not 0xA
     const a4 = makeDelegatedAccess();
-    smallCache.set("0xD", a4);
+    smallCache.set("0xD", IDENTITY_A, REVISION_A, a4);
 
-    expect(smallCache.get("0xA")).toBe(a1); // survived eviction
-    expect(smallCache.get("0xB")).toBeNull(); // evicted (LRU)
-    expect(smallCache.get("0xC")).not.toBeNull();
-    expect(smallCache.get("0xD")).toBe(a4);
+    expect(smallCache.get("0xA", IDENTITY_A, REVISION_A)).toBe(a1);
+    expect(smallCache.get("0xB", IDENTITY_A, REVISION_A)).toBeNull();
+    expect(smallCache.get("0xC", IDENTITY_A, REVISION_A)).not.toBeNull();
+    expect(smallCache.get("0xD", IDENTITY_A, REVISION_A)).toBe(a4);
   });
 
   test("TTL expiry auto-removes stale entries on get", async () => {
     const shortCache = new DelegationCache(50);
-    shortCache.set("0xStale", makeDelegatedAccess());
+    shortCache.set("0xStale", IDENTITY_A, REVISION_A, makeDelegatedAccess());
 
     await new Promise((r) => setTimeout(r, 60));
-
-    // size still shows 1 (not yet cleaned up)
     expect(shortCache.size).toBe(1);
-
-    // calling get triggers cleanup
-    expect(shortCache.get("0xStale")).toBeNull();
-
-    // now size should be 0
+    expect(shortCache.get("0xStale", IDENTITY_A, REVISION_A)).toBeNull();
     expect(shortCache.size).toBe(0);
   });
 });

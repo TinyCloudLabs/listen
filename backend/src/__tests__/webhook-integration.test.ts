@@ -326,10 +326,10 @@ describe("Webhook Integration Tests", () => {
     });
   });
 
-  // ── 2. Expired delegation → pending queue ─────────────────────
+  // ── 2. Missing delegation → pending queue ─────────────────────
 
-  describe("expired delegation → meetingId queued as pending", () => {
-    it("queues meetingId when delegation is expired", async () => {
+  describe("missing delegation → meetingId queued as pending", () => {
+    it("queues meetingId when no delegation is available", async () => {
       delegationActive = false;
 
       const res = await postWebhook({
@@ -340,7 +340,7 @@ describe("Webhook Integration Tests", () => {
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(json.status).toBe("pending");
-      expect(json.reason).toBe("delegation_expired");
+      expect(json.reason).toBe("no_delegation");
 
       // Verify meetingId was queued
       const pendingRaw = backendKV._data.get(PENDING_KV_KEY);

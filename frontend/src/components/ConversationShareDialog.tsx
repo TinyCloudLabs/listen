@@ -1,4 +1,4 @@
-import { useEffect, useState, type FC } from "react";
+import { useEffect, useRef, useState, type FC } from "react";
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
 import type { ApiClient } from "@listen/client";
 
@@ -15,6 +15,7 @@ interface ConversationShareDialogProps {
   tcw: TinyCloudWeb | null;
   conversationId: string | null;
   onClose: () => void;
+  mutationsDisabled?: boolean;
 }
 
 async function copyText(text: string): Promise<void> {
@@ -38,6 +39,7 @@ export const ConversationShareDialog: FC<ConversationShareDialogProps> = ({
   tcw,
   conversationId,
   onClose,
+  mutationsDisabled = false,
 }) => {
   const [detail, setDetail] = useState<ShareableConversationDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -47,6 +49,8 @@ export const ConversationShareDialog: FC<ConversationShareDialogProps> = ({
   const [includeTranscript, setIncludeTranscript] = useState(true);
   const [includeAudio, setIncludeAudio] = useState(true);
   const [durationDays, setDurationDays] = useState(7);
+  const mutationsDisabledRef = useRef(mutationsDisabled);
+  mutationsDisabledRef.current = mutationsDisabled;
 
   useEffect(() => {
     if (!conversationId) return;
@@ -79,10 +83,10 @@ export const ConversationShareDialog: FC<ConversationShareDialogProps> = ({
   const audioAvailable = hasShareableAudio(detail);
   const transcriptInSql = hasSqlTranscript(detail);
   const needsTranscriptKv = needsLegacyTranscriptKvGrant(detail);
-  const canCreate = Boolean(tcw && detail && !loading && !creating);
+  const canCreate = Boolean(tcw && detail && !loading && !creating && !mutationsDisabled);
 
   const createShare = async () => {
-    if (!tcw || !detail) return;
+    if (!tcw || !detail || mutationsDisabledRef.current) return;
     setCreating(true);
     setError(null);
     try {

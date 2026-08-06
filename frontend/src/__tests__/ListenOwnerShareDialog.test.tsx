@@ -309,4 +309,22 @@ describe("ListenOwnerShareDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: /Retry revoke/i }));
     expect(await screen.findByText(REVOKE_COPY)).toBeInTheDocument();
   });
+
+  it("keeps the owner-share dialog readable but blocks publish while unavailable", async () => {
+    render(
+      <ListenOwnerShareDialog
+        api={api({ "conversation-a": detail("conversation-a", "Planning") })}
+        tcw={tcw()}
+        conversationIds={["conversation-a"]}
+        onClose={vi.fn()}
+        mutationsDisabled
+      />,
+    );
+
+    await enterEmailDomain();
+    const publishButton = await screen.findByRole("button", { name: /Publish share/i });
+    expect(publishButton).toBeDisabled();
+    fireEvent.click(publishButton);
+    expect(ownerShareMocks.publishListenOwnerShare).not.toHaveBeenCalled();
+  });
 });

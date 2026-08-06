@@ -9,7 +9,7 @@ export {
 
 export { DelegationStore, type DelegationMetadata } from "./delegation-store.js";
 
-export { DelegationCache } from "./delegation-cache.js";
+export { DelegationCache, delegationContentIdentity } from "./delegation-cache.js";
 
 export type { DelegatedAccess } from "@tinycloud/node-sdk";
 

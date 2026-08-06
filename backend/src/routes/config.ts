@@ -14,9 +14,11 @@ import { updateConversationTranscriptFields } from "../services/persist-conversa
 import { TRANSCRIPTION_SECRET_NAMES } from "../services/transcription.js";
 import {
   deleteGoogleTokens,
+  GoogleTokenReadError,
   googleTokensExist,
   readGoogleTokens,
 } from "../services/google-tokens.js";
+import { readSourceSecretResult, type SourceSecretReader } from "../services/source-secret.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -109,31 +111,27 @@ function transcriptValueMissing(value: unknown): boolean {
 function createSecretExistsHandler(secretName: string, label: string) {
   return async (req: Request, res: Response) => {
     try {
-      const result = await req.delegatedAccess?.secrets?.get(secretName);
-      if (!result) {
-        res.status(500).json({
-          error: "check_failed",
-          message: "Delegation does not include TinyCloud Secrets access",
-        });
-        return;
-      }
+      const result = await readSourceSecretResult(
+        req.delegatedAccess?.secrets as SourceSecretReader | undefined,
+        secretName,
+      );
       if (!result.ok) {
-        const code = result.error?.code?.toLowerCase();
-        if (code === "key_not_found" || code === "not_found" || code === "grant_not_found") {
+        if (result.reason === "missing") {
           res.json({ exists: false });
           return;
         }
-        res.status(500).json({
-          error: "check_failed",
-          message: result.error?.message ?? "Failed to check API key existence in TinyCloud",
+        res.status(503).json({
+          error: "secret_unavailable",
+          secretCode: result.error.code,
+          message: result.error.message ?? "Failed to check API key existence in TinyCloud",
         });
         return;
       }
       res.json({ exists: true });
     } catch (err) {
       console.error(`[config] failed to check ${label} key:`, err);
-      res.status(500).json({
-        error: "check_failed",
+      res.status(503).json({
+        error: "secret_unavailable",
         message: "Failed to check API key existence",
       });
     }
@@ -143,41 +141,35 @@ function createSecretExistsHandler(secretName: string, label: string) {
 function createAllSecretsExistHandler(secretNames: readonly string[], label: string) {
   return async (req: Request, res: Response) => {
     try {
-      const secrets = req.delegatedAccess?.secrets;
-      if (!secrets?.get) {
-        res.status(500).json({
-          error: "check_failed",
-          message: "Delegation does not include TinyCloud Secrets access",
-        });
-        return;
-      }
-
-      const results = await Promise.all(secretNames.map((name) => secrets.get(name)));
-      const missing = secretNames.filter((_, index) => {
-        const result = results[index];
-        if (!result?.ok) return true;
-        return !result.data;
-      });
-
-      const unexpected = results.find((result: any) => {
-        if (result?.ok) return false;
-        const code = result?.error?.code?.toLowerCase();
-        return code !== "key_not_found" && code !== "not_found" && code !== "grant_not_found";
-      });
+      const results = await Promise.all(
+        secretNames.map((name) =>
+          readSourceSecretResult(
+            req.delegatedAccess?.secrets as SourceSecretReader | undefined,
+            name,
+          ),
+        ),
+      );
+      const unexpected = results.find((result) => !result.ok && result.reason === "unavailable");
 
       if (unexpected && !unexpected.ok) {
-        res.status(500).json({
-          error: "check_failed",
-          message: unexpected.error?.message ?? `Failed to check ${label} credentials`,
+        res.status(503).json({
+          error: "secret_unavailable",
+          secretCode: unexpected.error.code,
+          message: unexpected.error.message ?? `Failed to check ${label} credentials`,
         });
         return;
       }
+
+      const missing = secretNames.filter((_, index) => {
+        const result = results[index];
+        return !result.ok && result.reason === "missing";
+      });
 
       res.json({ exists: missing.length === 0, missing });
     } catch (err) {
       console.error(`[config] failed to check ${label} credentials:`, err);
-      res.status(500).json({
-        error: "check_failed",
+      res.status(503).json({
+        error: "secret_unavailable",
         message: "Failed to check credentials",
       });
     }
@@ -199,27 +191,24 @@ export async function checkAnySecretSetExists(
 ): Promise<SecretSetExistsResult> {
   const allNames = [...new Set(secretSets.flat())];
   const resultEntries = await Promise.all(
-    allNames.map(async (name) => [name, await secrets.get(name)] as const),
+    allNames.map(async (name) => [name, await readSourceSecretResult(secrets, name)] as const),
   );
   const results = new Map(resultEntries);
   const unexpected = resultEntries.find(([, result]) => {
-    if (result?.ok) return false;
-    const code = result?.error?.code?.toLowerCase();
-    return code !== "key_not_found" && code !== "not_found" && code !== "grant_not_found";
+    return !result.ok && result.reason === "unavailable";
   });
 
   if (unexpected && !unexpected[1].ok) {
     return {
       ok: false,
-      message: unexpected[1].error?.message ?? `Failed to check ${label} credentials`,
+      message: unexpected[1].error.message ?? `Failed to check ${label} credentials`,
     };
   }
 
   const missingSets = secretSets.map((secretNames) =>
     secretNames.filter((name) => {
       const result = results.get(name);
-      if (!result?.ok) return true;
-      return !result.data;
+      return Boolean(result && !result.ok && result.reason === "missing");
     }),
   );
   const matchedSet = missingSets.find((missing) => missing.length === 0);
@@ -239,8 +228,8 @@ function createAnySecretSetExistsHandler(
     try {
       const secrets = req.delegatedAccess?.secrets;
       if (!secrets?.get) {
-        res.status(500).json({
-          error: "check_failed",
+        res.status(503).json({
+          error: "missing_secret_access",
           message: "Delegation does not include TinyCloud Secrets access",
         });
         return;
@@ -248,8 +237,8 @@ function createAnySecretSetExistsHandler(
 
       const result = await checkAnySecretSetExists(secrets, secretSets, label);
       if (!result.ok) {
-        res.status(500).json({
-          error: "check_failed",
+        res.status(503).json({
+          error: "secret_unavailable",
           message: result.message,
         });
         return;
@@ -261,8 +250,8 @@ function createAnySecretSetExistsHandler(
       });
     } catch (err) {
       console.error(`[config] failed to check ${label} credentials:`, err);
-      res.status(500).json({
-        error: "check_failed",
+      res.status(503).json({
+        error: "secret_unavailable",
         message: "Failed to check credentials",
       });
     }
@@ -329,14 +318,13 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
     async (req: Request, res: Response) => {
       try {
         const connected = await googleTokensExist(req.delegatedAccess!);
-        if (connected === null) {
-          const message = "TinyCloud rejected the Google token lookup";
-          res.status(500).json({ error: "check_failed", message });
-          return;
-        }
         res.json({ connected });
       } catch (err) {
         console.error("[config] failed to check google-meet connection:", err);
+        if (err instanceof GoogleTokenReadError) {
+          res.status(503).json({ error: "google_tokens_unavailable", message: err.message });
+          return;
+        }
         res.status(500).json({ error: "check_failed", message: "Failed to check connection" });
       }
     },
@@ -386,6 +374,10 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
       res.json({ ok: true });
     } catch (err) {
       console.error("[config] failed to disconnect google-meet:", err);
+      if (err instanceof GoogleTokenReadError) {
+        res.status(503).json({ error: "google_tokens_unavailable", message: err.message });
+        return;
+      }
       res.status(500).json({ error: "disconnect_failed", message: "Failed to disconnect" });
     }
   });

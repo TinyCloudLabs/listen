@@ -122,6 +122,11 @@ async function mockListenBackend(page: Page): Promise<void> {
       return;
     }
 
+    if (/^\/api\/sync\/(fireflies|granola|google-meet)\/jobs\/current$/.test(url.pathname)) {
+      await fulfillJson(route, null);
+      return;
+    }
+
     if (url.pathname === `/api/conversations/${CONVERSATION_ID}`) {
       await fulfillJson(route, {
         conversation: {

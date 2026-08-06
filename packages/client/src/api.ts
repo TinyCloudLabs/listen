@@ -45,12 +45,12 @@ export function createApiClient(backendUrl: string, config: ApiClientConfig): Ap
   async function request<T>(path: string, init: RequestInit): Promise<T> {
     const token = sessionStore.getToken();
     if (!token) {
-      throw new Error("Not authenticated. Please sign in.");
+      throw new ApiRequestError(401, "missing_token", "Not authenticated. Please sign in.");
     }
 
     if (sessionStore.isExpired()) {
       sessionStore.clear();
-      throw new Error("Session expired. Please sign in again.");
+      throw new ApiRequestError(401, "session_expired", "Session expired. Please sign in again.");
     }
 
     const method = init.method ?? "GET";
@@ -80,7 +80,7 @@ export function createApiClient(backendUrl: string, config: ApiClientConfig): Ap
         throw new ApiRequestError(res.status, err.error, `API error (401): ${err.message}`);
       }
       sessionStore.clear();
-      throw new Error("Session expired. Please sign in again.");
+      throw new ApiRequestError(res.status, err.error, `API error (401): ${err.message}`);
     }
 
     if (!res.ok) {

@@ -13,7 +13,11 @@ import type { SyncSingleResult } from "../services/google-meet-sync.js";
 import { checkAndRenewSubscription as defaultCheckAndRenew } from "../services/pubsub-manager.js";
 import type { SubscriptionMetadata, RenewalResult } from "../services/pubsub-manager.js";
 import { getGoogleMeetWebhooksStatus } from "../services/google-meet-webhooks.js";
-import { readGoogleTokens, writeGoogleTokens } from "../services/google-tokens.js";
+import {
+  GoogleTokenReadError,
+  readGoogleTokens,
+  writeGoogleTokens,
+} from "../services/google-tokens.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -29,7 +33,11 @@ interface MeetClient {
 
 export interface GoogleMeetPushConfig {
   backendKV: BackendKV;
-  tryGetDelegatedAccess: () => Promise<DelegatedAccess | null>;
+  tryGetDelegatedAccess: () => Promise<
+    | DelegatedAccess
+    | null
+    | { access: DelegatedAccess | null; reason: "no_delegation" | "delegation_unavailable" }
+  >;
   expectedAudience: string;
   expectedEmail: string;
   /** Auth middleware for pending endpoints */
@@ -313,16 +321,42 @@ export function createGoogleMeetPushRouter(config: GoogleMeetPushConfig) {
     console.log(`[google-meet-webhook] processing conferenceRecordName=${conferenceRecordName}`);
 
     // 5. Get delegation access
-    const access = await tryGetDelegatedAccess();
+    let delegationResult:
+      | DelegatedAccess
+      | null
+      | { access: DelegatedAccess | null; reason: "no_delegation" | "delegation_unavailable" };
+    try {
+      delegationResult = await tryGetDelegatedAccess();
+    } catch (error) {
+      console.error("[google-meet-webhook] delegation lookup failed:", error);
+      delegationResult = { access: null, reason: "delegation_unavailable" };
+    }
+    const access =
+      delegationResult && typeof delegationResult === "object" && "access" in delegationResult
+        ? delegationResult.access
+        : delegationResult;
     if (!access) {
-      console.log("[google-meet-webhook] no delegation — queuing to pending");
+      const reason =
+        delegationResult && typeof delegationResult === "object" && "reason" in delegationResult
+          ? delegationResult.reason
+          : "no_delegation";
+      console.log(`[google-meet-webhook] delegation unavailable (${reason}) — queuing to pending`);
       await storePending(backendKV, conferenceRecordName);
-      res.json({ status: "pending", reason: "no_delegation" });
+      res.json({ status: "pending", reason });
       return;
     }
 
     // 6. Read Google tokens from the user's encrypted Listen secret.
-    const tokens = await readGoogleTokens(access);
+    let tokens;
+    try {
+      tokens = await readGoogleTokens(access);
+    } catch (error) {
+      if (error instanceof GoogleTokenReadError) {
+        res.status(503).json({ error: "google_tokens_unavailable", message: error.message });
+        return;
+      }
+      throw error;
+    }
     if (!tokens) {
       console.log("[google-meet-webhook] no Google tokens — queuing to pending");
       await storePending(backendKV, conferenceRecordName);
@@ -414,7 +448,16 @@ export function createGoogleMeetPushRouter(config: GoogleMeetPushConfig) {
       }
 
       // 2. Read Google tokens from the user's encrypted Listen secret.
-      const tokens = await readGoogleTokens(access);
+      let tokens;
+      try {
+        tokens = await readGoogleTokens(access);
+      } catch (error) {
+        if (error instanceof GoogleTokenReadError) {
+          res.status(503).json({ error: "google_tokens_unavailable", message: error.message });
+          return;
+        }
+        throw error;
+      }
       if (!tokens) {
         res
           .status(400)
@@ -481,7 +524,16 @@ export function createGoogleMeetPushRouter(config: GoogleMeetPushConfig) {
 
       // 2. Read Google tokens from the user's encrypted Listen secret.
       const access = req.delegatedAccess!;
-      const tokens = await readGoogleTokens(access);
+      let tokens;
+      try {
+        tokens = await readGoogleTokens(access);
+      } catch (error) {
+        if (error instanceof GoogleTokenReadError) {
+          res.status(503).json({ error: "google_tokens_unavailable", message: error.message });
+          return;
+        }
+        throw error;
+      }
       if (!tokens) {
         res
           .status(400)
@@ -538,7 +590,16 @@ export function createGoogleMeetPushRouter(config: GoogleMeetPushConfig) {
         }
       }
 
-      const tokens = await readGoogleTokens(req.delegatedAccess!);
+      let tokens;
+      try {
+        tokens = await readGoogleTokens(req.delegatedAccess!);
+      } catch (error) {
+        if (error instanceof GoogleTokenReadError) {
+          res.status(503).json({ error: "google_tokens_unavailable", message: error.message });
+          return;
+        }
+        throw error;
+      }
       let googleTokens = {
         exists: Boolean(tokens),
         parseable: false,

@@ -40,20 +40,25 @@ interface E2EState {
   liveConversationTitle: string;
   pids: StartedProcess[];
   tmpDir: string;
+  tinycloudDataDir: string;
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEST_DIR = resolve(__dirname, "..");
 const LISTEN_ROOT = resolve(TEST_DIR, "..");
-const TMP_DIR = resolve(TEST_DIR, ".tmp", "hooks-real-e2e");
+const E2E_MODE = process.env.LISTEN_E2E_MODE ?? "hooks";
+const TMP_DIR = resolve(
+  TEST_DIR,
+  ".tmp",
+  E2E_MODE === "browser-recovery" ? "browser-recovery-e2e" : "hooks-real-e2e",
+);
 const STATE_PATH = resolve(TMP_DIR, "state.json");
 const LOG_DIR = resolve(TMP_DIR, "logs");
 
-const DEFAULT_OWNER_PRIVATE_KEY =
-  "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const DEFAULT_BACKEND_PRIVATE_KEY =
   "0x8b3a350cf5c34c9194ca3a545d9f2bc5b642b3ee6cca3a637f1d2d1765f37c13";
 const DEFAULT_TINYCLOUD_NODE_SECRET = "dGlueWNsb3VkLWxpc3Rlbi1ob29rcy1lMmUtc3RhdGljLXNlY3JldC0zMg";
+const DEFAULT_TINYCLOUD_STARTUP_TIMEOUT_MS = 600_000;
 
 const pids: StartedProcess[] = [];
 
@@ -94,11 +99,10 @@ function startProcess(
     stdio: ["ignore", "pipe", "pipe"],
   });
 
-  child.stdout?.pipe(out);
-  child.stderr?.pipe(out);
-  child.once("exit", (code, signal) => {
-    out.write(`\n[${name}] exited code=${code ?? "null"} signal=${signal ?? "null"}\n`);
-    out.end();
+  child.stdout?.pipe(out, { end: false });
+  child.stderr?.pipe(out, { end: false });
+  child.once("close", (code, signal) => {
+    out.end(`\n[${name}] exited code=${code ?? "null"} signal=${signal ?? "null"}\n`);
   });
 
   if (!child.pid) {
@@ -106,6 +110,7 @@ function startProcess(
   }
 
   pids.push({ name, pid: child.pid });
+  writeFileSync(resolve(TMP_DIR, "pids.json"), JSON.stringify(pids, null, 2), { mode: 0o600 });
   return child;
 }
 
@@ -195,7 +200,10 @@ async function startTinyCloudNode(port: number): Promise<string> {
     },
   });
 
-  await waitForHttp(`${host}/version`, "TinyCloud node", 180_000);
+  const startupTimeoutMs =
+    Number(process.env.LISTEN_E2E_TINYCLOUD_STARTUP_TIMEOUT_MS) ||
+    DEFAULT_TINYCLOUD_STARTUP_TIMEOUT_MS;
+  await waitForHttp(`${host}/version`, "TinyCloud node", startupTimeoutMs);
   return host;
 }
 
@@ -288,6 +296,27 @@ async function createOwnerSession(input: {
   };
 }
 
+async function bootstrapOwnerAccount(input: {
+  tinycloudHost: string;
+  ownerPrivateKey: string;
+}): Promise<string> {
+  const signer = new PrivateKeySigner(input.ownerPrivateKey);
+  const owner = new TinyCloudNode({
+    privateKey: input.ownerPrivateKey,
+    host: input.tinycloudHost,
+    autoCreateSpace: true,
+    sessionStorage: new MemorySessionStorage(),
+  });
+
+  await owner.signIn();
+  if (owner.bootstrapSkipped) {
+    throw new Error(
+      `TinyCloud owner bootstrap did not complete: ${owner.bootstrapStatus.reason ?? "unknown reason"}`,
+    );
+  }
+  return signer.getAddress();
+}
+
 async function materializeBackendDelegation(
   owner: TinyCloudNode,
   target: {
@@ -297,9 +326,24 @@ async function materializeBackendDelegation(
   },
 ): Promise<string> {
   const groups = new Map<string, any[]>();
+  const seen = new Set<string>();
   for (const permission of target.permissions) {
-    const key = permission.space ?? "";
-    groups.set(key, [...(groups.get(key) ?? []), permission]);
+    // The SDK parses signed ReCaps as one action per resource entry. Ask for
+    // the same shape so its subset check can match the signed capabilities.
+    for (const action of permission.actions) {
+      const normalized = { ...permission, actions: [action] };
+      const identity = JSON.stringify({
+        service: normalized.service,
+        space: normalized.space ?? null,
+        path: normalized.path,
+        actions: normalized.actions,
+      });
+      if (seen.has(identity)) continue;
+      seen.add(identity);
+
+      const key = normalized.space ?? "";
+      groups.set(key, [...(groups.get(key) ?? []), normalized]);
+    }
   }
 
   const delegations = [];
@@ -357,7 +401,19 @@ export default async function globalSetup(): Promise<void> {
     process.env.LISTEN_E2E_BACKEND_URL ?? `http://127.0.0.1:${backendPort}`,
   );
   const tinycloudHost = await startTinyCloudNode(tinycloudPort);
+  const ownerPrivateKey = process.env.LISTEN_E2E_OWNER_PRIVATE_KEY;
+  if (!ownerPrivateKey) {
+    throw new Error(
+      "LISTEN_E2E_OWNER_PRIVATE_KEY is required. Load a disposable Ethereum test key from the secret manager; never use a production key.",
+    );
+  }
   const backendPrivateKey = process.env.BACKEND_PRIVATE_KEY ?? DEFAULT_BACKEND_PRIVATE_KEY;
+
+  // The browser-style signer path intentionally skips canonical client
+  // bootstrap because interactive wallets would otherwise require many
+  // signatures. Provision the disposable Ethereum test owner first, then
+  // exercise Listen's normal signer/delegation path against that account.
+  const bootstrappedAddress = await bootstrapOwnerAccount({ tinycloudHost, ownerPrivateKey });
 
   startProcess("listen-backend", "bun src/index.ts", {
     cwd: resolve(LISTEN_ROOT, "backend"),
@@ -370,16 +426,6 @@ export default async function globalSetup(): Promise<void> {
   });
   await waitForHttp(`${backendURL}/healthz`, "Listen backend");
 
-  const owner = await createOwnerSession({
-    backendURL,
-    tinycloudHost,
-    ownerPrivateKey: process.env.LISTEN_E2E_OWNER_PRIVATE_KEY ?? DEFAULT_OWNER_PRIVATE_KEY,
-  });
-
-  const initialConversationTitle = `Hooks E2E initial ${Date.now()}`;
-  const liveConversationTitle = `Hooks E2E live ${Date.now()}`;
-  await importTranscript(backendURL, owner.listenToken, initialConversationTitle);
-
   startProcess("listen-frontend", `bun run dev -- --host 127.0.0.1 --port ${frontendPort}`, {
     cwd: resolve(LISTEN_ROOT, "frontend"),
     env: {
@@ -390,6 +436,40 @@ export default async function globalSetup(): Promise<void> {
     },
   });
   await waitForHttp(baseURL, "Listen frontend");
+
+  if (E2E_MODE === "browser-recovery") {
+    writeFileSync(
+      STATE_PATH,
+      JSON.stringify(
+        {
+          baseURL,
+          backendURL,
+          tinycloudHost,
+          address: bootstrappedAddress,
+          pids,
+          tmpDir: TMP_DIR,
+          tinycloudDataDir: resolve(TMP_DIR, "tinycloud-node"),
+          tinycloudRepo: tinycloudNodeRepo(),
+          tinycloudPort,
+        },
+        null,
+        2,
+      ),
+      { mode: 0o600 },
+    );
+    writeFileSync(resolve(TMP_DIR, "pids.json"), JSON.stringify(pids, null, 2), { mode: 0o600 });
+    return;
+  }
+
+  const owner = await createOwnerSession({
+    backendURL,
+    tinycloudHost,
+    ownerPrivateKey,
+  });
+
+  const initialConversationTitle = `Hooks E2E initial ${Date.now()}`;
+  const liveConversationTitle = `Hooks E2E live ${Date.now()}`;
+  await importTranscript(backendURL, owner.listenToken, initialConversationTitle);
 
   const state: E2EState = {
     baseURL,
@@ -407,10 +487,11 @@ export default async function globalSetup(): Promise<void> {
     liveConversationTitle,
     pids,
     tmpDir: TMP_DIR,
+    tinycloudDataDir: resolve(TMP_DIR, "tinycloud-node"),
   };
 
-  writeFileSync(STATE_PATH, JSON.stringify(state, null, 2));
-  writeFileSync(resolve(TMP_DIR, "pids.json"), JSON.stringify(pids, null, 2));
+  writeFileSync(STATE_PATH, JSON.stringify(state, null, 2), { mode: 0o600 });
+  writeFileSync(resolve(TMP_DIR, "pids.json"), JSON.stringify(pids, null, 2), { mode: 0o600 });
 
   // Surface the state location in the setup log for local debugging.
   writeFileSync(

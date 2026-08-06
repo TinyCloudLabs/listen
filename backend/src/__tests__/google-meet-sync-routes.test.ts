@@ -12,7 +12,7 @@ function createMockKV() {
     _data: data,
     get: async (key: string) => {
       const val = data.get(key);
-      if (val === undefined) return { ok: true, data: { data: null } };
+      if (val === undefined) return { ok: false, error: { code: "KV_NOT_FOUND" } };
       return { ok: true, data: { data: val } };
     },
     put: async (key: string, value: string) => {

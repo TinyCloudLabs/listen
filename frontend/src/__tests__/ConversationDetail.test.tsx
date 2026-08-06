@@ -237,6 +237,43 @@ describe("ConversationDetail", () => {
     });
   });
 
+  it("keeps read content mounted while disabling title, repair, and share writes", async () => {
+    const put = vi.fn();
+    const post = vi.fn();
+    const onShare = vi.fn();
+    api = mockApi({
+      get: vi.fn().mockResolvedValue({
+        ...DETAIL_RESPONSE,
+        transcript_status: {
+          available: false,
+          missing: true,
+          repairable: true,
+          message: "Transcript content is missing.",
+        },
+      }),
+      put,
+      post,
+    });
+
+    render(
+      <ConversationDetail
+        api={api}
+        conversationId="01ABC"
+        onBack={onBack}
+        onShare={onShare}
+        mutationsDisabled
+      />,
+    );
+
+    expect(await screen.findByText("Sprint Planning")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /rename conversation/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Share$/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /recover from fireflies/i })).toBeDisabled();
+    expect(put).not.toHaveBeenCalled();
+    expect(post).not.toHaveBeenCalled();
+    expect(onShare).not.toHaveBeenCalled();
+  });
+
   it("renders summary section with HTML", async () => {
     api = mockApi({ get: vi.fn().mockResolvedValue(DETAIL_RESPONSE) });
 
@@ -531,6 +568,27 @@ describe("ConversationDetail", () => {
     await waitFor(() => {
       expect(screen.getByText(/network error/i)).toBeInTheDocument();
     });
+  });
+
+  it("retries loading after an error", async () => {
+    const getMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Network error"))
+      .mockResolvedValueOnce(DETAIL_RESPONSE);
+    api = mockApi({ get: getMock });
+
+    render(<ConversationDetail api={api} conversationId="01ABC" onBack={onBack} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/network error/i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
+    });
+    expect(getMock).toHaveBeenCalledTimes(2);
   });
 
   // ── New dynamic source link test ─────────────────────────────────

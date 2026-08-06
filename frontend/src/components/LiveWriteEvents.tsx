@@ -8,6 +8,7 @@ interface LiveWriteEventsProps {
   spaceId?: string | null;
   pathPrefix: string | null;
   onWrite: () => void;
+  onError?: (error: unknown) => void;
 }
 
 type Status = "idle" | "connecting" | "live" | "error";
@@ -76,6 +77,7 @@ export const LiveWriteEvents: FC<LiveWriteEventsProps> = ({
   spaceId,
   pathPrefix,
   onWrite,
+  onError,
 }) => {
   const [status, setStatus] = useState<Status>("idle");
   const [events, setEvents] = useState<HookEvent[]>([]);
@@ -85,9 +87,13 @@ export const LiveWriteEvents: FC<LiveWriteEventsProps> = ({
   // Keep `onWrite` in a ref so the subscribe effect doesn't re-run on every
   // parent re-render that produces a new callback identity.
   const onWriteRef = useRef(onWrite);
+  const onErrorRef = useRef(onError);
   useEffect(() => {
     onWriteRef.current = onWrite;
   }, [onWrite]);
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
 
   // Tick once a second so relative timestamps in the list stay fresh.
   useEffect(() => {
@@ -160,6 +166,7 @@ export const LiveWriteEvents: FC<LiveWriteEventsProps> = ({
         // Aborts triggered by our own cleanup are expected — they are not
         // errors. Any other throw is real and surfaces in the UI.
         if (ctrl.signal.aborted) return;
+        onErrorRef.current?.(err);
         setStatus("error");
         setError(err instanceof Error ? err.message : String(err));
       }

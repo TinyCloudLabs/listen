@@ -169,7 +169,9 @@ describe("ConversationList", () => {
 
     await waitFor(() => {
       expect(screen.getByText(/no conversations yet/i)).toBeInTheDocument();
-      expect(screen.getByText(/sync your first meetings above/i)).toBeInTheDocument();
+      expect(
+        screen.getByText(/connect a source or add a transcript to get started/i),
+      ).toBeInTheDocument();
     });
   });
 
@@ -388,6 +390,30 @@ describe("ConversationList", () => {
     });
   });
 
+  it("retries loading after an error", async () => {
+    const getMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Network error"))
+      .mockResolvedValueOnce({
+        conversations: [CONVERSATIONS[0]],
+        total: 1,
+      });
+    api = mockApi({ get: getMock });
+
+    render(<ConversationList api={api} onSelectConversation={onSelectConversation} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/network error/i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Sprint Planning")).toBeInTheDocument();
+    });
+    expect(getMock).toHaveBeenCalledTimes(2);
+  });
+
   it("shows conversation count header", async () => {
     api = mockApi({
       get: vi.fn().mockResolvedValue({
@@ -574,6 +600,28 @@ describe("ConversationList", () => {
     expect(onSelectConversation).not.toHaveBeenCalled();
   });
 
+  it("disables credentialed bulk sharing without blocking read selection", async () => {
+    const onShareSelectedConversations = vi.fn();
+    api = mockApi({
+      get: vi.fn().mockResolvedValue({ conversations: CONVERSATIONS, total: CONVERSATIONS.length }),
+    });
+    render(
+      <ConversationList
+        api={api}
+        onSelectConversation={onSelectConversation}
+        onShareSelectedConversations={onShareSelectedConversations}
+        mutationsDisabled
+      />,
+    );
+
+    await screen.findByText("Sprint Planning");
+    fireEvent.click(screen.getByLabelText(/select sprint planning/i));
+    const shareButton = await screen.findByRole("button", { name: /credentialed share/i });
+    expect(shareButton).toBeDisabled();
+    fireEvent.click(shareButton);
+    expect(onShareSelectedConversations).not.toHaveBeenCalled();
+  });
+
   it("opens a right-click context menu on row", async () => {
     api = mockApi({
       get: vi.fn().mockResolvedValue({ conversations: CONVERSATIONS, total: CONVERSATIONS.length }),
@@ -588,5 +636,27 @@ describe("ConversationList", () => {
 
     expect(screen.getByText(/open transcript/i)).toBeInTheDocument();
     expect(screen.getByText(/copy summary/i)).toBeInTheDocument();
+  });
+
+  it("blocks per-conversation sharing while keeping the context menu readable", async () => {
+    const onShareConversation = vi.fn();
+    api = mockApi({
+      get: vi.fn().mockResolvedValue({ conversations: CONVERSATIONS, total: CONVERSATIONS.length }),
+    });
+    render(
+      <ConversationList
+        api={api}
+        onSelectConversation={onSelectConversation}
+        onShareConversation={onShareConversation}
+        mutationsDisabled
+      />,
+    );
+
+    await screen.findByText("Sprint Planning");
+    fireEvent.contextMenu(screen.getByText("Sprint Planning"));
+    const share = screen.getByRole("menuitem", { name: /share/i });
+    expect(share).toBeDisabled();
+    fireEvent.click(share);
+    expect(onShareConversation).not.toHaveBeenCalled();
   });
 });

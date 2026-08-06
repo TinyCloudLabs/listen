@@ -2,7 +2,11 @@ import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
 import { OtterApiError, OtterClient } from "../services/otter-client.js";
 import type { OtterCookie } from "../services/otter-secret.js";
-import { deleteOtterCookie, readOtterCookie, writeOtterCookie } from "../services/otter-secret.js";
+import {
+  deleteOtterCookie,
+  readOtterCookieResult,
+  writeOtterCookie,
+} from "../services/otter-secret.js";
 
 interface OtterRoutesConfig {
   authMiddleware: RequestHandler;
@@ -30,15 +34,23 @@ export function createOtterRouter(config: OtterRoutesConfig) {
 
   // GET /api/otter/user — connection test using the sealed cookie.
   router.get("/user", async (req: Request, res: Response) => {
-    const cookie = await readOtterCookie(req.delegatedAccess);
-    if (!cookie) {
+    const cookieResult = await readOtterCookieResult(req.delegatedAccess);
+    if (!cookieResult.ok && cookieResult.reason === "missing") {
       res.status(404).json({
         error: "no_cookie",
         message: "No Otter cookie configured. Store one via PUT /api/otter/cookie.",
       });
       return;
     }
-    await respondWithAccount(res, makeClient(cookie));
+    if (!cookieResult.ok) {
+      res.status(503).json({
+        error: "otter_secret_unavailable",
+        secretCode: cookieResult.error.code,
+        message: cookieResult.error.message ?? "Otter cookie is temporarily unavailable.",
+      });
+      return;
+    }
+    await respondWithAccount(res, makeClient(cookieResult.data));
   });
 
   // PUT /api/otter/cookie — validate the cookie against Otter, then seal it.
@@ -62,8 +74,19 @@ export function createOtterRouter(config: OtterRoutesConfig) {
 
   // DELETE /api/otter/cookie — disconnect.
   router.delete("/cookie", async (req: Request, res: Response) => {
-    await deleteOtterCookie(req.delegatedAccess);
-    res.json({ connected: false });
+    try {
+      await deleteOtterCookie(req.delegatedAccess);
+      res.json({ connected: false });
+    } catch (error) {
+      res.status(503).json({
+        error: "otter_secret_unavailable",
+        secretCode:
+          typeof (error as { code?: unknown })?.code === "string"
+            ? (error as { code: string }).code
+            : "secret_delete_failed",
+        message: "Otter cookie is temporarily unavailable.",
+      });
+    }
   });
 
   return router;

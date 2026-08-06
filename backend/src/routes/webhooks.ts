@@ -6,10 +6,7 @@ import { syncSingleTranscript, type SyncSingleResult } from "../services/sync-pi
 import { FirefliesClient } from "../services/fireflies-client.js";
 import { resolveAppPath } from "../manifest.js";
 import { conversationSql, ensureSchema } from "../schema.js";
-import {
-  readFirefliesApiKey,
-  readFirefliesApiKeyFromAccess,
-} from "../services/fireflies-secret.js";
+import { readFirefliesApiKeyResult } from "../services/fireflies-secret.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -20,7 +17,14 @@ interface BackendKV {
 
 interface WebhookRoutesConfig {
   backendKV: BackendKV;
-  tryGetDelegatedAccess: () => Promise<DelegatedAccess | null>;
+  tryGetDelegatedAccess: () => Promise<
+    | DelegatedAccess
+    | null
+    | {
+        access: DelegatedAccess | null;
+        reason: "ready" | "no_delegation" | "delegation_unavailable";
+      }
+  >;
   /** Auth middleware for pending endpoints (not needed for POST webhook) */
   authMiddleware?: RequestHandler;
   /** Delegation middleware for pending endpoints */
@@ -33,6 +37,20 @@ interface WebhookRoutesConfig {
   ) => Promise<SyncSingleResult>;
   /** Override for testing */
   createClient?: (apiKey: string) => Pick<FirefliesClient, "getTranscript">;
+}
+
+type FirefliesDelegationResult = {
+  access: DelegatedAccess | null;
+  reason: "ready" | "no_delegation" | "delegation_unavailable";
+};
+
+function isDelegationResult(value: unknown): value is FirefliesDelegationResult {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "access" in value &&
+    (value as { reason?: unknown }).reason !== undefined
+  );
 }
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -144,37 +162,52 @@ export function createWebhookRouter(config: WebhookRoutesConfig) {
 
       // 6. Check delegation
       try {
-        const access = await tryGetDelegatedAccess();
+        const resolved = await tryGetDelegatedAccess();
+        const delegation: FirefliesDelegationResult = isDelegationResult(resolved)
+          ? resolved
+          : { access: resolved, reason: "no_delegation" };
 
-        if (!access) {
-          console.log(`[webhook] delegation expired — queuing meetingId=${meetingId}`);
+        if (!delegation.access) {
+          console.log(
+            `[webhook] delegation unavailable (${delegation.reason}) — queuing meetingId=${meetingId}`,
+          );
           await storePending(backendKV, meetingId);
-          res.json({ status: "pending", reason: "delegation_expired" });
+          res.json({ status: "pending", reason: delegation.reason });
           return;
         }
 
         // 7. Read Fireflies API key from user's TinyCloud Secrets
-        const apiKey = await readFirefliesApiKeyFromAccess(access);
+        const secret = await readFirefliesApiKeyResult(delegation.access);
+        if (!secret.ok && secret.reason === "unavailable") {
+          res.status(503).json({
+            status: "error",
+            error: "fireflies_secret_unavailable",
+            secretCode: secret.error.code,
+            message: secret.error.message ?? "Fireflies API key is temporarily unavailable.",
+          });
+          return;
+        }
 
-        if (!apiKey) {
+        if (!secret.ok) {
           console.log(`[webhook] no Fireflies API key found — queuing meetingId=${meetingId}`);
           await storePending(backendKV, meetingId);
           res.json({ status: "pending", reason: "no_api_key" });
           return;
         }
+        const apiKey = secret.data;
 
         // 8. Sync or update transcript
-        await ensureSchema(access);
+        await ensureSchema(delegation.access);
         const client = makeClient(apiKey);
 
         const isSummaryEvent = eventType === "meeting.summarized";
 
         if (isSummaryEvent) {
           // Summary event — update existing conversation with summary data
-          const updated = await updateSummary(meetingId, access, client);
+          const updated = await updateSummary(meetingId, delegation.access, client);
           if (updated === "not_found") {
             // Conversation not synced yet — fall through to full sync
-            const result = await doSync(meetingId, access, client);
+            const result = await doSync(meetingId, delegation.access, client);
             if (result.status === "error") {
               console.log(`[webhook] sync error for meetingId=${meetingId}: ${result.error}`);
               res.status(500).json({ status: "error", error: result.error });
@@ -198,7 +231,7 @@ export function createWebhookRouter(config: WebhookRoutesConfig) {
           }
         } else {
           // Transcription event — create new conversation
-          const result = await doSync(meetingId, access, client);
+          const result = await doSync(meetingId, delegation.access, client);
           if (result.status === "error") {
             console.log(`[webhook] sync error for meetingId=${meetingId}: ${result.error}`);
             res.status(500).json({ status: "error", error: result.error });
@@ -240,15 +273,24 @@ export function createWebhookRouter(config: WebhookRoutesConfig) {
       }
 
       // 2. Get Fireflies API key from user's TinyCloud Secrets
-      const apiKey = await readFirefliesApiKey(req);
+      const secret = await readFirefliesApiKeyResult(req.delegatedAccess);
+      if (!secret.ok && secret.reason === "unavailable") {
+        res.status(503).json({
+          error: "fireflies_secret_unavailable",
+          secretCode: secret.error.code,
+          message: secret.error.message ?? "Fireflies API key is temporarily unavailable.",
+        });
+        return;
+      }
 
-      if (!apiKey) {
+      if (!secret.ok) {
         res.status(400).json({
           error: "no_api_key",
           message: "Fireflies API key not configured",
         });
         return;
       }
+      const apiKey = secret.data;
 
       // 3. Process each pending item
       await ensureSchema(access);

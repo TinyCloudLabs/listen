@@ -10,6 +10,7 @@ import { syncSingleConference } from "../services/google-meet-sync.js";
 import { resolveAppPath } from "../manifest.js";
 import {
   deleteGoogleTokens,
+  GoogleTokenReadError,
   LEGACY_GOOGLE_TOKENS_PATH,
   readGoogleTokens,
   writeGoogleTokens,
@@ -559,6 +560,10 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
 
       res.status(202).json(job);
     } catch (err) {
+      if (err instanceof GoogleTokenReadError) {
+        res.status(503).json({ error: "google_tokens_unavailable", message: err.message });
+        return;
+      }
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: "sync_job_failed", message });
     }
@@ -609,6 +614,10 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
 
       res.json(job);
     } catch (err) {
+      if (err instanceof GoogleTokenReadError) {
+        res.status(503).json({ error: "google_tokens_unavailable", message: err.message });
+        return;
+      }
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: "sync_job_read_failed", message });
     }
@@ -696,17 +705,16 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
 
     const access = req.delegatedAccess!;
 
-    // 1. Read tokens from encrypted Listen secret.
-    const tokens = await readGoogleTokens(access);
-    if (!tokens) {
-      res.status(404).json({
-        error: "no_tokens",
-        message: "No Google tokens configured. Connect your Google account first.",
-      });
-      return;
-    }
-
     try {
+      // 1. Read tokens from encrypted Listen secret.
+      const tokens = await readGoogleTokens(access);
+      if (!tokens) {
+        res.status(404).json({
+          error: "no_tokens",
+          message: "No Google tokens configured. Connect your Google account first.",
+        });
+        return;
+      }
       await ensureSchema(access);
       const sqlDb = conversationSql(access);
 
@@ -744,6 +752,10 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
 
       res.json(result);
     } catch (err) {
+      if (err instanceof GoogleTokenReadError) {
+        res.status(503).json({ error: "google_tokens_unavailable", message: err.message });
+        return;
+      }
       if (err instanceof GoogleAuthRevokedError) {
         await deleteGoogleTokens(access);
         res.status(401).json({
@@ -865,6 +877,11 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
         sendEvent("error", {
           code: "google_auth_revoked",
           message: "Google authorization has been revoked. Please reconnect.",
+        });
+      } else if (err instanceof GoogleTokenReadError) {
+        sendEvent("error", {
+          code: "google_tokens_unavailable",
+          message: err.message,
         });
       } else {
         const message = err instanceof Error ? err.message : String(err);

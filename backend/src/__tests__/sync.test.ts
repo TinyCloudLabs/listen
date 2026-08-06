@@ -292,6 +292,7 @@ function createMockClientFactory() {
 
 const TEST_ADDRESS = "0xTEST";
 const KV_KEY = "config/fireflies-key";
+let secretReadOverride: (() => Promise<any>) | null = null;
 
 function mockAuthMiddleware(req: Request, _res: Response, next: NextFunction) {
   req.user = { address: TEST_ADDRESS };
@@ -304,12 +305,14 @@ function createApp(
   clientFactory: ReturnType<typeof createMockClientFactory>,
   backendKV?: ReturnType<typeof createMockKV>,
 ) {
+  secretReadOverride = null;
   const mockDelegationMiddleware = (req: Request, _res: Response, next: NextFunction) => {
     req.delegatedAccess = {
       kv: mockKV,
       sql: mockSQL,
       secrets: {
         get: async () => {
+          if (secretReadOverride) return secretReadOverride();
           const val = mockKV._data.get(KV_KEY);
           if (val === undefined) return { ok: false, error: { code: "KEY_NOT_FOUND" } };
           return { ok: true, data: val };
@@ -996,6 +999,25 @@ describe("Sync Routes — Fireflies background jobs", () => {
     await closeServer(server);
   });
 
+  it("returns 503 instead of starting a job when the Fireflies secret read is unavailable", async () => {
+    secretReadOverride = async () => ({
+      ok: false,
+      error: { code: "timeout", message: "secret read timed out" },
+    });
+
+    const res = await fetch(`http://localhost:${port}/api/sync/fireflies/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "incremental" }),
+    });
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({
+      error: "fireflies_secret_unavailable",
+      secretCode: "timeout",
+    });
+  });
+
   it("starts a backend-owned Fireflies job and exposes completion after the request returns", async () => {
     mockKV._data.set(KV_KEY, "test-api-key");
     const summaries = [
@@ -1248,15 +1270,11 @@ describe("Sync Routes — GET /api/sync/fireflies/stream", () => {
     expect(lastProgress.data.total).toBe(2);
   });
 
-  it("sends error event when no API key configured", async () => {
+  it("returns 404 when no API key is configured", async () => {
     // No key set
     const res = await fetch(`http://localhost:${port}/api/sync/fireflies/stream`);
-    const text = await res.text();
-    const events = parseSSEText(text);
-
-    const errorEvent = events.find((e) => e.type === "error");
-    expect(errorEvent).toBeDefined();
-    expect(errorEvent!.data.message).toContain("API key");
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ error: "no_api_key" });
   });
 
   it("paginates across multiple batches using listAllTranscripts", async () => {

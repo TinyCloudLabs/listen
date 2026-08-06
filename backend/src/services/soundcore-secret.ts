@@ -1,4 +1,3 @@
-import type { Request } from "express";
 import type { DelegatedAccess } from "@listen/server";
 import {
   SOUNDCORE_AUTH_TOKEN_SECRET_NAME,
@@ -15,14 +14,13 @@ const SOUNDCORE_SECRET_NAMES = [
   SOUNDCORE_OPENUDID_SECRET_NAME,
 ] as const;
 
-export async function readSoundcoreCredentials(req: Request): Promise<SoundcoreCredentials | null> {
-  const result = await readSoundcoreCredentialsResult(req.delegatedAccess);
-  return result.ok ? result.data : null;
-}
-
 export type SoundcoreCredentialsResult =
   | { ok: true; data: SoundcoreCredentials }
-  | { ok: false; error: { code?: string; message?: string; missing?: string[] } };
+  | {
+      ok: false;
+      reason: "missing" | "operational";
+      error: { code?: string; message?: string; missing?: string[] };
+    };
 
 export async function readSoundcoreCredentialsResult(
   access: (DelegatedAccess & { secrets?: { get(name: string): Promise<any> } }) | undefined,
@@ -33,13 +31,17 @@ export async function readSoundcoreCredentialsResult(
     if (parsed) return { ok: true, data: parsed };
     return {
       ok: false,
+      reason: "operational",
       error: {
         code: "INVALID_SOUNDCORE_SESSION",
-        missing: [SOUNDCORE_SESSION_SECRET_NAME],
         message:
           "Soundcore credentials are malformed. Re-save the Soundcore session headers in Listen.",
       },
     };
+  }
+
+  if (sessionResult.reason !== "missing") {
+    return { ok: false, reason: "operational", error: sessionResult.error };
   }
 
   const results = await Promise.all(
@@ -54,9 +56,11 @@ export async function readSoundcoreCredentialsResult(
   for (const [name, result] of results) {
     if (result.ok) {
       values.set(name, result.data);
-    } else {
+    } else if (result.reason === "missing") {
       missing.push(name);
       firstError ??= result;
+    } else {
+      return { ok: false, reason: "operational", error: result.error };
     }
   }
 
@@ -64,6 +68,7 @@ export async function readSoundcoreCredentialsResult(
     const error = firstError && !firstError.ok ? firstError.error : {};
     return {
       ok: false,
+      reason: "missing",
       error: {
         code: error.code,
         missing,

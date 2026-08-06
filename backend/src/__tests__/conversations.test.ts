@@ -136,6 +136,8 @@ function createApp(
   mockSQL: ReturnType<typeof createMockSQL>,
   opts: {
     secrets?: Map<string, string>;
+    secretReadError?: unknown;
+    secretReadResult?: unknown;
     transcriptionProviders?: Parameters<
       typeof createConversationsRouter
     >[0]["transcriptionProviders"];
@@ -150,6 +152,8 @@ function createApp(
       sql: mockSQL,
       secrets: {
         get: async (name: string) => {
+          if (opts.secretReadError) throw opts.secretReadError;
+          if (opts.secretReadResult !== undefined) return opts.secretReadResult;
           const value = opts.secrets?.get(name);
           if (!value) return { ok: false, error: { code: "key_not_found" } };
           return { ok: true, data: value };
@@ -947,6 +951,27 @@ describe("Conversations Routes — POST /api/conversations/:id/transcript/repair
     const stored = JSON.parse(mockKV._data.get("xyz.tinycloud.listen/transcript/conv-1")!);
     expect(stored[0].text).toBe("Recovered transcript");
   });
+
+  it("returns 503 instead of no_api_key when repair cannot read the Fireflies secret", async () => {
+    mockKV = createMockKV();
+    mockSQL = createMockSQL({
+      detailRow: { id: "conv-1", source: "fireflies", source_id: "ff-123" },
+    });
+    const app = createApp(mockKV, mockSQL, {
+      secretReadError: Object.assign(new Error("grant missing"), { code: "grant_not_found" }),
+    });
+    ({ server, port } = await startServer(app));
+
+    const res = await fetch(`http://localhost:${port}/api/conversations/conv-1/transcript/repair`, {
+      method: "POST",
+    });
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({
+      error: "fireflies_secret_unavailable",
+      secretCode: "grant_not_found",
+    });
+  });
 });
 
 // ── Tests — POST /api/conversations/import ─────────────────────────
@@ -1147,6 +1172,31 @@ describe("Conversations Routes — POST /api/conversations/transcribe", () => {
     const body = await res.json();
     expect(body.error).toBe("missing_provider_key");
     expect(body.message).toContain("DEEPGRAM_API_KEY");
+  });
+
+  it("returns 503 when the selected provider returns a malformed successful secret payload", async () => {
+    mockKV = createMockKV();
+    mockSQL = createMockSQL();
+    const app = createApp(mockKV, mockSQL, {
+      secretReadResult: { ok: true, data: "" },
+    });
+    ({ server, port } = await startServer(app));
+
+    const res = await fetch(`http://localhost:${port}/api/conversations/transcribe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: "deepgram",
+        fileName: "call.wav",
+        contentBase64: "YXVkaW8=",
+      }),
+    });
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({
+      error: "transcription_secret_unavailable",
+      secretCode: "INVALID_SECRET_RESPONSE",
+    });
   });
 });
 

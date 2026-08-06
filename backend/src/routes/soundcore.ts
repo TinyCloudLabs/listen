@@ -26,8 +26,11 @@ export function createSoundcoreRouter(config: SoundcoreRoutesConfig) {
   router.get("/status", async (req: Request, res: Response) => {
     const credentials = await readSoundcoreCredentialsResult(req.delegatedAccess);
     if (!credentials.ok) {
-      res.status(404).json({
-        error: "no_soundcore_credentials",
+      res.status(credentials.reason === "operational" ? 503 : 404).json({
+        error:
+          credentials.reason === "operational"
+            ? "soundcore_credentials_unavailable"
+            : "no_soundcore_credentials",
         secretCode: credentials.error.code,
         missing: credentials.error.missing,
         message: credentials.error.message,

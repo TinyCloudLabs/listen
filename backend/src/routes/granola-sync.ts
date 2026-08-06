@@ -5,7 +5,8 @@ import { randomUUID } from "node:crypto";
 import { conversationSql, ensureSchema } from "../schema.js";
 import { GranolaApiError, GranolaClient } from "../services/granola-client.js";
 import type { GranolaNoteSummary } from "../services/granola-client.js";
-import { readGranolaApiKey } from "../services/granola-secret.js";
+import { readGranolaApiKeyResult } from "../services/granola-secret.js";
+import type { SourceSecretResult } from "../services/source-secret.js";
 import { persistGranolaNote } from "../services/granola-sync.js";
 import { resolveAppPath } from "../manifest.js";
 
@@ -29,6 +30,21 @@ interface BackendKV {
     ok: boolean;
     error?: { code?: string; message?: string };
   }>;
+}
+
+function sendGranolaSecretFailure(res: Response, result: SourceSecretResult): boolean {
+  if (result.ok) return false;
+  const missing = result.reason === "missing";
+  res.status(missing ? 404 : 503).json({
+    error: missing ? "no_api_key" : "granola_secret_unavailable",
+    secretCode: result.error.code,
+    message:
+      result.error.message ??
+      (missing
+        ? "No Granola API key configured. Store GRANOLA_API_KEY with TinyCloud Secrets."
+        : "Granola API key is temporarily unavailable."),
+  });
+  return true;
 }
 
 type GranolaSyncJobStatus = "queued" | "listing" | "syncing" | "completed" | "failed" | "canceled";
@@ -412,8 +428,12 @@ export function createGranolaSyncRouter(config: GranolaSyncRoutesConfig) {
 
       if (isActiveJob(current)) {
         if (!runningGranolaJobs.has(ownerAddress)) {
-          const apiKey = await readGranolaApiKey(req);
-          if (!apiKey) {
+          const secret = await readGranolaApiKeyResult(req.delegatedAccess);
+          if (!secret.ok && secret.reason === "unavailable") {
+            sendGranolaSecretFailure(res, secret);
+            return;
+          }
+          if (!secret.ok) {
             const failedJob = {
               ...current,
               status: "failed" as const,
@@ -431,7 +451,7 @@ export function createGranolaSyncRouter(config: GranolaSyncRoutesConfig) {
             runningJobs: runningGranolaJobs,
             job: current,
             access: req.delegatedAccess!,
-            client: makeClient(apiKey),
+            client: makeClient(secret.data),
             persistJob: persistGranolaJob,
           });
         }
@@ -440,14 +460,12 @@ export function createGranolaSyncRouter(config: GranolaSyncRoutesConfig) {
         return;
       }
 
-      const apiKey = await readGranolaApiKey(req);
-      if (!apiKey) {
-        res.status(404).json({
-          error: "no_api_key",
-          message: "No Granola API key configured.",
-        });
+      const secret = await readGranolaApiKeyResult(req.delegatedAccess);
+      if (!secret.ok) {
+        sendGranolaSecretFailure(res, secret);
         return;
       }
+      const apiKey = secret.data;
 
       const job = createQueuedJob(ownerAddress, mode);
       await persistGranolaJob(job);
@@ -479,16 +497,16 @@ export function createGranolaSyncRouter(config: GranolaSyncRoutesConfig) {
       const ownerAddress = normalizeOwnerAddress(req);
       const job = await readCurrentGranolaJob(ownerAddress);
       if (isActiveJob(job) && !runningGranolaJobs.has(ownerAddress)) {
-        const apiKey = await readGranolaApiKey(req);
-        if (apiKey) {
+        const secret = await readGranolaApiKeyResult(req.delegatedAccess);
+        if (secret.ok) {
           runGranolaJob({
             runningJobs: runningGranolaJobs,
             job,
             access: req.delegatedAccess!,
-            client: makeClient(apiKey),
+            client: makeClient(secret.data),
             persistJob: persistGranolaJob,
           });
-        } else {
+        } else if (secret.reason === "missing") {
           const failedJob = {
             ...job,
             status: "failed" as const,
@@ -499,6 +517,9 @@ export function createGranolaSyncRouter(config: GranolaSyncRoutesConfig) {
           };
           await persistGranolaJob(failedJob);
           res.json(failedJob);
+          return;
+        } else {
+          sendGranolaSecretFailure(res, secret);
           return;
         }
       }
@@ -587,6 +608,13 @@ export function createGranolaSyncRouter(config: GranolaSyncRoutesConfig) {
   router.get("/stream", async (req: Request, res: Response) => {
     const access = req.delegatedAccess!;
 
+    const secret = await readGranolaApiKeyResult(req.delegatedAccess);
+    if (!secret.ok) {
+      sendGranolaSecretFailure(res, secret);
+      return;
+    }
+    const apiKey = secret.data;
+
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
@@ -605,13 +633,6 @@ export function createGranolaSyncRouter(config: GranolaSyncRoutesConfig) {
     };
 
     try {
-      const apiKey = await readGranolaApiKey(req);
-      if (!apiKey) {
-        sendEvent("error", { message: "No Granola API key configured." });
-        res.end();
-        return;
-      }
-
       await ensureSchema(access);
       const sqlDb = conversationSql(access);
       const client = makeClient(apiKey);

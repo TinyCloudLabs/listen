@@ -127,6 +127,7 @@ function createMockClientFactory() {
 
 const TEST_ADDRESS = "0xTEST";
 const KV_KEY = "config/granola-key";
+let secretReadOverride: (() => Promise<any>) | null = null;
 
 function mockAuthMiddleware(req: Request, _res: Response, next: NextFunction) {
   req.user = { address: TEST_ADDRESS };
@@ -144,6 +145,7 @@ function createApp(
       sql: mockSQL,
       secrets: {
         get: async () => {
+          if (secretReadOverride) return secretReadOverride();
           const val = mockKV._data.get(KV_KEY);
           if (val === undefined) return { ok: false, error: { code: "KEY_NOT_FOUND" } };
           return { ok: true, data: val };
@@ -213,6 +215,7 @@ describe("Granola sync routes", () => {
   let port: number;
 
   beforeEach(async () => {
+    secretReadOverride = null;
     mockKV = createMockKV();
     mockSQL = createMockSQL();
     clientFactory = createMockClientFactory();
@@ -226,12 +229,26 @@ describe("Granola sync routes", () => {
 
   it("emits an error when no Granola API key is configured", async () => {
     const res = await fetch(`http://localhost:${port}/api/sync/granola/stream`);
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ error: "no_api_key" });
+  });
 
-    const events = parseSSEText(await res.text());
-    expect(events).toContainEqual({
-      type: "error",
-      data: { message: "No Granola API key configured." },
+  it("returns 503 when a Granola job secret read is operationally unavailable", async () => {
+    secretReadOverride = async () => ({
+      ok: false,
+      error: { code: "node_unavailable", message: "node unavailable" },
+    });
+
+    const res = await fetch(`http://localhost:${port}/api/sync/granola/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "incremental" }),
+    });
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({
+      error: "granola_secret_unavailable",
+      secretCode: "node_unavailable",
     });
   });
 

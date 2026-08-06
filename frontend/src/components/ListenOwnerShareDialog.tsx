@@ -1,4 +1,4 @@
-import { useEffect, useState, type FC } from "react";
+import { useEffect, useRef, useState, type FC } from "react";
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
 import type { ApiClient } from "@listen/client";
 
@@ -18,6 +18,7 @@ interface ListenOwnerShareDialogProps {
   conversationIds: readonly string[];
   onPublished?: () => void;
   onClose: () => void;
+  mutationsDisabled?: boolean;
 }
 
 type PublishState = "idle" | "publishing" | "published" | "failed";
@@ -42,6 +43,7 @@ export const ListenOwnerShareDialog: FC<ListenOwnerShareDialogProps> = ({
   conversationIds,
   onPublished,
   onClose,
+  mutationsDisabled = false,
 }) => {
   const [details, setDetails] = useState<ShareableConversationDetail[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,6 +54,8 @@ export const ListenOwnerShareDialog: FC<ListenOwnerShareDialogProps> = ({
   const [draft, setDraft] = useState<ListenOwnerShareDraft | null>(null);
   const [emailDomain, setEmailDomain] = useState("");
   const [revokeCopy, setRevokeCopy] = useState("");
+  const mutationsDisabledRef = useRef(mutationsDisabled);
+  mutationsDisabledRef.current = mutationsDisabled;
 
   useEffect(() => {
     let cancelled = false;
@@ -107,10 +111,12 @@ export const ListenOwnerShareDialog: FC<ListenOwnerShareDialogProps> = ({
     };
   }, [details, conversationIds, emailDomain]);
 
-  const canPublish = Boolean(tcw && draft && !loading && publishState !== "publishing");
+  const canPublish = Boolean(
+    tcw && draft && !loading && publishState !== "publishing" && !mutationsDisabled,
+  );
 
   const publish = async () => {
-    if (!tcw || !draft) return;
+    if (!tcw || !draft || mutationsDisabledRef.current) return;
     setPublishState("publishing");
     setError(null);
     try {
@@ -126,7 +132,7 @@ export const ListenOwnerShareDialog: FC<ListenOwnerShareDialogProps> = ({
   };
 
   const revoke = async () => {
-    if (!tcw || !published) return;
+    if (!tcw || !published || mutationsDisabledRef.current) return;
     setRevokeState("revoking");
     setError(null);
     try {
@@ -269,7 +275,12 @@ export const ListenOwnerShareDialog: FC<ListenOwnerShareDialogProps> = ({
             {revokeState === "failed" && (
               <div style={s.error}>
                 Revoke failed. This share is still active.
-                <button type="button" style={s.inlineRetry} onClick={() => void revoke()}>
+                <button
+                  type="button"
+                  style={s.inlineRetry}
+                  onClick={() => void revoke()}
+                  disabled={mutationsDisabled}
+                >
                   Retry revoke
                 </button>
               </div>
@@ -286,7 +297,7 @@ export const ListenOwnerShareDialog: FC<ListenOwnerShareDialogProps> = ({
               type="button"
               style={s.dangerButton}
               onClick={() => void revoke()}
-              disabled={revokeState === "revoking"}
+              disabled={revokeState === "revoking" || mutationsDisabled}
             >
               {revokeState === "revoking" ? "Revoking..." : "Revoke access"}
             </button>

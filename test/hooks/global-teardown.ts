@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,7 +9,10 @@ interface StartedProcess {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEST_DIR = resolve(__dirname, "..");
-const PID_PATH = resolve(TEST_DIR, ".tmp", "hooks-real-e2e", "pids.json");
+const E2E_MODE = process.env.LISTEN_E2E_MODE ?? "hooks";
+const RUN_DIR = E2E_MODE === "browser-recovery" ? "browser-recovery-e2e" : "hooks-real-e2e";
+const PID_PATH = resolve(TEST_DIR, ".tmp", RUN_DIR, "pids.json");
+const STATE_PATH = resolve(TEST_DIR, ".tmp", RUN_DIR, "state.json");
 
 function killProcessGroup(pid: number): void {
   try {
@@ -44,4 +47,7 @@ export default async function globalTeardown(): Promise<void> {
       }
     }
   }
+
+  rmSync(STATE_PATH, { force: true });
+  rmSync(PID_PATH, { force: true });
 }

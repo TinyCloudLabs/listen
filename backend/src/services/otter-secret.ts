@@ -12,6 +12,16 @@ export interface OtterCookie {
   csrftoken: string;
 }
 
+export interface OtterSecretError {
+  code?: string;
+  message?: string;
+}
+
+export type OtterSecretResult =
+  | { ok: true; data: OtterCookie }
+  | { ok: false; reason: "missing"; error: OtterSecretError }
+  | { ok: false; reason: "unavailable"; error: OtterSecretError };
+
 interface SecretAccess {
   get(name: string, options?: { scope?: string }): Promise<any>;
   put?(name: string, value: string, options?: { scope?: string }): Promise<any>;
@@ -20,12 +30,9 @@ interface SecretAccess {
 
 type OtterSecretAccess = (DelegatedAccess & { secrets?: SecretAccess }) | undefined;
 
-function parseCookie(raw: unknown): OtterCookie | null {
+function parseCookie(raw: string): OtterCookie | null {
   try {
-    const value =
-      typeof raw === "object" && raw !== null && !(raw instanceof Uint8Array)
-        ? (raw as Record<string, unknown>)
-        : JSON.parse(raw instanceof Uint8Array ? new TextDecoder().decode(raw) : String(raw));
+    const value = JSON.parse(raw);
     const sessionid = value.sessionid;
     const csrftoken = value.csrftoken;
     if (typeof sessionid === "string" && typeof csrftoken === "string" && sessionid && csrftoken) {
@@ -37,16 +44,95 @@ function parseCookie(raw: unknown): OtterCookie | null {
   }
 }
 
+function isMissingSecretError(error: OtterSecretError | undefined): boolean {
+  const code = typeof error?.code === "string" ? error.code.toLowerCase() : "";
+  return code === "key_not_found" || code === "not_found" || code === "kv_not_found";
+}
+
+function invalidSecret(message: string): OtterSecretResult {
+  return {
+    ok: false,
+    reason: "unavailable",
+    error: { code: "INVALID_SECRET_RESPONSE", message },
+  };
+}
+
+export async function readOtterCookieResult(access: OtterSecretAccess): Promise<OtterSecretResult> {
+  if (!access?.secrets?.get) {
+    return {
+      ok: false,
+      reason: "unavailable",
+      error: {
+        code: "SECRETS_ACCESS_MISSING",
+        message: "Delegation does not include TinyCloud Secrets access",
+      },
+    };
+  }
+
+  let result: any;
+  try {
+    result = await access.secrets.get(OTTER_COOKIE_SECRET_NAME, {
+      scope: OTTER_COOKIE_SECRET_SCOPE,
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "unavailable",
+      error: {
+        code:
+          typeof (error as { code?: unknown })?.code === "string"
+            ? (error as { code: string }).code
+            : "secret_read_failed",
+        message: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+
+  if (result?.ok !== true) {
+    return {
+      ok: false,
+      reason: isMissingSecretError(result?.error) ? "missing" : "unavailable",
+      error: {
+        code: result?.error?.code,
+        message: result?.error?.message,
+      },
+    };
+  }
+
+  if (typeof result.data !== "string" || result.data.trim() === "") {
+    return invalidSecret(
+      `${OTTER_COOKIE_SECRET_NAME} returned an invalid successful secret response`,
+    );
+  }
+
+  const cookie = parseCookie(result.data);
+  return cookie
+    ? { ok: true, data: cookie }
+    : invalidSecret(`${OTTER_COOKIE_SECRET_NAME} contains a malformed cookie`);
+}
+
 export async function readOtterCookie(access: OtterSecretAccess): Promise<OtterCookie | null> {
-  if (!access?.secrets?.get) return null;
-  const result = await access.secrets.get(OTTER_COOKIE_SECRET_NAME, {
-    scope: OTTER_COOKIE_SECRET_SCOPE,
-  });
-  return result?.ok ? parseCookie(result.data) : null;
+  const result = await readOtterCookieResult(access);
+  if (result.ok) return result.data;
+  if (result.reason === "missing") return null;
+  throw new OtterSecretReadError(result.error.code ?? "secret_read_failed", result.error.message);
 }
 
 export async function otterCookieExists(access: OtterSecretAccess): Promise<boolean> {
-  return (await readOtterCookie(access)) != null;
+  const result = await readOtterCookieResult(access);
+  if (result.ok) return true;
+  if (result.reason === "missing") return false;
+  throw new OtterSecretReadError(result.error.code ?? "secret_read_failed", result.error.message);
+}
+
+export class OtterSecretReadError extends Error {
+  readonly code: string;
+
+  constructor(code: string, message = "Failed to read Otter cookie") {
+    super(message);
+    this.name = "OtterSecretReadError";
+    this.code = code;
+  }
 }
 
 export async function writeOtterCookie(
@@ -65,13 +151,41 @@ export async function writeOtterCookie(
 }
 
 export async function deleteOtterCookie(access: OtterSecretAccess): Promise<void> {
-  if (!access?.secrets?.delete) return;
-  const result = await access.secrets.delete(OTTER_COOKIE_SECRET_NAME, {
-    scope: OTTER_COOKIE_SECRET_SCOPE,
-  });
-  if (!result?.ok && result?.error?.code?.toLowerCase() !== "key_not_found") {
-    throw new Error(
-      result?.error?.message ?? "Failed to delete Otter cookie from TinyCloud Secrets",
+  if (!access?.secrets?.delete) {
+    throw new OtterSecretDeleteError(
+      "SECRETS_DELETE_ACCESS_MISSING",
+      "Delegation does not include TinyCloud Secrets delete access",
     );
+  }
+
+  let result: any;
+  try {
+    result = await access.secrets.delete(OTTER_COOKIE_SECRET_NAME, {
+      scope: OTTER_COOKIE_SECRET_SCOPE,
+    });
+  } catch (error) {
+    throw new OtterSecretDeleteError(
+      typeof (error as { code?: unknown })?.code === "string"
+        ? (error as { code: string }).code
+        : "secret_delete_failed",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+
+  if (result?.ok === true) return;
+  if (isMissingSecretError(result?.error)) return;
+  throw new OtterSecretDeleteError(
+    typeof result?.error?.code === "string" ? result.error.code : "INVALID_DELETE_RESPONSE",
+    result?.error?.message ?? "Failed to delete Otter cookie from TinyCloud Secrets",
+  );
+}
+
+export class OtterSecretDeleteError extends Error {
+  readonly code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = "OtterSecretDeleteError";
+    this.code = code;
   }
 }

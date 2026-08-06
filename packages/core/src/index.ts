@@ -20,9 +20,11 @@ export interface UpdateItemInput {
 
 // ── Delegation ───────────────────────────────────────────────────────
 
-export type DelegationStatus = "active" | "expired" | "none";
+export type DelegationStatus = "active" | "expired" | "stale" | "none";
 
 export interface StoredDelegation {
+  /** Unique durable revision assigned to each write of this row. */
+  revision: string;
   serialized: string;
   grantedAt: string;
   expiresAt: string;
@@ -101,7 +103,7 @@ export interface ItemListResponse {
 export interface DelegationResponse {
   status: DelegationStatus;
   expiresAt: string | null;
-  activation?: "active" | "pending";
+  activation?: "active" | "pending" | "failed" | "unknown";
 }
 
 export type WorkspaceSecretKey =
@@ -133,6 +135,7 @@ export interface WorkspaceStateResponse {
   googleMeet: {
     available: boolean;
     connected: boolean | null;
+    error?: string;
   };
   conversations: {
     hasAny: boolean | null;
