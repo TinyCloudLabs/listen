@@ -169,7 +169,9 @@ jobs:
 
       - name: Install Phala CLI
         run: |
-          npm install -g phala
+          # v1.1.20 switched to the 2026-05-22 API, which omits the legacy
+          # centralized-KMS encrypted_env_pubkey required to update this CVM.
+          npm install -g phala@1.1.19
           phala --version || true
 
       - name: Capture CVM status before deploy
