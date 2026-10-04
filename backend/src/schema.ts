@@ -4,6 +4,8 @@ import {
   SCHEMA_STATEMENTS,
   COLUMN_MIGRATION_STATEMENTS,
   COLUMN_MIGRATION_ALREADY_APPLIED_STATEMENTS,
+  conversationSchemaIsCurrent,
+  isStorageFullError,
 } from "@listen/core";
 import { resolveAppPath } from "./manifest.js";
 
@@ -101,13 +103,21 @@ function thrownSchemaErrorMessage(error: unknown): string {
 const schemaInitialized = new WeakMap<object, boolean>();
 
 /**
- * Ensure the conversations schema exists. Runs migrations at most once
- * per DelegatedAccess instance.
+ * Ensure the conversations schema exists. Reads first: when the schema is
+ * already current nothing is written, so a full TinyCloud account can still
+ * open Listen. Migrations run at most once per DelegatedAccess instance and
+ * only when a probe shows the schema is missing or outdated. Failures keep the
+ * SDK error as `cause`, so storage rejections stay detectable.
  */
 export async function ensureSchema(access: DelegatedAccess): Promise<void> {
   if (schemaInitialized.has(access)) return;
 
   const sqlDb = conversationSql(access);
+  if (await conversationSchemaIsCurrent((sql) => sqlDb.query(sql))) {
+    schemaInitialized.set(access, true);
+    return;
+  }
+
   const initialMigration = {
     namespace: MIGRATION_NAMESPACE,
     migrations: [
@@ -123,7 +133,9 @@ export async function ensureSchema(access: DelegatedAccess): Promise<void> {
   }));
   if (!created.ok) {
     const msg = schemaErrorMessage(created);
-    throw new Error(`Failed to initialize conversations schema: ${msg}`);
+    throw new Error(`Failed to initialize conversations schema: ${msg}`, {
+      cause: created.error,
+    });
   }
 
   const columnCheck = await sqlDb.query(
@@ -146,8 +158,25 @@ export async function ensureSchema(access: DelegatedAccess): Promise<void> {
   }));
   if (!updated.ok) {
     const msg = schemaErrorMessage(updated);
-    throw new Error(`Failed to update conversations schema: ${msg}`);
+    throw new Error(`Failed to update conversations schema: ${msg}`, { cause: updated.error });
   }
 
   schemaInitialized.set(access, true);
+}
+
+/**
+ * `ensureSchema` for read-only routes. A storage rejection while migrating
+ * must not block reads: whatever the existing tables hold is still served, and
+ * a missing table reads as empty or not found.
+ */
+export async function ensureSchemaForRead(access: DelegatedAccess): Promise<void> {
+  try {
+    await ensureSchema(access);
+  } catch (error) {
+    if (!isStorageFullError(error)) throw error;
+    console.warn(
+      "[schema] storage full; serving reads without migrating:",
+      error instanceof Error ? error.message : error,
+    );
+  }
 }

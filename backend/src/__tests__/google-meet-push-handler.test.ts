@@ -25,7 +25,7 @@ function createMockKV() {
 
 // ── Mock Delegated Access ────────────────────────────────────────────
 
-function createMockAccess(opts?: { existingSourceIds?: string[] }) {
+function createMockAccess(opts?: { existingSourceIds?: string[]; storageFull?: boolean }) {
   const kvStore = createMockKV();
 
   return {
@@ -38,7 +38,18 @@ function createMockAccess(opts?: { existingSourceIds?: string[] }) {
         }
         return { ok: true, data: { rows: [] } };
       },
-      execute: async (_sql: string, _params?: any[]) => {
+      execute: async (sql: string, _params?: unknown[]) => {
+        // Storage refuses inserts the way SDK 2.8.0 reports a node 402.
+        if (opts?.storageFull && sql.startsWith("INSERT")) {
+          return {
+            ok: false,
+            error: {
+              code: "NETWORK_ERROR",
+              message:
+                "SQL execute failed: 402 - Storage quota exceeded. Used: 155744 bytes, Limit: 0 bytes",
+            },
+          };
+        }
         return { ok: true };
       },
     },
@@ -433,6 +444,23 @@ describe("Google Meet Push Handler", () => {
     const pending = JSON.parse(backendKV._data.get(PENDING_KV_KEY)!);
     expect(pending).toHaveLength(1);
     expect(pending[0].conferenceRecordName).toBe(TEST_CONFERENCE_NAME);
+  });
+
+  it("queues to pending instead of failing when TinyCloud storage is full", async () => {
+    const backendKV = createMockKV();
+    const { app } = createApp({ backendKV, access: createMockAccess({ storageFull: true }) });
+    ({ server, port } = await startServer(app));
+
+    const res = await postWebhook(port, buildPubSubMessage(), "Bearer fake-token");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: "pending", reason: "storage_quota_exceeded" });
+
+    // Kept for GET /pending once storage frees up, not recorded as a failed event.
+    const pending = JSON.parse(backendKV._data.get(PENDING_KV_KEY)!);
+    expect(
+      pending.map((item: { conferenceRecordName: string }) => item.conferenceRecordName),
+    ).toEqual([TEST_CONFERENCE_NAME]);
+    expect(backendKV._data.has(FAILED_KV_KEY)).toBe(false);
   });
 
   // ── Processing Error ───────────────────────────────────────────────

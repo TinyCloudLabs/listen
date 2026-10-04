@@ -7,6 +7,7 @@ import {
   type PublishedListenOwnerShare,
 } from "../lib/listenOwnerShares";
 import type { ShareableConversationDetail } from "../lib/listenShareLinks";
+import { clearStorageFull, storageAwareError } from "../lib/storageStatus";
 
 function ownerShareModule() {
   return import("../lib/listenOwnerShares");
@@ -122,12 +123,14 @@ export const ListenOwnerShareDialog: FC<ListenOwnerShareDialogProps> = ({
     try {
       const { publishListenOwnerShare } = await ownerShareModule();
       const next = await publishListenOwnerShare(tcw, draft);
+      clearStorageFull();
       setPublished(next);
       setPublishState("published");
       onPublished?.();
     } catch (err) {
       setPublishState("failed");
-      setError(err instanceof Error ? err.message : String(err));
+      const routed = storageAwareError(err);
+      setError(routed instanceof Error ? routed.message : String(routed));
     }
   };
 
@@ -138,11 +141,13 @@ export const ListenOwnerShareDialog: FC<ListenOwnerShareDialogProps> = ({
     try {
       const { revokeListenOwnerShare } = await ownerShareModule();
       const next = await revokeListenOwnerShare(tcw, published);
+      clearStorageFull();
       setPublished(next);
       setRevokeState("revoked");
     } catch (err) {
       setRevokeState("failed");
-      setError(err instanceof Error ? err.message : String(err));
+      const routed = storageAwareError(err);
+      setError(routed instanceof Error ? routed.message : String(routed));
     }
   };
 

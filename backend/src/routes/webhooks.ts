@@ -1,12 +1,14 @@
 import { Router, raw as expressRaw } from "express";
 import type { Request, Response, RequestHandler } from "express";
 import type { DelegatedAccess } from "@listen/server";
+import { isStorageFullError, storageErrorCode } from "@listen/core";
 import { verifyFirefliesSignature } from "../services/webhook-verify.js";
 import { syncSingleTranscript, type SyncSingleResult } from "../services/sync-pipeline.js";
 import { FirefliesClient } from "../services/fireflies-client.js";
 import { resolveAppPath } from "../manifest.js";
 import { conversationSql, ensureSchema } from "../schema.js";
 import { readFirefliesApiKeyResult } from "../services/fireflies-secret.js";
+import { sendStorageError, throwIfStorageRejected } from "../storage-errors.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -248,6 +250,14 @@ export function createWebhookRouter(config: WebhookRoutesConfig) {
           });
         }
       } catch (err) {
+        const storageCode = storageErrorCode(err);
+        if (storageCode) {
+          // Not this meeting's fault: keep it queued until storage frees up.
+          console.log(`[webhook] storage full — queuing meetingId=${meetingId}`);
+          await storePending(backendKV, meetingId);
+          res.json({ status: "pending", reason: storageCode.toLowerCase() });
+          return;
+        }
         console.error(`[webhook] error processing meetingId=${meetingId}:`, err);
         const message = err instanceof Error ? err.message : String(err);
         res.status(500).json({ status: "error", error: message });
@@ -293,16 +303,32 @@ export function createWebhookRouter(config: WebhookRoutesConfig) {
       const apiKey = secret.data;
 
       // 3. Process each pending item
-      await ensureSchema(access);
+      try {
+        await ensureSchema(access);
+      } catch (err) {
+        if (sendStorageError(res, err)) return;
+        throw err;
+      }
       const client = makeClient(apiKey);
 
       const processed: SyncSingleResult[] = [];
       const skipped: SyncSingleResult[] = [];
       const errors: SyncSingleResult[] = [];
       const remaining: PendingItem[] = [];
+      let storageError: unknown = null;
 
-      for (const item of pending) {
-        const result = await doSync(item.meetingId, access, client);
+      for (const [index, item] of pending.entries()) {
+        let result: SyncSingleResult;
+        try {
+          result = await doSync(item.meetingId, access, client);
+        } catch (err) {
+          if (!isStorageFullError(err)) throw err;
+          // Storage full refuses every later write too: stop, and keep this item and
+          // every unprocessed one queued so they sync once storage frees up.
+          storageError = err;
+          remaining.push(...pending.slice(index));
+          break;
+        }
         if (result.status === "created") {
           processed.push(result);
         } else if (result.status === "skipped") {
@@ -313,9 +339,10 @@ export function createWebhookRouter(config: WebhookRoutesConfig) {
         }
       }
 
-      // 4. Update queue — only failed items remain
+      // 4. Update queue — only failed and unprocessed items remain
       await backendKV.put(PENDING_KV_KEY, JSON.stringify(remaining));
 
+      if (storageError && sendStorageError(res, storageError)) return;
       res.json({ processed, skipped, errors });
     });
 
@@ -385,10 +412,11 @@ async function updateSummary(
   metadata.meeting_type = transcript.summary?.meeting_type ?? null;
 
   const now = new Date().toISOString();
-  await sqlDb.execute(
+  const updated = await sqlDb.execute(
     `UPDATE conversation SET summary = ?, metadata = ?, updated_at = ? WHERE id = ?`,
     [overview, JSON.stringify(metadata), now, convId],
   );
+  throwIfStorageRejected(updated);
 
   return "updated";
 }

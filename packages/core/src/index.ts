@@ -190,3 +190,7 @@ export * from "./transcript-parser.js";
 // ── Conversations SQL schema (shared browser + backend) ─────────────
 
 export * from "./conversations-schema.js";
+
+// ── TinyCloud storage-full detection and copy ───────────────────────
+
+export * from "./storage-status.js";

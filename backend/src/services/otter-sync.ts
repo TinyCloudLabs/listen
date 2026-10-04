@@ -1,4 +1,5 @@
 import type { DelegatedAccess } from "@listen/server";
+import { isStorageFullError } from "@listen/core";
 import { normalizeOtter } from "../adapters/otter.js";
 import type { OtterSpeech } from "./otter-client.js";
 import { persistConversation } from "./persist-conversation.js";
@@ -29,6 +30,8 @@ export async function persistOtterSpeech(
       startedAt: normalized.conversation.started_at,
     };
   } catch (err) {
+    // Storage full refuses every later write too; callers stop their loops on it.
+    if (isStorageFullError(err)) throw err;
     return {
       status: "error",
       otid: speech.otid,

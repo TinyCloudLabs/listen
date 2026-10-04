@@ -1,6 +1,7 @@
 import { useState, type FC } from "react";
 import type { ApiClient } from "@listen/client";
 import { useIsMobile } from "../hooks/useIsMobile";
+import { storageAwareError } from "../lib/storageStatus";
 
 interface ConnectionsScreenProps {
   api: ApiClient;
@@ -50,6 +51,12 @@ interface MigrationResult {
   skipped: number;
   missing: number;
   failed: number;
+}
+
+/** A storage rejection enters read-only mode and reads as the spec's save copy. */
+function errorMessage(err: unknown): string {
+  const routed = storageAwareError(err);
+  return routed instanceof Error ? routed.message : String(routed);
 }
 
 export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
@@ -187,7 +194,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
       );
       onRefresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBusySource(null);
     }
@@ -214,7 +221,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
       setMessage("Connected sources synced");
       onRefresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBusySource(null);
     }
@@ -231,7 +238,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
       );
       onRefresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBusySource(null);
     }
@@ -320,7 +327,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
                           setMessage(`${source.name} setup finished`);
                           onRefresh();
                         })
-                        .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+                        .catch((err) => setError(errorMessage(err)))
                         .finally(() => setBusySource(null));
                     }}
                     disabled={actionsDisabled || busySource !== null}

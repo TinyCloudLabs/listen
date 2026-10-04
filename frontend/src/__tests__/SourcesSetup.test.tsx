@@ -2,6 +2,8 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SourcesSetup } from "../components/SourcesSetup";
+import { clearStorageFull, isStorageFull } from "../lib/storageStatus";
+import { STORAGE_FULL_SAVE_MESSAGE } from "@listen/core";
 import type { ApiClient } from "@listen/client";
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
 
@@ -31,6 +33,7 @@ function mockTinyCloud(): TinyCloudWeb {
 describe("SourcesSetup", () => {
   afterEach(() => {
     cleanup();
+    clearStorageFull();
   });
 
   it("saves a Granola API key and verifies backend status", async () => {
@@ -64,6 +67,44 @@ describe("SourcesSetup", () => {
     expect(ensureGranolaBackendAccess).toHaveBeenCalled();
     expect(api.get).toHaveBeenCalledWith("/api/granola/status");
     expect(await screen.findByText(/granola connected/i)).toBeInTheDocument();
+  });
+
+  it("shows the storage-full copy and enters read-only mode when the secret save is rejected", async () => {
+    const tcw = mockTinyCloud();
+    vi.mocked(tcw.secrets.put).mockResolvedValue({
+      ok: false,
+      error: {
+        code: "STORAGE_QUOTA_EXCEEDED",
+        message:
+          "Storage quota exceeded for key GRANOLA_API_KEY: Storage quota exceeded. Used: 1 bytes, Limit: 0 bytes",
+      },
+    } as never);
+    const ensureGranolaBackendAccess = vi.fn();
+
+    render(
+      <SourcesSetup
+        api={mockApi()}
+        tcw={tcw}
+        hasBackendDelegation={true}
+        onEnsureBackendAccess={vi.fn()}
+        onEnsureFirefliesBackendAccess={vi.fn()}
+        onEnsureGranolaBackendAccess={ensureGranolaBackendAccess}
+        onFirefliesComplete={vi.fn()}
+        onGranolaComplete={vi.fn()}
+      />,
+    );
+
+    const granolaCard = screen.getByText("Granola").closest("div")?.parentElement?.parentElement;
+    await userEvent.click(
+      within(granolaCard as HTMLElement).getByRole("button", { name: /connect ->/i }),
+    );
+    await userEvent.type(screen.getByPlaceholderText(/paste your granola api key/i), "grn_test");
+    await userEvent.click(screen.getByRole("button", { name: /save key and connect/i }));
+
+    expect(await screen.findByText(STORAGE_FULL_SAVE_MESSAGE)).toBeInTheDocument();
+    expect(screen.queryByText(/Limit: 0 bytes/)).not.toBeInTheDocument();
+    expect(isStorageFull()).toBe(true);
+    expect(ensureGranolaBackendAccess).not.toHaveBeenCalled();
   });
 
   it("does not present consent actions while delegation activation is unavailable", () => {

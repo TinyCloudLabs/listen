@@ -1,7 +1,9 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
-import type { ApiClient } from "@listen/client";
+import { ApiRequestError, type ApiClient } from "@listen/client";
+import { STORAGE_FULL_SAVE_MESSAGE } from "@listen/core";
 import { createTinyCloudConversationApi, ensureSchema } from "../lib/tinycloudConversations";
+import { clearStorageFull, isStorageFull } from "../lib/storageStatus";
 
 function mockApi(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
@@ -21,6 +23,35 @@ function toArrayRows(objects: Record<string, unknown>[]): { rows: unknown[][]; c
     rows: objects.map((obj) => columns.map((column) => obj[column])),
   };
 }
+
+const isSchemaProbe = (sql: string) => sql.includes("LIMIT 0");
+
+/** Probes report the schema as missing, so seeding has to run. */
+function schemaMissing(
+  onRead: (sql: string) => unknown = () => ({ ok: true, data: toArrayRows([]) }),
+) {
+  return vi.fn(async (sql: string) =>
+    isSchemaProbe(sql)
+      ? { ok: false, error: { message: "no such table: participant" } }
+      : onRead(sql),
+  );
+}
+
+// SDK 2.8.0 turns a SQL 402 into this result; newer SDKs add a storage code.
+const SQL_STORAGE_REJECTION = {
+  ok: false,
+  error: {
+    code: "NETWORK_ERROR",
+    message: "SQL batch failed: 402 - Storage quota exceeded. Used: 155744 bytes, Limit: 0 bytes",
+  },
+};
+
+const backendStorageRejection = () =>
+  new ApiRequestError(
+    402,
+    "storage_quota_exceeded",
+    `API error (402): ${STORAGE_FULL_SAVE_MESSAGE}`,
+  );
 
 function mockTinyCloud(
   query: ReturnType<typeof vi.fn>,
@@ -264,6 +295,23 @@ describe("createTinyCloudConversationApi", () => {
     expect(backendGet).toHaveBeenCalledWith("/api/config/google-meet/connected");
   });
 
+  it("reads without any write when the schema is already current", async () => {
+    const backendPost = vi.fn(async () => ({ ok: true }));
+    const apply = vi.fn(async () => ({ ok: true }));
+    const query = vi.fn(async () => ({ ok: true, data: toArrayRows([]) }));
+    const client = createTinyCloudConversationApi(
+      mockApi({ post: backendPost }),
+      mockTinyCloud(query, { apply }),
+    );
+
+    await client.get("/api/conversations?limit=20&offset=0");
+
+    expect(backendPost).not.toHaveBeenCalled();
+    expect(apply).not.toHaveBeenCalled();
+    const sqls = query.mock.calls.map(([sql]) => String(sql));
+    expect(sqls.every((sql) => /^\s*SELECT/i.test(sql))).toBe(true);
+  });
+
   it("seeds via the backend first and skips browser seeding when it succeeds", async () => {
     const calls: string[] = [];
     const backendPost = vi.fn(async (path: string) => {
@@ -274,7 +322,7 @@ describe("createTinyCloudConversationApi", () => {
       calls.push("browser-migrate");
       return { ok: true };
     });
-    const query = vi.fn(async () => {
+    const query = schemaMissing(() => {
       calls.push("list-query");
       return { ok: true, data: toArrayRows([]) };
     });
@@ -302,7 +350,7 @@ describe("createTinyCloudConversationApi", () => {
       calls.push("browser-migrate");
       return { ok: true };
     });
-    const query = vi.fn(async (sql: string) => {
+    const query = schemaMissing((sql) => {
       calls.push(sql.includes("transcript_json, transcript_text") ? "probe" : "list");
       return { ok: true, data: toArrayRows([]) };
     });
@@ -324,10 +372,9 @@ describe("createTinyCloudConversationApi", () => {
 
   it("seeds the schema once across concurrent first reads", async () => {
     const backendPost = vi.fn(async () => ({ ok: true }));
-    const query = vi.fn(async () => ({ ok: true, data: toArrayRows([]) }));
     const client = createTinyCloudConversationApi(
       mockApi({ post: backendPost }),
-      mockTinyCloud(query),
+      mockTinyCloud(schemaMissing()),
     );
 
     // Mirror App.tsx firing the exists-probe and ConversationList concurrently.
@@ -343,7 +390,7 @@ describe("createTinyCloudConversationApi", () => {
   it("seeds once per TinyCloud instance and again for a fresh instance", async () => {
     const backendPost = vi.fn(async () => ({ ok: true }));
     const api = mockApi({ post: backendPost });
-    const query = vi.fn(async () => ({ ok: true, data: toArrayRows([]) }));
+    const query = schemaMissing();
 
     // A cached (already-seeded) instance memoizes and does not re-seed.
     const seeded = mockTinyCloud(query);
@@ -363,7 +410,7 @@ describe("createTinyCloudConversationApi", () => {
       throw new Error("401 requiredAction tinycloud.sql/schema");
     });
     const apply = vi.fn(async () => ({ ok: false, error: { message: "not authorized" } }));
-    const query = vi.fn(async () => ({ ok: true, data: toArrayRows([]) }));
+    const query = schemaMissing();
     const client = createTinyCloudConversationApi(
       mockApi({ post: backendPost }),
       mockTinyCloud(query, { apply }),
@@ -372,7 +419,77 @@ describe("createTinyCloudConversationApi", () => {
     await expect(client.get("/api/conversations?limit=20&offset=0")).rejects.toThrow(
       /Backend seeder: 401 requiredAction tinycloud\.sql\/schema.*Browser fallback:.*not authorized/,
     );
-    // The read never runs when seeding fails.
-    expect(query).not.toHaveBeenCalled();
+    // Only the read-only probes ran; the list read never runs when seeding fails.
+    expect(query.mock.calls.every(([sql]) => isSchemaProbe(String(sql)))).toBe(true);
+  });
+});
+
+describe("storage full", () => {
+  afterEach(() => clearStorageFull());
+
+  it("keeps listing conversations when the backend seeder is refused for storage", async () => {
+    const backendPost = vi.fn(async () => {
+      throw backendStorageRejection();
+    });
+    const apply = vi.fn(async () => SQL_STORAGE_REJECTION);
+    // Tables exist but are outdated, so the probe fails and seeding is attempted.
+    const query = schemaMissing((sql) => {
+      if (sql.includes("participant_count")) {
+        return { ok: true, data: toArrayRows([{ id: "01ABC", title: "Planning" }]) };
+      }
+      if (sql.includes("COUNT(*) AS total")) return { ok: true, data: toArrayRows([{ total: 1 }]) };
+      return { ok: true, data: toArrayRows([]) };
+    });
+    const client = createTinyCloudConversationApi(
+      mockApi({ post: backendPost }),
+      mockTinyCloud(query, { apply }),
+    );
+
+    const result = await client.get<{ total: number; conversations: Array<{ id: string }> }>(
+      "/api/conversations?limit=20&offset=0",
+    );
+
+    expect(result.total).toBe(1);
+    expect(result.conversations[0]?.id).toBe("01ABC");
+    expect(isStorageFull()).toBe(true);
+    // A storage rejection is final: the browser seeder does not retry it.
+    expect(apply).not.toHaveBeenCalled();
+
+    // Later reads neither re-seed nor fail while storage stays full.
+    await client.get("/api/conversations?limit=20&offset=0");
+    expect(backendPost).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows an empty list when seeding is refused for storage and no tables exist yet", async () => {
+    const apply = vi.fn(async () => SQL_STORAGE_REJECTION);
+    const query = vi.fn(async () => ({
+      ok: false,
+      error: { message: "no such table: conversation" },
+    }));
+    const client = createTinyCloudConversationApi(null, mockTinyCloud(query, { apply }));
+
+    await expect(client.get("/api/conversations?limit=20&offset=0")).resolves.toEqual({
+      conversations: [],
+      total: 0,
+      source_counts: [],
+    });
+    expect(apply).toHaveBeenCalledTimes(1);
+    expect(isStorageFull()).toBe(true);
+  });
+
+  it("words a refused save with the storage copy and clears read-only after a save", async () => {
+    const backendPost = vi
+      .fn()
+      .mockRejectedValueOnce(backendStorageRejection())
+      .mockResolvedValueOnce({ conversationId: "01ABC" });
+    const client = createTinyCloudConversationApi(mockApi({ post: backendPost }), null);
+
+    const refused = await client.post("/api/conversations/import", {}).catch((error) => error);
+    // Exactly the spec copy, without the "API error (402):" transport prefix.
+    expect((refused as Error).message).toBe(STORAGE_FULL_SAVE_MESSAGE);
+    expect(isStorageFull()).toBe(true);
+
+    await client.post("/api/conversations/import", {});
+    expect(isStorageFull()).toBe(false);
   });
 });

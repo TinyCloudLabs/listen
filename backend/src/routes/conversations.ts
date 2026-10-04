@@ -4,7 +4,8 @@ import { Buffer } from "node:buffer";
 import type { NormalizedConversation } from "../adapters/types.js";
 import { estimateDuration, parseTranscriptText } from "@listen/core";
 import { resolveAppPath } from "../manifest.js";
-import { conversationSql, ensureSchema } from "../schema.js";
+import { conversationSql, ensureSchema, ensureSchemaForRead } from "../schema.js";
+import { sendStorageError, throwIfStorageRejected } from "../storage-errors.js";
 import {
   persistConversation,
   persistTranscriptBlob,
@@ -401,7 +402,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
     const q = qRaw.slice(0, 200);
 
     try {
-      await ensureSchema(access);
+      await ensureSchemaForRead(access);
       const sqlDb = conversationSql(access);
 
       const where: string[] = [];
@@ -462,6 +463,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
       res.json({ conversations, total, source_counts: sourceCounts });
     } catch (err) {
       console.error("[conversations] list failed:", err);
+      if (sendStorageError(res, err)) return;
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: "list_failed", message });
     }
@@ -520,6 +522,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         `UPDATE conversation SET ${sets.join(", ")} WHERE id = ?`,
         [...params, id],
       );
+      throwIfStorageRejected(result);
       if (!result.ok) {
         res.status(500).json({ error: "update_failed", message: "Conversation update failed." });
         return;
@@ -528,6 +531,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
       res.json({ ok: true, id });
     } catch (err) {
       console.error("[conversations] update failed:", err);
+      if (sendStorageError(res, err)) return;
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: "update_failed", message });
     }
@@ -546,6 +550,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         title: normalized.conversation.title,
       });
     } catch (err) {
+      if (sendStorageError(res, err)) return;
       const message = err instanceof Error ? err.message : String(err);
       const status = message.includes("is required") || message.includes("valid date") ? 400 : 500;
       if (status >= 500) console.error("[conversations] import failed:", err);
@@ -590,14 +595,16 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
 
       const uploadId = crypto.randomUUID();
       const mediaKey = `source-media/${uploadId}/${fileName}`;
-      await access.kv.put(
-        resolveAppPath(mediaKey),
-        JSON.stringify({
-          fileName,
-          contentType,
-          contentBase64,
-          uploadedAt: new Date().toISOString(),
-        }),
+      throwIfStorageRejected(
+        await access.kv.put(
+          resolveAppPath(mediaKey),
+          JSON.stringify({
+            fileName,
+            contentType,
+            contentBase64,
+            uploadedAt: new Date().toISOString(),
+          }),
+        ),
       );
 
       const provider =
@@ -612,6 +619,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         provider: providerName,
       });
     } catch (err) {
+      if (sendStorageError(res, err)) return;
       const message = err instanceof Error ? err.message : String(err);
       const status =
         message.includes("must be") ||
@@ -633,7 +641,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
     detailLog(requestId, "request", { id });
 
     try {
-      await timedDetailStep(requestId, "schema", ensureSchema(access));
+      await timedDetailStep(requestId, "schema", ensureSchemaForRead(access));
       const sqlDb = conversationSql(access);
 
       // Fetch conversation without transcript payload columns. Some Soundcore transcripts are
@@ -760,6 +768,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         { ms: Date.now() - started, error: err instanceof Error ? err.message : String(err) },
         "error",
       );
+      if (sendStorageError(res, err)) return;
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: "detail_failed", message });
     }
@@ -825,6 +834,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
       });
     } catch (err) {
       console.error("[conversations] transcript repair failed:", err);
+      if (sendStorageError(res, err)) return;
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: "repair_failed", message });
     }
@@ -836,7 +846,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
     const { id } = req.params;
 
     try {
-      await ensureSchema(access);
+      await ensureSchemaForRead(access);
       const sqlDb = conversationSql(access);
       const convoResult = await sqlDb.query(`SELECT metadata FROM conversation WHERE id = ?`, [id]);
 
@@ -918,6 +928,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
       res.send(buffer);
     } catch (err) {
       console.error("[conversations] audio failed:", err);
+      if (sendStorageError(res, err)) return;
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: "audio_failed", message });
     }

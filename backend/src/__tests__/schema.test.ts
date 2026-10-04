@@ -2,10 +2,24 @@ import { describe, it, expect, beforeEach, mock } from "bun:test";
 
 // ── Mock DelegatedAccess ─────────────────────────────────────────────
 
+// Read-first probes (`… LIMIT 0`) report the schema missing, so migrations run.
+const schemaMissingQuery = async (sql: string) =>
+  sql.includes("LIMIT 0")
+    ? { ok: false, error: { message: "no such table: conversation" } }
+    : { ok: true, data: { rows: [], columns: [] } };
+
+const STORAGE_REJECTION = {
+  ok: false,
+  error: {
+    code: "NETWORK_ERROR",
+    message: "SQL batch failed: 402 - Storage quota exceeded. Used: 155744 bytes, Limit: 0 bytes",
+  },
+};
+
 function createMockAccess() {
   const dbHandle = {
     execute: mock(async (_sql: string) => ({ ok: true })),
-    query: mock(async () => ({ ok: true, data: { rows: [], columns: [] } })),
+    query: mock(schemaMissingQuery),
     migrations: {
       apply: mock(async () => ({ ok: true })),
     },
@@ -23,7 +37,8 @@ function createMockAccess() {
 
 // ── Tests ────────────────────────────────────────────────────────────
 
-import { conversationSql, ensureSchema, DATABASE_NAME } from "../schema.js";
+import { conversationSql, ensureSchema, ensureSchemaForRead, DATABASE_NAME } from "../schema.js";
+import { isStorageFullError } from "@listen/core";
 
 describe("schema", () => {
   describe("DATABASE_NAME", () => {
@@ -37,6 +52,35 @@ describe("schema", () => {
 
     beforeEach(() => {
       access = createMockAccess();
+    });
+
+    it("writes nothing when read-only probes show the schema is current", async () => {
+      access.dbHandle.query.mockImplementation(async () => ({
+        ok: true,
+        data: { rows: [], columns: [] },
+      }));
+
+      await ensureSchema(access);
+
+      expect(access.dbHandle.migrations.apply).not.toHaveBeenCalled();
+      expect(access.dbHandle.execute).not.toHaveBeenCalled();
+      const probes = access.dbHandle.query.mock.calls.map(([sql]: [string]) => sql);
+      expect(probes.some((sql: string) => sql.includes("FROM conversation"))).toBe(true);
+      expect(probes.some((sql: string) => sql.includes("FROM participant"))).toBe(true);
+      expect(probes.every((sql: string) => /^\s*SELECT/i.test(sql))).toBe(true);
+
+      // Memoized: no further probes for the same access.
+      access.dbHandle.query.mockClear();
+      await ensureSchema(access);
+      expect(access.dbHandle.query).not.toHaveBeenCalled();
+    });
+
+    it("keeps a storage rejection detectable when migrating fails", async () => {
+      access.dbHandle.migrations.apply.mockImplementation(async () => STORAGE_REJECTION);
+
+      const error = await ensureSchema(access).catch((caught) => caught);
+
+      expect(isStorageFullError(error)).toBe(true);
     });
 
     it("applies an initial migration for the conversation table", async () => {
@@ -77,7 +121,7 @@ describe("schema", () => {
     it("uses the named conversations database when a db handle is available", async () => {
       const dbHandle = {
         execute: mock(async (_sql: string) => ({ ok: true })),
-        query: mock(async () => ({ ok: true, data: { rows: [], columns: [] } })),
+        query: mock(schemaMissingQuery),
         migrations: {
           apply: mock(async () => ({ ok: true })),
         },
@@ -184,6 +228,25 @@ describe("schema", () => {
         "TinyCloud SQL timed out while preparing the conversations database",
       );
       await expect(ensureSchema(access)).rejects.not.toThrow("<!doctype html>");
+    });
+  });
+
+  describe("ensureSchemaForRead()", () => {
+    it("lets reads continue when migrating is refused because storage is full", async () => {
+      const access = createMockAccess();
+      access.dbHandle.migrations.apply.mockImplementation(async () => STORAGE_REJECTION);
+
+      await expect(ensureSchemaForRead(access)).resolves.toBeUndefined();
+    });
+
+    it("still fails reads for errors other than storage", async () => {
+      const access = createMockAccess();
+      access.dbHandle.migrations.apply.mockImplementation(async () => ({
+        ok: false,
+        error: { message: "DB unavailable" },
+      }));
+
+      await expect(ensureSchemaForRead(access)).rejects.toThrow("DB unavailable");
     });
   });
 });

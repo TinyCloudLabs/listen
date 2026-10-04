@@ -3,6 +3,7 @@ import express from "express";
 import type { Server } from "http";
 import type { Request, Response, NextFunction } from "express";
 import { Buffer } from "node:buffer";
+import { STORAGE_FULL_SAVE_MESSAGE } from "@listen/core";
 import { createConversationsRouter } from "../routes/conversations.js";
 
 // ── Mock KV Store (matches real SDK: returns Result objects) ─────────
@@ -45,7 +46,19 @@ interface MockSQLConfig {
   sourceCounts?: Record<string, unknown>[];
   participantRows?: Record<string, unknown>[];
   detailRow?: Record<string, unknown>;
+  /** Every write is refused the way SDK 2.8.0 reports a node 402. */
+  storageFull?: boolean;
+  /** Read-first schema probes fail, so ensureSchema has to migrate. */
+  schemaOutdated?: boolean;
 }
+
+const SQL_STORAGE_REJECTION = {
+  ok: false,
+  error: {
+    code: "NETWORK_ERROR",
+    message: "SQL execute failed: 402 - Storage quota exceeded. Used: 155744 bytes, Limit: 0 bytes",
+  },
+};
 
 function toArrayRows(objects: Record<string, unknown>[]): { rows: unknown[][]; columns: string[] } {
   if (objects.length === 0) return { rows: [], columns: [] };
@@ -59,6 +72,10 @@ function createMockSQL(config: MockSQLConfig = {}) {
 
   const query = async (sql: string, params?: any[]) => {
     calls.push({ method: "query", sql, params });
+
+    if (config.schemaOutdated && sql.includes("LIMIT 0")) {
+      return { ok: false, error: { message: "no such column: transcript_json" } };
+    }
 
     // List conversations (has participant_count subquery) — check before COUNT
     if (sql.includes("participant_count") && sql.includes("ORDER BY")) {
@@ -105,6 +122,8 @@ function createMockSQL(config: MockSQLConfig = {}) {
 
   const execute = async (sql: string, params?: any[]) => {
     calls.push({ method: "execute", sql, params });
+
+    if (config.storageFull) return SQL_STORAGE_REJECTION;
 
     // Schema CREATE statements
     if (sql.trim().startsWith("CREATE")) {
@@ -341,7 +360,7 @@ describe("Conversations Routes — GET /api/conversations", () => {
     expect(body.total).toBe(0);
   });
 
-  it("calls ensureSchema before querying", async () => {
+  it("lists conversations without writing when the schema is current", async () => {
     mockKV = createMockKV();
     mockSQL = createMockSQL({ conversationRows: [], totalCount: 0 });
     const app = createApp(mockKV, mockSQL);
@@ -349,19 +368,33 @@ describe("Conversations Routes — GET /api/conversations", () => {
 
     await fetch(`http://localhost:${port}/api/conversations`);
 
-    // ensureSchema now applies SQL migrations before route queries.
-    const firstCall = mockSQL._calls[0];
-    expect(firstCall.method).toBe("execute");
-    expect(firstCall.sql).toContain("CREATE TABLE IF NOT EXISTS conversation");
-
-    const columnCheckIndex = mockSQL._calls.findIndex((call) =>
-      call.sql.includes("SELECT transcript_json, transcript_text FROM conversation"),
-    );
+    // Read-first schema probes run before the list query, and nothing is written.
+    const probeIndex = mockSQL._calls.findIndex((call) => call.sql.includes("LIMIT 0"));
     const listQueryIndex = mockSQL._calls.findIndex(
       (call) => call.sql.includes("participant_count") && call.sql.includes("ORDER BY"),
     );
-    expect(columnCheckIndex).toBeGreaterThan(-1);
-    expect(listQueryIndex).toBeGreaterThan(columnCheckIndex);
+    expect(probeIndex).toBeGreaterThan(-1);
+    expect(listQueryIndex).toBeGreaterThan(probeIndex);
+    expect(mockSQL._calls.filter((call) => call.method === "execute")).toEqual([]);
+  });
+
+  it("still lists conversations when storage is full and migrating is refused", async () => {
+    mockKV = createMockKV();
+    mockSQL = createMockSQL({
+      conversationRows: [{ id: "c1", title: "Kept", source: "fireflies", participant_count: 0 }],
+      totalCount: 1,
+      storageFull: true,
+      schemaOutdated: true,
+    });
+    const app = createApp(mockKV, mockSQL);
+    ({ server, port } = await startServer(app));
+
+    const res = await fetch(`http://localhost:${port}/api/conversations`);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.total).toBe(1);
+    expect(body.conversations[0].id).toBe("c1");
   });
 });
 
@@ -1050,6 +1083,28 @@ describe("Conversations Routes — POST /api/conversations/import", () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toBe("import_failed");
+  });
+
+  it("answers a refused save with the typed storage error and spec copy", async () => {
+    mockKV = createMockKV();
+    mockSQL = createMockSQL({ storageFull: true });
+    const app = createApp(mockKV, mockSQL);
+    ({ server, port } = await startServer(app));
+
+    const res = await fetch(`http://localhost:${port}/api/conversations/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Manual call", transcriptText: "[00:00] Sam: Hello" }),
+    });
+
+    expect(res.status).toBe(402);
+    expect(await res.json()).toEqual({
+      error: "storage_quota_exceeded",
+      code: "STORAGE_QUOTA_EXCEEDED",
+      message: STORAGE_FULL_SAVE_MESSAGE,
+    });
+    // The refused conversation row stops the save before the transcript mirror.
+    expect(mockKV._data.size).toBe(0);
   });
 });
 

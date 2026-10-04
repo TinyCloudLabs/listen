@@ -1,4 +1,5 @@
 import type { DelegatedAccess } from "@listen/server";
+import { storageErrorCode, storageSaveMessage } from "@listen/core";
 import { OtterClient } from "./otter-client.js";
 import { readOtterCookieResult } from "./otter-secret.js";
 import { runOtterSync } from "./otter-sync-runner.js";
@@ -20,6 +21,8 @@ export function startOtterAutoSync(config: AutoSyncConfig): () => void {
   const makeClient = config.createClient ?? ((cookie) => new OtterClient(cookie));
   const log = config.log ?? ((msg) => console.log(`[otter-autosync] ${msg}`));
   let running = false;
+  // Log a storage-full stop once, not on every tick while storage stays full.
+  let storageFullLogged = false;
 
   const tick = async () => {
     if (running) return;
@@ -36,9 +39,18 @@ export function startOtterAutoSync(config: AutoSyncConfig): () => void {
       if (summary.synced || summary.failed) {
         log(`synced ${summary.synced}, skipped ${summary.skipped}, failed ${summary.failed}`);
       }
-    } catch {
-      // logs are public — never echo cookie/upstream detail
-      log("auto-sync tick failed");
+      storageFullLogged = false;
+    } catch (err) {
+      // runOtterSync already stopped at the first storage rejection; the next scheduled
+      // tick tries one write again, so sync resumes once storage frees up.
+      const storageCode = storageErrorCode(err);
+      if (storageCode) {
+        if (!storageFullLogged) log(`auto-sync stopped: ${storageSaveMessage(storageCode)}`);
+        storageFullLogged = true;
+      } else {
+        // logs are public — never echo cookie/upstream detail
+        log("auto-sync tick failed");
+      }
     } finally {
       running = false;
     }

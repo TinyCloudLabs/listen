@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
 import { ensureSchema } from "../schema.js";
+import { sendStorageError } from "../storage-errors.js";
 
 interface SchemaRoutesConfig {
   authMiddleware: RequestHandler;
@@ -31,6 +32,7 @@ export function createSchemaRouter(config: SchemaRoutesConfig) {
       await ensureSchema(access);
       res.json({ ok: true });
     } catch (error) {
+      if (sendStorageError(res, error)) return;
       const message = error instanceof Error ? error.message : String(error);
       res.status(400).json({ ok: false, error: { message } });
     }

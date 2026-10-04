@@ -44,3 +44,29 @@ export const COLUMN_MIGRATION_STATEMENTS = [
 export const COLUMN_MIGRATION_ALREADY_APPLIED_STATEMENTS = [
   "UPDATE conversation SET id = id WHERE 1 = 0",
 ];
+
+/**
+ * Read-only probes that succeed only when every table and column the
+ * migrations above create already exists. `LIMIT 0` keeps them free of row
+ * data.
+ */
+export const SCHEMA_PROBE_STATEMENTS = [
+  `SELECT id, title, source, source_id, source_url, started_at, ended_at, duration_secs, summary, metadata, created_at, updated_at, transcript_json, transcript_text
+     FROM conversation LIMIT 0`,
+  "SELECT id, conversation_id, name, email, speaker_label FROM participant LIMIT 0",
+];
+
+/**
+ * Read-first schema check: true when the conversations schema is current, so
+ * callers can skip migrations entirely. Opening Listen must not write, because
+ * a full TinyCloud account refuses writes while reads keep working. Any failed
+ * or thrown probe reports false and the caller migrates as before.
+ */
+export async function conversationSchemaIsCurrent(
+  query: (sql: string) => Promise<unknown>,
+): Promise<boolean> {
+  const results = await Promise.all(
+    SCHEMA_PROBE_STATEMENTS.map((sql) => query(sql).catch(() => null)),
+  );
+  return results.every((result) => (result as { ok?: unknown } | null)?.ok === true);
+}

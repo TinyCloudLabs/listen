@@ -2,6 +2,7 @@ import type { DelegatedAccess } from "@listen/server";
 import type { NormalizedConversation } from "../adapters/types.js";
 import { resolveAppPath } from "../manifest.js";
 import { conversationSql } from "../schema.js";
+import { throwIfStorageRejected } from "../storage-errors.js";
 import {
   type NormalizedTranscriptSentence,
   normalizeConversationMetadata,
@@ -15,7 +16,7 @@ export async function persistTranscriptBlob(
 ): Promise<void> {
   const kvKey = resolveAppPath(`transcript/${conversationId}`);
   const transcriptJson = transcriptJsonForStorage(transcript);
-  await access.kv.put(kvKey, transcriptJson);
+  throwIfStorageRejected(await access.kv.put(kvKey, transcriptJson));
 }
 
 export function transcriptJsonForStorage(transcript: unknown): string {
@@ -74,10 +75,11 @@ export async function updateConversationTranscriptFields(
   const sqlDb = conversationSql(access);
   const { transcriptJson, transcriptText } = transcriptFieldsForStorage(transcript);
 
-  await sqlDb.execute(
+  const result = await sqlDb.execute(
     `UPDATE conversation SET transcript_json = ?, transcript_text = ?, updated_at = ? WHERE id = ?`,
     [transcriptJson, transcriptText, new Date().toISOString(), conversationId],
   );
+  throwIfStorageRejected(result);
 }
 
 /**
@@ -97,7 +99,7 @@ export async function persistConversation(
   );
   const { transcriptJson, transcriptText } = transcriptFieldsForStorage(normalized.transcript);
 
-  await sqlDb.execute(
+  const inserted = await sqlDb.execute(
     `INSERT INTO conversation (id, title, source, source_id, source_url, started_at, ended_at, duration_secs, summary, metadata, transcript_json, transcript_text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       normalized.conversation.id,
@@ -116,6 +118,7 @@ export async function persistConversation(
       now,
     ],
   );
+  throwIfStorageRejected(inserted);
 
   // 2. INSERT participant rows
   if (normalized.participants.length > 0) {
@@ -128,10 +131,11 @@ export async function persistConversation(
       participant.speaker_label,
     ]);
 
-    await sqlDb.execute(
+    const participantsInserted = await sqlDb.execute(
       `INSERT INTO participant (id, conversation_id, name, email, speaker_label) VALUES ${placeholders}`,
       params,
     );
+    throwIfStorageRejected(participantsInserted);
   }
 
   // 3. Write transcript to SQL, with KV retained as a compatibility mirror

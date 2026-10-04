@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { STORAGE_FULL_SAVE_MESSAGE } from "@listen/core";
 import express from "express";
 import type { Server } from "http";
 import type { Request, Response, NextFunction } from "express";
@@ -80,6 +81,7 @@ function createMockSQL() {
   let dedupRows: Array<{ id: string; source_id: string }> = [];
   const transcriptRows = new Set<string>();
   const failingSourceIds = new Set<string>();
+  const storageFullSourceIds = new Set<string>();
 
   return {
     _calls: calls,
@@ -98,6 +100,10 @@ function createMockSQL() {
      */
     _failOnSourceId(id: string) {
       failingSourceIds.add(id);
+    },
+    /** Refuses any INSERT carrying the given source_id the way SDK 2.8.0 reports a node 402. */
+    _rejectForStorageOnSourceId(id: string) {
+      storageFullSourceIds.add(id);
     },
     query: async (sql: string, params?: any[]) => {
       calls.push({ method: "query", sql, params });
@@ -155,6 +161,9 @@ function createMockSQL() {
             }
           }
         }
+        if (params?.some((p) => typeof p === "string" && storageFullSourceIds.has(p))) {
+          return { ok: false, error: STORAGE_FULL_SQL_ERROR };
+        }
         return { ok: true, data: { changes: 1 } };
       }
 
@@ -162,6 +171,11 @@ function createMockSQL() {
     },
   };
 }
+
+const STORAGE_FULL_SQL_ERROR = {
+  code: "NETWORK_ERROR",
+  message: "SQL execute failed: 402 - Storage quota exceeded. Used: 155744 bytes, Limit: 0 bytes",
+};
 
 // ── Mock Fireflies Client Factory ────────────────────────────────────
 
@@ -286,6 +300,24 @@ function createMockClientFactory() {
       };
     },
   };
+}
+
+/** Lists and serves ff-1..ff-3, with storage refusing the ff-2 insert. */
+function seedStorageFullAtSecondTranscript(
+  clientFactory: {
+    setListResult(transcripts: FullTranscript[]): void;
+    setGetResult(id: string, result: FullTranscript): void;
+  },
+  mockSQL: {
+    _setDedupRows(rows: Array<{ source_id: string }>): void;
+    _rejectForStorageOnSourceId(id: string): void;
+  },
+) {
+  const ids = ["ff-1", "ff-2", "ff-3"];
+  clientFactory.setListResult(ids.map((id) => createMockFullTranscript({ id, title: id })));
+  for (const id of ids) clientFactory.setGetResult(id, createMockFullTranscript({ id, title: id }));
+  mockSQL._setDedupRows([]);
+  mockSQL._rejectForStorageOnSourceId("ff-2");
 }
 
 // ── Test Helpers ─────────────────────────────────────────────────────
@@ -630,6 +662,26 @@ describe("Sync Routes — POST /api/sync/fireflies", () => {
     expect(body.errors).toHaveLength(1);
     expect(body.errors[0]).toContain("ff-2");
     expect(body.conversations).toHaveLength(2);
+  });
+
+  it("stops at the first storage rejection and answers with the storage-full copy", async () => {
+    mockKV._data.set(KV_KEY, "test-api-key");
+    seedStorageFullAtSecondTranscript(clientFactory, mockSQL);
+
+    const res = await fetch(`http://localhost:${port}/api/sync/fireflies`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    expect(res.status).toBe(402);
+    expect(await res.json()).toEqual({
+      error: "storage_quota_exceeded",
+      code: "STORAGE_QUOTA_EXCEEDED",
+      message: STORAGE_FULL_SAVE_MESSAGE,
+    });
+    // Storage refused ff-2, so ff-3 is never attempted.
+    expect(clientFactory.getGetCalls()).toEqual(["ff-1", "ff-2"]);
   });
 
   // ── Missing API key ─────────────────────────────────────────────
@@ -1061,6 +1113,31 @@ describe("Sync Routes — Fireflies background jobs", () => {
     expect(await current.json()).toMatchObject({ id: started.id, status: "completed" });
   });
 
+  it("fails the job with the storage-full copy at the first storage rejection", async () => {
+    mockKV._data.set(KV_KEY, "test-api-key");
+    seedStorageFullAtSecondTranscript(clientFactory, mockSQL);
+
+    const res = await fetch(`http://localhost:${port}/api/sync/fireflies/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "incremental" }),
+    });
+    expect(res.status).toBe(202);
+    const started = await res.json();
+
+    const finished = await waitForFirefliesJob(
+      port,
+      started.id,
+      (job) => job.status === "failed" || job.status === "completed",
+    );
+
+    expect(finished.status).toBe("failed");
+    expect(finished.message).toBe(STORAGE_FULL_SAVE_MESSAGE);
+    // ff-1 was saved before storage refused ff-2; ff-3 is never attempted.
+    expect(finished.synced).toBe(1);
+    expect(clientFactory.getGetCalls()).toEqual(["ff-1", "ff-2"]);
+  });
+
   it("does not return a Fireflies job id when backend job persistence fails", async () => {
     mockKV._data.set(KV_KEY, "test-api-key");
     backendKV._failNextPut("backend job KV denied");
@@ -1343,6 +1420,21 @@ describe("Sync Routes — GET /api/sync/fireflies/stream", () => {
     expect(complete!.data.synced).toBe(1);
     expect(complete!.data.failed).toBe(1);
     expect(complete!.data.errors).toHaveLength(1);
+  });
+
+  it("ends the stream with the storage-full copy at the first storage rejection", async () => {
+    mockKV._data.set(KV_KEY, "test-api-key");
+    seedStorageFullAtSecondTranscript(clientFactory, mockSQL);
+
+    const res = await fetch(`http://localhost:${port}/api/sync/fireflies/stream`);
+    const events = parseSSEText(await res.text());
+
+    expect(events.find((e) => e.type === "complete")).toBeUndefined();
+    expect(events.find((e) => e.type === "error")?.data).toEqual({
+      code: "STORAGE_QUOTA_EXCEEDED",
+      message: STORAGE_FULL_SAVE_MESSAGE,
+    });
+    expect(clientFactory.getGetCalls()).toEqual(["ff-1", "ff-2"]);
   });
 });
 

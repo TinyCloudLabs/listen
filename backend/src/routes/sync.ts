@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
 import type { DelegatedAccess } from "@listen/server";
 import { randomUUID } from "node:crypto";
+import { isStorageFullError, storageErrorCode, storageSaveMessage } from "@listen/core";
 import {
   FirefliesClient,
   FirefliesRateLimitError,
@@ -16,6 +17,7 @@ import {
 import { readFirefliesApiKeyResult } from "../services/fireflies-secret.js";
 import type { SourceSecretResult } from "../services/source-secret.js";
 import { resolveAppPath } from "../manifest.js";
+import { sendStorageError, throwIfStorageRejected } from "../storage-errors.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -363,7 +365,8 @@ async function processFirefliesSyncWork({
         }
       }
     } catch (err) {
-      if (err instanceof FirefliesRateLimitError) throw err;
+      // Storage full refuses every later write too: stop at the first rejection.
+      if (err instanceof FirefliesRateLimitError || isStorageFullError(err)) throw err;
       failed++;
       const message = err instanceof Error ? err.message : String(err);
       errors.push(`${summary.id}: ${message}`);
@@ -513,7 +516,13 @@ function runFirefliesJob({
         message: "Sync complete.",
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      // Items saved before a storage rejection keep their counts from the last progress update.
+      const storageCode = storageErrorCode(err);
+      const message = storageCode
+        ? storageSaveMessage(storageCode)
+        : err instanceof Error
+          ? err.message
+          : String(err);
       await updateJob({
         status: "failed",
         completedAt: new Date().toISOString(),
@@ -866,6 +875,7 @@ export function createSyncRouter(config: SyncRoutesConfig) {
       res.json(result);
     } catch (err) {
       console.error("[sync] fireflies sync failed:", err);
+      if (sendStorageError(res, err)) return;
       if (err instanceof FirefliesRateLimitError) {
         res.status(429).json({
           error: "fireflies_rate_limited",
@@ -985,6 +995,12 @@ export function createSyncRouter(config: SyncRoutesConfig) {
       sendEvent("complete", result);
     } catch (err) {
       console.error("[sync] SSE fireflies sync failed:", err);
+      const storageCode = storageErrorCode(err);
+      if (storageCode) {
+        sendEvent("error", { code: storageCode, message: storageSaveMessage(storageCode) });
+        res.end();
+        return;
+      }
       if (err instanceof FirefliesRateLimitError) {
         sendEvent("error", {
           code: "fireflies_rate_limited",
@@ -1080,15 +1096,18 @@ export function createSyncRouter(config: SyncRoutesConfig) {
             metadata.keywords = keywords;
             metadata.meeting_type = meetingType;
 
-            await sqlDb.execute(
+            const updateResult = await sqlDb.execute(
               `UPDATE conversation SET summary = ?, metadata = ?, updated_at = ? WHERE id = ?`,
               [overview, JSON.stringify(metadata), now, row.id],
             );
+            throwIfStorageRejected(updateResult);
             updated++;
           } else {
             stillMissing++;
           }
         } catch (err) {
+          // Storage full refuses every later update too: stop at the first rejection.
+          if (isStorageFullError(err)) throw err;
           // If re-fetch fails, count as still missing
           console.error(`[backfill] Failed to re-fetch ${row.source_id}:`, err);
           stillMissing++;
@@ -1098,6 +1117,7 @@ export function createSyncRouter(config: SyncRoutesConfig) {
       res.json({ updated, still_missing: stillMissing, remaining, checked: rows.length });
     } catch (err) {
       console.error("[backfill] summary backfill failed:", err);
+      if (sendStorageError(res, err)) return;
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({
         error: "backfill_failed",
@@ -1117,6 +1137,7 @@ export function createSyncRouter(config: SyncRoutesConfig) {
       res.json({ ok: true, message: "All conversations cleared. Re-sync to repopulate." });
     } catch (err) {
       console.error("[sync] clear failed:", err);
+      if (sendStorageError(res, err)) return;
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: "clear_failed", message });
     }

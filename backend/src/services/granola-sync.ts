@@ -1,4 +1,5 @@
 import type { DelegatedAccess } from "@listen/server";
+import { isStorageFullError } from "@listen/core";
 import type { GranolaNote } from "./granola-client.js";
 import { normalizeGranola } from "../adapters/granola.js";
 import { persistConversation } from "./persist-conversation.js";
@@ -27,6 +28,8 @@ export async function persistGranolaNote(
       startedAt: normalized.conversation.started_at,
     };
   } catch (err) {
+    // Storage full refuses every later write too; callers stop their loops on it.
+    if (isStorageFullError(err)) throw err;
     const message = err instanceof Error ? err.message : String(err);
     return { status: "error", noteId: note.id, error: message };
   }

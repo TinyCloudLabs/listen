@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
 import type { DelegatedAccess } from "@listen/server";
 import { randomUUID } from "node:crypto";
+import { isStorageFullError, storageErrorCode, storageSaveMessage } from "@listen/core";
 import { conversationSql, ensureSchema } from "../schema.js";
 import { GranolaApiError, GranolaClient } from "../services/granola-client.js";
 import type { GranolaNoteSummary } from "../services/granola-client.js";
@@ -218,6 +219,8 @@ async function syncGranolaNotes({
         errors.push(`${summary.id}: ${result.error}`);
       }
     } catch (err) {
+      // Storage full refuses every later write too: stop at the first rejection.
+      if (isStorageFullError(err)) throw err;
       failed++;
       const message = err instanceof Error ? err.message : String(err);
       errors.push(`${summary.id}: ${message}`);
@@ -339,7 +342,13 @@ function runGranolaJob({
         message: "Sync complete.",
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      // Items saved before a storage rejection keep their counts from the last progress update.
+      const storageCode = storageErrorCode(err);
+      const message = storageCode
+        ? storageSaveMessage(storageCode)
+        : err instanceof Error
+          ? err.message
+          : String(err);
       await updateJob({
         status: "failed",
         completedAt: new Date().toISOString(),
@@ -699,6 +708,8 @@ export function createGranolaSyncRouter(config: GranolaSyncRoutesConfig) {
             errors.push(`${summary.id}: ${result.error}`);
           }
         } catch (err) {
+          // Storage full refuses every later write too: stop at the first rejection.
+          if (isStorageFullError(err)) throw err;
           failed++;
           const message = err instanceof Error ? err.message : String(err);
           errors.push(`${summary.id}: ${message}`);
@@ -717,6 +728,12 @@ export function createGranolaSyncRouter(config: GranolaSyncRoutesConfig) {
       sendEvent("complete", { synced, skipped, failed, errors, conversations });
     } catch (err) {
       console.error("[sync] Granola sync failed:", err);
+      const storageCode = storageErrorCode(err);
+      if (storageCode) {
+        sendEvent("error", { code: storageCode, message: storageSaveMessage(storageCode) });
+        res.end();
+        return;
+      }
       if (err instanceof GranolaApiError && err.status === 429) {
         sendEvent("error", { code: "granola_rate_limited", message: err.message });
         res.end();
