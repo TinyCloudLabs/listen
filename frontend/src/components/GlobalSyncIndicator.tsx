@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApiClient } from "@listen/client";
 import { storageErrorCode, storageSaveMessage } from "@listen/core";
-import { markStorageFull, noteSyncSaves } from "../lib/storageStatus";
+import { isSupersededStorageFailure, markStorageFull, noteSyncSaves } from "../lib/storageStatus";
 
 // Ambient, app-wide sync status. Sync jobs run server-side and persist in KV,
 // but their progress was previously visible only while the Connections page
@@ -21,6 +21,8 @@ interface SyncJobLite {
   skipped?: number;
   failed: number;
   message?: string;
+  completedAt?: string;
+  updatedAt?: string;
 }
 
 interface SyncSourceConfig {
@@ -107,8 +109,12 @@ export function GlobalSyncIndicator({ api, onViewResults }: GlobalSyncIndicatorP
         if (lastStatus !== job.status) {
           const watched = lastStatus !== undefined && isActiveStatus(lastStatus);
           // A storage stop puts the app in read-only mode even when the job
-          // failed before mount; a completion confirms saves only when watched.
-          const storageCode = job.status === "failed" ? storageErrorCode(job) : null;
+          // failed before mount, unless a later save already superseded it;
+          // a completion confirms saves only when watched.
+          const storageCode =
+            job.status === "failed" && !isSupersededStorageFailure(job, watched)
+              ? storageErrorCode(job)
+              : null;
           if (storageCode) markStorageFull();
           else if (watched && job.status === "completed") noteSyncSaves(job);
 

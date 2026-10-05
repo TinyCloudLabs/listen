@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type FC } from "react";
 import type { ApiClient } from "@listen/client";
 import { previewTranscriptParse } from "@listen/core";
 import { MAX_TRANSCRIPTION_FILE_BYTES, fileToBase64, formatFileSize } from "../lib/fileEncoding";
-import { clearStorageFull, storageAwareError } from "../lib/storageStatus";
+import { confirmStorageWritable, storageAwareError } from "../lib/storageStatus";
 
 // One door for every way a transcript gets into Listen: paste text, upload a
 // recording, connect a sync source, or use the CLI importer. Reachable from
@@ -128,7 +128,7 @@ export const AddTranscriptHub: FC<AddTranscriptHubProps> = ({
         transcriptText,
         startedAt: pasteStartedAt ? new Date(pasteStartedAt).toISOString() : undefined,
       });
-      clearStorageFull();
+      confirmStorageWritable();
       onImported(result.conversationId);
     } catch (err) {
       setPasteError(errorMessage(err));
@@ -151,7 +151,7 @@ export const AddTranscriptHub: FC<AddTranscriptHubProps> = ({
         contentType: uploadFile.type || "application/octet-stream",
         contentBase64: await fileToBase64(uploadFile),
       });
-      clearStorageFull();
+      confirmStorageWritable();
       onImported(result.conversationId);
     } catch (err) {
       setUploadError(errorMessage(err));

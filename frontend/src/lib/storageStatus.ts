@@ -3,9 +3,13 @@ import { StorageFullError, storageErrorCode } from "@listen/core";
 
 // Read-only state entered on the first storage rejection (spec §4.5): the
 // owner's TinyCloud storage is full, reads keep working, saves are paused.
-// Cleared by the next successful write.
+// Left by the next confirmed save. The ordering of failures and recovery lives
+// here, not in components, so a remounted component that reloads an old failed
+// sync job cannot re-enter read-only after a later save.
 
 let storageFull = false;
+/** Epoch ms when a save last confirmed storage accepts writes; 0 = not yet. */
+let writableConfirmedAt = 0;
 const listeners = new Set<() => void>();
 
 function setStorageFull(next: boolean): void {
@@ -18,7 +22,15 @@ export function markStorageFull(): void {
   setStorageFull(true);
 }
 
+/** A save just succeeded: leave read-only and supersede earlier storage failures. */
+export function confirmStorageWritable(): void {
+  writableConfirmedAt = Date.now();
+  setStorageFull(false);
+}
+
+/** Forget all storage state, e.g. on sign-out before another account signs in. */
 export function clearStorageFull(): void {
+  writableConfirmedAt = 0;
   setStorageFull(false);
 }
 
@@ -47,7 +59,26 @@ export interface SyncSaveCounts {
  * proves nothing, so neither clears the notice.
  */
 export function noteSyncSaves(counts: SyncSaveCounts | null | undefined): void {
-  if ((counts?.synced ?? 0) + (counts?.repaired ?? 0) > 0) clearStorageFull();
+  if ((counts?.synced ?? 0) + (counts?.repaired ?? 0) > 0) confirmStorageWritable();
+}
+
+/** A finished sync job as the job-current endpoints report it. */
+export interface FinishedSyncJob {
+  message?: string;
+  completedAt?: string;
+  updatedAt?: string;
+}
+
+/**
+ * True when `job` failed for storage but a save confirmed storage writable
+ * after the job finished, so the failure no longer describes storage now. A
+ * failure watched live is always current. A job without a finish time is
+ * treated as stale once a save has been confirmed, since it cannot be ordered.
+ */
+export function isSupersededStorageFailure(job: FinishedSyncJob, watched = false): boolean {
+  if (watched || writableConfirmedAt === 0 || !storageErrorCode(job)) return false;
+  const finishedAt = Date.parse(job.completedAt ?? job.updatedAt ?? "");
+  return !(finishedAt > writableConfirmedAt);
 }
 
 /**

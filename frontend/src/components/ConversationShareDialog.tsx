@@ -9,7 +9,7 @@ import {
   needsLegacyTranscriptKvGrant,
   type ShareableConversationDetail,
 } from "../lib/listenShareLinks";
-import { clearStorageFull, storageAwareError } from "../lib/storageStatus";
+import { confirmStorageWritable, storageAwareError } from "../lib/storageStatus";
 
 interface ConversationShareDialogProps {
   api: ApiClient;
@@ -96,7 +96,7 @@ export const ConversationShareDialog: FC<ConversationShareDialogProps> = ({
         includeAudio: includeAudio && audioAvailable,
         durationDays,
       });
-      clearStorageFull();
+      confirmStorageWritable();
       setLink(result.link);
       await copyText(result.link);
     } catch (err) {

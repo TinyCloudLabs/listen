@@ -3,7 +3,12 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import { STORAGE_FULL_SAVE_MESSAGE } from "@listen/core";
 import type { ApiClient } from "@listen/client";
 import { GlobalSyncIndicator } from "../GlobalSyncIndicator";
-import { clearStorageFull, isStorageFull, markStorageFull } from "../../lib/storageStatus";
+import {
+  clearStorageFull,
+  confirmStorageWritable,
+  isStorageFull,
+  markStorageFull,
+} from "../../lib/storageStatus";
 
 function firefliesJob(overrides: Record<string, unknown> = {}) {
   return { id: "job-1", status: "syncing", synced: 0, failed: 0, ...overrides };
@@ -50,7 +55,7 @@ describe("GlobalSyncIndicator", () => {
     expect(isStorageFull()).toBe(true);
 
     // Re-reading the same stale job after a later save must not re-enter read-only.
-    act(() => clearStorageFull());
+    act(() => confirmStorageWritable());
     await nextPoll();
     expect(isStorageFull()).toBe(false);
   });
@@ -87,5 +92,53 @@ describe("GlobalSyncIndicator", () => {
 
     await nextPoll();
     expect(isStorageFull()).toBe(false);
+  });
+
+  it("does not re-enter read-only when a remount reloads a failure a later save superseded", async () => {
+    vi.setSystemTime(new Date("2026-10-05T10:00:00Z"));
+    const staleFailure = firefliesJob({
+      status: "failed",
+      message: STORAGE_FULL_SAVE_MESSAGE,
+      completedAt: "2026-10-05T09:59:00Z",
+    });
+    const first = render(<GlobalSyncIndicator api={apiServing([staleFailure])} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(isStorageFull()).toBe(true);
+
+    // The owner frees space and a save succeeds; then the indicator remounts
+    // (route change, mobile shell) and reloads the same old job.
+    act(() => confirmStorageWritable());
+    first.unmount();
+    render(<GlobalSyncIndicator api={apiServing([staleFailure])} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(isStorageFull()).toBe(false);
+  });
+
+  it("still enters read-only for a storage failure that finished after the last save", async () => {
+    vi.setSystemTime(new Date("2026-10-05T10:00:00Z"));
+    act(() => confirmStorageWritable());
+
+    render(
+      <GlobalSyncIndicator
+        api={apiServing([
+          firefliesJob({
+            id: "job-2",
+            status: "failed",
+            message: STORAGE_FULL_SAVE_MESSAGE,
+            completedAt: "2026-10-05T10:05:00Z",
+          }),
+        ])}
+      />,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(isStorageFull()).toBe(true);
   });
 });

@@ -10,7 +10,7 @@ import {
   isStorageFullError,
 } from "@listen/core";
 import { normalizeAppRelativeKvKey, resolveAppKvPath, resolveAppSqlPath } from "./appManifest";
-import { clearStorageFull, isStorageFull, storageAwareError } from "./storageStatus";
+import { confirmStorageWritable, isStorageFull, storageAwareError } from "./storageStatus";
 
 export const DATABASE_NAME = resolveAppSqlPath("conversations");
 const DEFAULT_LIMIT = 20;
@@ -726,7 +726,7 @@ async function getFromTinyCloud(
 async function storageAwareWrite<T>(path: string, write: Promise<T>): Promise<T> {
   try {
     const result = await write;
-    if (path.startsWith("/api/conversations")) clearStorageFull();
+    if (path.startsWith("/api/conversations")) confirmStorageWritable();
     return result;
   } catch (error) {
     throw storageAwareError(error);

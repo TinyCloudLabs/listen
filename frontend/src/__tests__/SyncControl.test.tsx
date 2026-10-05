@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
+import { act, render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
 import { SyncControl } from "../components/SyncControl";
-import { clearStorageFull, isStorageFull, markStorageFull } from "../lib/storageStatus";
+import {
+  clearStorageFull,
+  confirmStorageWritable,
+  isStorageFull,
+  markStorageFull,
+} from "../lib/storageStatus";
 import { STORAGE_FULL_SAVE_MESSAGE } from "@listen/core";
 import { ApiRequestError, type ApiClient } from "@listen/client";
 
@@ -885,5 +890,42 @@ describe("SyncControl", () => {
     fireEvent.click(screen.getByRole("button", { name: /sync fireflies/i }));
     await waitFor(() => expect(onSyncComplete).toHaveBeenCalledTimes(1));
     expect(isStorageFull()).toBe(false);
+  });
+
+  it("does not re-enter read-only when a remount reloads a failure a later save superseded", async () => {
+    const staleFailure = firefliesJob({
+      status: "failed",
+      message: STORAGE_FULL_SAVE_MESSAGE,
+      completedAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+    const getMock = vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/config/webhook-status") {
+        return Promise.resolve({ configured: false, pendingCount: 0, webhookUrl: "" });
+      }
+      if (url === "/api/sync/fireflies/jobs/current") return Promise.resolve(staleFailure);
+      return Promise.resolve(null);
+    });
+    api = mockApi({ get: getMock });
+    const props = {
+      api,
+      backendUrl: "http://localhost:3001",
+      getAccessToken,
+      onSyncComplete,
+      hasFireflies: true,
+    };
+
+    const first = render(<SyncControl {...props} />);
+    await waitFor(() => expect(isStorageFull()).toBe(true));
+
+    // A save succeeds after the job failed; then the inbox remounts.
+    act(() => confirmStorageWritable());
+    first.unmount();
+    getMock.mockClear();
+    render(<SyncControl {...props} />);
+    await waitFor(() => expect(getMock).toHaveBeenCalledWith("/api/sync/fireflies/jobs/current"));
+    await act(async () => {});
+
+    expect(isStorageFull()).toBe(false);
+    expect(screen.queryByText(STORAGE_FULL_SAVE_MESSAGE)).not.toBeInTheDocument();
   });
 });

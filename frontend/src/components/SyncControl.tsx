@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, type FC } from "react";
 import type { ApiClient } from "@listen/client";
 import { StorageFullError } from "@listen/core";
 import { debugFetch, debugLog, startDebugStep } from "../lib/debug";
-import { noteSyncSaves, storageAwareError } from "../lib/storageStatus";
+import { isSupersededStorageFailure, noteSyncSaves, storageAwareError } from "../lib/storageStatus";
 
 const LAST_SYNC_KEY = "lastSyncTimestamp";
 const FIREFLIES_JOB_NOT_FOUND_RETRY_LIMIT = 8;
@@ -46,6 +46,8 @@ interface FirefliesSyncJob {
   status: FirefliesSyncJobStatus;
   mode: "incremental" | "full";
   message?: string;
+  completedAt?: string;
+  updatedAt?: string;
   batch?: number;
   totalListed?: number;
   current?: number;
@@ -72,6 +74,8 @@ interface GoogleMeetSyncJob {
   status: GoogleMeetSyncJobStatus;
   mode: "incremental" | "full";
   message?: string;
+  completedAt?: string;
+  updatedAt?: string;
   checked: number;
   totalListed?: number;
   current?: number;
@@ -93,6 +97,8 @@ interface GranolaSyncJob {
   status: GranolaSyncJobStatus;
   mode: "incremental" | "full";
   message?: string;
+  completedAt?: string;
+  updatedAt?: string;
   batch?: number;
   totalListed?: number;
   current?: number;
@@ -445,7 +451,8 @@ export const SyncControl: FC<SyncControlProps> = ({
           failed: job.failed,
           errors: job.errors,
         });
-      } else if (job.status === "failed") {
+      } else if (job.status === "failed" && !isSupersededStorageFailure(job, watched)) {
+        // A storage stop that a later save superseded says nothing about storage now.
         setError(errorMessage(job.message ?? "Fireflies sync failed."));
       }
     },
@@ -503,7 +510,7 @@ export const SyncControl: FC<SyncControlProps> = ({
           failed: job.failed,
           errors: job.errors,
         });
-      } else if (job.status === "failed") {
+      } else if (job.status === "failed" && !isSupersededStorageFailure(job, watched)) {
         setError(errorMessage(job.message ?? "Granola sync failed."));
       }
     },
@@ -567,7 +574,7 @@ export const SyncControl: FC<SyncControlProps> = ({
           failed: job.failed,
           errors: job.errors,
         });
-      } else if (job.status === "failed") {
+      } else if (job.status === "failed" && !isSupersededStorageFailure(job, watched)) {
         setError(errorMessage(job.message ?? "Google Meet sync failed."));
       }
     },

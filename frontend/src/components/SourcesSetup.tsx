@@ -3,7 +3,7 @@ import type { ApiClient } from "@listen/client";
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
 import { MAX_TRANSCRIPTION_FILE_BYTES, fileToBase64, formatFileSize } from "../lib/fileEncoding";
 import { sourceNeedsConsent, type DelegationLifecycleState } from "../lib/delegationState";
-import { clearStorageFull, noteSyncSaves, storageAwareError } from "../lib/storageStatus";
+import { confirmStorageWritable, noteSyncSaves, storageAwareError } from "../lib/storageStatus";
 
 type SetupMode = "onboarding" | "sources";
 type SetupStep =
@@ -696,7 +696,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
         sourceUrl: importSourceUrl.trim(),
         summary: importSummary.trim(),
       });
-      clearStorageFull();
+      confirmStorageWritable();
       setImportedConversationId(result.conversationId);
       setStep("transcript-success");
     } catch (err) {
@@ -735,7 +735,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
           ? new Date(transcriptionStartedAt).toISOString()
           : undefined,
       });
-      clearStorageFull();
+      confirmStorageWritable();
       setImportedConversationId(result.conversationId);
       setStep("transcript-success");
     } catch (err) {
@@ -1981,7 +1981,7 @@ async function putSecret(tcw: TinyCloudWeb, name: string, value: string): Promis
     const error = storageAwareError(result.error);
     throw error === result.error ? new Error(result.error.message) : error;
   }
-  clearStorageFull();
+  confirmStorageWritable();
 }
 
 function errorMessage(err: unknown): string {
