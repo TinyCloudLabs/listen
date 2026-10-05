@@ -44,7 +44,7 @@ import { useIsMobile } from "./hooks/useIsMobile";
 import { APP_MANIFEST } from "./lib/appManifest";
 import { debugFetch, debugLog, startDebugStep } from "./lib/debug";
 import { purgeListenLocalData } from "./lib/localData";
-import { clearStorageFull, storageAwareError } from "./lib/storageStatus";
+import { clearStorageFull, confirmStorageWritable, storageAwareError } from "./lib/storageStatus";
 import { createTinyCloudConversationApi } from "./lib/tinycloudConversations";
 import { readShareTokenFromLocation } from "./lib/listenShareLinks";
 import {
@@ -1865,6 +1865,7 @@ export function App() {
       .then((result) => {
         const count = result.processed?.length ?? 0;
         if (count > 0) {
+          confirmStorageWritable();
           setPendingBanner(
             `Processed ${count} new transcript${count === 1 ? "" : "s"} from webhooks`,
           );
@@ -1879,7 +1880,10 @@ export function App() {
     api
       .post<{ updated: number; still_missing: number }>("/api/sync/backfill-summaries")
       .then((result) => {
-        if (result.updated > 0) setRefreshKey((k) => k + 1);
+        if (result.updated > 0) {
+          confirmStorageWritable();
+          setRefreshKey((k) => k + 1);
+        }
       })
       .catch((err) => console.error("[backfill]", storageAwareError(err)));
   }, [api, hasFirefliesBackendAccess]);
@@ -1903,6 +1907,7 @@ export function App() {
       .then((result) => {
         const count = result.processed?.length ?? 0;
         if (count > 0) {
+          confirmStorageWritable();
           setPendingBanner(
             `Processed ${count} Google Meet transcript${count === 1 ? "" : "s"} from webhooks`,
           );

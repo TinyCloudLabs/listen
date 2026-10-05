@@ -1,7 +1,12 @@
 import { useState, type FC } from "react";
 import type { ApiClient } from "@listen/client";
 import { useIsMobile } from "../hooks/useIsMobile";
-import { noteSyncSaves, storageAwareError, type SyncSaveCounts } from "../lib/storageStatus";
+import {
+  confirmStorageWritable,
+  noteSyncSaves,
+  storageAwareError,
+  type SyncSaveCounts,
+} from "../lib/storageStatus";
 
 interface ConnectionsScreenProps {
   api: ApiClient;
@@ -235,6 +240,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
     setMessage(null);
     try {
       const result = await api.post<MigrationResult>("/api/config/migrate-transcripts", {});
+      if (result.migrated > 0) confirmStorageWritable();
       setMessage(
         `Migrated ${result.migrated} transcript${result.migrated === 1 ? "" : "s"} (${result.skipped} current, ${result.missing} missing legacy KV).`,
       );

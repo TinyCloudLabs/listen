@@ -141,4 +141,53 @@ describe("GlobalSyncIndicator", () => {
 
     expect(isStorageFull()).toBe(true);
   });
+
+  it("stays cleared when a watched job's failure predates a later confirmed save", async () => {
+    vi.setSystemTime(new Date("2026-10-05T10:00:00Z"));
+    render(
+      <GlobalSyncIndicator
+        api={apiServing([
+          firefliesJob(),
+          // Failed at t1, but the poll only sees it after a save confirmed at t2.
+          firefliesJob({
+            status: "failed",
+            message: STORAGE_FULL_SAVE_MESSAGE,
+            completedAt: "2026-10-05T10:00:01Z",
+          }),
+        ])}
+      />,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    vi.setSystemTime(new Date("2026-10-05T10:00:02Z"));
+    act(() => confirmStorageWritable());
+    await nextPoll();
+
+    expect(isStorageFull()).toBe(false);
+  });
+
+  it("enters read-only when a watched job fails after the last confirmed save", async () => {
+    vi.setSystemTime(new Date("2026-10-05T10:00:00Z"));
+    act(() => confirmStorageWritable());
+    render(
+      <GlobalSyncIndicator
+        api={apiServing([
+          firefliesJob(),
+          firefliesJob({
+            status: "failed",
+            message: STORAGE_FULL_SAVE_MESSAGE,
+            completedAt: "2026-10-05T10:00:05Z",
+          }),
+        ])}
+      />,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await nextPoll();
+
+    expect(isStorageFull()).toBe(true);
+  });
 });

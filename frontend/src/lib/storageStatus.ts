@@ -71,14 +71,17 @@ export interface FinishedSyncJob {
 
 /**
  * True when `job` failed for storage but a save confirmed storage writable
- * after the job finished, so the failure no longer describes storage now. A
- * failure watched live is always current. A job without a finish time is
- * treated as stale once a save has been confirmed, since it cannot be ordered.
+ * after the job failed, so the failure no longer describes storage now. This
+ * holds for watched jobs too: a poll that only now sees a failure dated before
+ * the confirmation is a delayed observation, not a new failure. A job without
+ * a failure time cannot be ordered: a watched one is treated as current, one
+ * loaded after the fact as stale.
  */
 export function isSupersededStorageFailure(job: FinishedSyncJob, watched = false): boolean {
-  if (watched || writableConfirmedAt === 0 || !storageErrorCode(job)) return false;
-  const finishedAt = Date.parse(job.completedAt ?? job.updatedAt ?? "");
-  return !(finishedAt > writableConfirmedAt);
+  if (writableConfirmedAt === 0 || !storageErrorCode(job)) return false;
+  const failedAt = Date.parse(job.completedAt ?? job.updatedAt ?? "");
+  if (Number.isNaN(failedAt)) return !watched;
+  return failedAt <= writableConfirmedAt;
 }
 
 /**
