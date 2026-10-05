@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FC } from "react";
 import type { ApiClient } from "@listen/client";
 import { previewTranscriptParse } from "@listen/core";
 import { MAX_TRANSCRIPTION_FILE_BYTES, fileToBase64, formatFileSize } from "../lib/fileEncoding";
+import { clearStorageFull, storageAwareError } from "../lib/storageStatus";
 
 // One door for every way a transcript gets into Listen: paste text, upload a
 // recording, connect a sync source, or use the CLI importer. Reachable from
@@ -50,6 +51,12 @@ function formatPreviewDuration(secs: number): string {
   if (secs >= 3600) return `${(secs / 3600).toFixed(1)} hr`;
   if (secs >= 60) return `${Math.round(secs / 60)} min`;
   return `${Math.round(secs)} sec`;
+}
+
+/** A storage rejection enters read-only mode and reads as the spec's save copy. */
+function errorMessage(err: unknown): string {
+  const routed = storageAwareError(err);
+  return routed instanceof Error ? routed.message : String(routed);
 }
 
 export const AddTranscriptHub: FC<AddTranscriptHubProps> = ({
@@ -121,9 +128,10 @@ export const AddTranscriptHub: FC<AddTranscriptHubProps> = ({
         transcriptText,
         startedAt: pasteStartedAt ? new Date(pasteStartedAt).toISOString() : undefined,
       });
+      clearStorageFull();
       onImported(result.conversationId);
     } catch (err) {
-      setPasteError(err instanceof Error ? err.message : String(err));
+      setPasteError(errorMessage(err));
     } finally {
       setPasteSaving(false);
     }
@@ -143,9 +151,10 @@ export const AddTranscriptHub: FC<AddTranscriptHubProps> = ({
         contentType: uploadFile.type || "application/octet-stream",
         contentBase64: await fileToBase64(uploadFile),
       });
+      clearStorageFull();
       onImported(result.conversationId);
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : String(err));
+      setUploadError(errorMessage(err));
     } finally {
       setUploadSaving(false);
     }

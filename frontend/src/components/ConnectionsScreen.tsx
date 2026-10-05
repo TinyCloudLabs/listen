@@ -1,7 +1,7 @@
 import { useState, type FC } from "react";
 import type { ApiClient } from "@listen/client";
 import { useIsMobile } from "../hooks/useIsMobile";
-import { storageAwareError } from "../lib/storageStatus";
+import { noteSyncSaves, storageAwareError, type SyncSaveCounts } from "../lib/storageStatus";
 
 interface ConnectionsScreenProps {
   api: ApiClient;
@@ -183,9 +183,11 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
       } else if (source === "granola") {
         await api.post("/api/sync/granola/jobs", { mode: "incremental" });
       } else if (source === "soundcore") {
-        await api.post("/api/sync/soundcore", {});
+        // Soundcore and Google Meet sync inline and report what they saved;
+        // Fireflies and Granola only start a background job here.
+        noteSyncSaves(await api.post<SyncSaveCounts>("/api/sync/soundcore", {}));
       } else if (source === "google-meet") {
-        await api.post("/api/sync/google-meet");
+        noteSyncSaves(await api.post<SyncSaveCounts>("/api/sync/google-meet"));
       }
       setMessage(
         source === "fireflies"
@@ -212,9 +214,9 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
           } else if (source.id === "granola") {
             await api.post("/api/sync/granola/jobs", { mode: "incremental" });
           } else if (source.id === "soundcore") {
-            await api.post("/api/sync/soundcore", {});
+            noteSyncSaves(await api.post<SyncSaveCounts>("/api/sync/soundcore", {}));
           } else if (source.id === "google-meet") {
-            await api.post("/api/sync/google-meet");
+            noteSyncSaves(await api.post<SyncSaveCounts>("/api/sync/google-meet"));
           }
         }
       }

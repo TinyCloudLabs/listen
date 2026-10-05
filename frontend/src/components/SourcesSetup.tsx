@@ -3,7 +3,7 @@ import type { ApiClient } from "@listen/client";
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
 import { MAX_TRANSCRIPTION_FILE_BYTES, fileToBase64, formatFileSize } from "../lib/fileEncoding";
 import { sourceNeedsConsent, type DelegationLifecycleState } from "../lib/delegationState";
-import { clearStorageFull, storageAwareError } from "../lib/storageStatus";
+import { clearStorageFull, noteSyncSaves, storageAwareError } from "../lib/storageStatus";
 
 type SetupMode = "onboarding" | "sources";
 type SetupStep =
@@ -526,6 +526,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
         skippedNoTranscript: number;
         failed: number;
       }>("/api/sync/soundcore", {});
+      noteSyncSaves(result);
       setSoundcoreSyncMessage(
         `Synced ${result.synced} note${result.synced === 1 ? "" : "s"} (${result.skipped} already in Listen, ${result.skippedNoTranscript} without transcripts).`,
       );
@@ -695,6 +696,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
         sourceUrl: importSourceUrl.trim(),
         summary: importSummary.trim(),
       });
+      clearStorageFull();
       setImportedConversationId(result.conversationId);
       setStep("transcript-success");
     } catch (err) {
@@ -733,6 +735,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
           ? new Date(transcriptionStartedAt).toISOString()
           : undefined,
       });
+      clearStorageFull();
       setImportedConversationId(result.conversationId);
       setStep("transcript-success");
     } catch (err) {

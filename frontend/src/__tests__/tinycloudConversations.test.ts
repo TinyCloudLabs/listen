@@ -493,3 +493,49 @@ describe("storage full", () => {
     expect(isStorageFull()).toBe(false);
   });
 });
+
+describe("outdated schema while storage is full", () => {
+  afterEach(() => clearStorageFull());
+
+  it("reads detail from the legacy columns and the KV transcript", async () => {
+    // A database holding only the initial schema: migration 002 never ran, so any statement
+    // naming the transcript columns fails the way SQLite reports it.
+    const legacyRow = {
+      id: "01ABC",
+      title: "Planning",
+      source: "fireflies",
+      summary: "Roadmap",
+      metadata: "{}",
+      created_at: "2026-05-14T14:30:00Z",
+      updated_at: "2026-05-14T14:30:00Z",
+    };
+    const query = vi.fn(async (sql: string) => {
+      if (/transcript_(json|text)/.test(sql)) {
+        return { ok: false, error: { message: "no such column: transcript_json" } };
+      }
+      if (sql.includes("FROM conversation") && sql.includes("WHERE id = ?")) {
+        return { ok: true, data: toArrayRows([legacyRow]) };
+      }
+      return { ok: true, data: toArrayRows([]) };
+    });
+    // Storage is full, so seeding the transcript columns is refused.
+    const apply = vi.fn(async () => SQL_STORAGE_REJECTION);
+    const client = createTinyCloudConversationApi(
+      null,
+      mockTinyCloud(query, {
+        apply,
+        transcript: JSON.stringify([{ speakerName: "Ada", text: "Hello" }]),
+      }),
+    );
+
+    const result = await client.get<{
+      conversation: { id: string; title: string };
+      transcript: Array<{ text: string }>;
+    }>("/api/conversations/01ABC");
+
+    expect(isStorageFull()).toBe(true);
+    expect(result.conversation.id).toBe("01ABC");
+    expect(result.conversation.title).toBe("Planning");
+    expect(result.transcript[0]?.text).toBe("Hello");
+  });
+});

@@ -3,7 +3,8 @@ import express from "express";
 import type { Server } from "http";
 import type { Request, Response, NextFunction } from "express";
 import { Buffer } from "node:buffer";
-import { STORAGE_FULL_SAVE_MESSAGE } from "@listen/core";
+import { Database, type SQLQueryBindings } from "bun:sqlite";
+import { SCHEMA_STATEMENTS, STORAGE_FULL_SAVE_MESSAGE } from "@listen/core";
 import { createConversationsRouter } from "../routes/conversations.js";
 
 // ── Mock KV Store (matches real SDK: returns Result objects) ─────────
@@ -1397,5 +1398,84 @@ describe("Conversations Routes — PUT /api/conversations/:id", () => {
       body: JSON.stringify({}),
     });
     expect(noFields.status).toBe(400);
+  });
+});
+
+// ── Tests — outdated schema on a full account ─────────────────────────
+
+/**
+ * Real SQLite holding only the initial schema (before migration 002 added the
+ * transcript columns). Storage is full, so every write — including the column
+ * migration — is refused; reads run for real.
+ */
+function createLegacySqlite() {
+  const db = new Database(":memory:");
+  for (const statement of SCHEMA_STATEMENTS) db.run(statement);
+  db.run(
+    `INSERT INTO conversation (id, title, source, started_at, summary, metadata, created_at, updated_at)
+     VALUES ('conv-1', 'Sprint Planning', 'fireflies', '2026-03-20T10:00:00Z', 'Team goals', '{}',
+             '2026-03-20T12:00:00Z', '2026-03-20T12:00:00Z')`,
+  );
+  return {
+    query: async (sql: string, params: SQLQueryBindings[] = []) => {
+      try {
+        const statement = db.prepare(sql);
+        return {
+          ok: true,
+          data: { columns: statement.columnNames, rows: statement.values(...params) },
+        };
+      } catch (error) {
+        return { ok: false, error: { code: "SQL_ERROR", message: (error as Error).message } };
+      }
+    },
+    execute: async () => SQL_STORAGE_REJECTION,
+  };
+}
+
+describe("Conversations Routes — outdated schema while storage is full", () => {
+  let server: Server;
+  let port: number;
+
+  afterEach(async () => {
+    await closeServer(server);
+  });
+
+  async function start() {
+    const mockKV = createMockKV();
+    mockKV._data.set(
+      "xyz.tinycloud.listen/transcript/conv-1",
+      JSON.stringify([{ speakerName: "Alice", text: "Hello", startTime: 0, endTime: 1 }]),
+    );
+    // createApp only needs query/execute; the call log of the mock is unused here.
+    const sql = createLegacySqlite() as unknown as ReturnType<typeof createMockSQL>;
+    ({ server, port } = await startServer(createApp(mockKV, sql)));
+  }
+
+  it("serves detail from the legacy columns with the KV transcript", async () => {
+    await start();
+
+    const res = await fetch(`http://localhost:${port}/api/conversations/conv-1`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.conversation.title).toBe("Sprint Planning");
+    expect(body.transcript[0].text).toBe("Hello");
+    expect(body.transcript_status.available).toBe(true);
+
+    const missing = await fetch(`http://localhost:${port}/api/conversations/conv-2`);
+    expect(missing.status).toBe(404);
+  });
+
+  it("searches title and summary when transcript_text is missing", async () => {
+    await start();
+
+    const hit = await fetch(`http://localhost:${port}/api/conversations?q=goals`);
+    expect(hit.status).toBe(200);
+    const body = await hit.json();
+    expect(body.total).toBe(1);
+    expect(body.conversations.map((c: { id: string }) => c.id)).toEqual(["conv-1"]);
+
+    const miss = await (await fetch(`http://localhost:${port}/api/conversations?q=absent`)).json();
+    expect(miss.total).toBe(0);
+    expect(miss.conversations).toEqual([]);
   });
 });

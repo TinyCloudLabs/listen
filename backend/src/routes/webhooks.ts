@@ -162,6 +162,11 @@ export function createWebhookRouter(config: WebhookRoutesConfig) {
         return;
       }
 
+      // Queued items remember what the event asked for, so draining the queue
+      // re-runs a summary update rather than a transcript sync that skips it.
+      const pendingKind: PendingKind =
+        eventType === "meeting.summarized" ? "summary" : "transcript";
+
       // 6. Check delegation
       try {
         const resolved = await tryGetDelegatedAccess();
@@ -173,7 +178,7 @@ export function createWebhookRouter(config: WebhookRoutesConfig) {
           console.log(
             `[webhook] delegation unavailable (${delegation.reason}) — queuing meetingId=${meetingId}`,
           );
-          await storePending(backendKV, meetingId);
+          await storePending(backendKV, meetingId, pendingKind);
           res.json({ status: "pending", reason: delegation.reason });
           return;
         }
@@ -192,7 +197,7 @@ export function createWebhookRouter(config: WebhookRoutesConfig) {
 
         if (!secret.ok) {
           console.log(`[webhook] no Fireflies API key found — queuing meetingId=${meetingId}`);
-          await storePending(backendKV, meetingId);
+          await storePending(backendKV, meetingId, pendingKind);
           res.json({ status: "pending", reason: "no_api_key" });
           return;
         }
@@ -202,9 +207,7 @@ export function createWebhookRouter(config: WebhookRoutesConfig) {
         await ensureSchema(delegation.access);
         const client = makeClient(apiKey);
 
-        const isSummaryEvent = eventType === "meeting.summarized";
-
-        if (isSummaryEvent) {
+        if (pendingKind === "summary") {
           // Summary event — update existing conversation with summary data
           const updated = await updateSummary(meetingId, delegation.access, client);
           if (updated === "not_found") {
@@ -254,7 +257,7 @@ export function createWebhookRouter(config: WebhookRoutesConfig) {
         if (storageCode) {
           // Not this meeting's fault: keep it queued until storage frees up.
           console.log(`[webhook] storage full — queuing meetingId=${meetingId}`);
-          await storePending(backendKV, meetingId);
+          await storePending(backendKV, meetingId, pendingKind);
           res.json({ status: "pending", reason: storageCode.toLowerCase() });
           return;
         }
@@ -311,16 +314,34 @@ export function createWebhookRouter(config: WebhookRoutesConfig) {
       }
       const client = makeClient(apiKey);
 
-      const processed: SyncSingleResult[] = [];
-      const skipped: SyncSingleResult[] = [];
-      const errors: SyncSingleResult[] = [];
+      // Summary items re-run the summary update the webhook could not apply; a
+      // conversation that is not synced yet gets a full sync, as the webhook does.
+      const processItem = async (item: PendingItem): Promise<PendingResult> => {
+        if (item.kind !== "summary") return doSync(item.meetingId, access, client);
+        try {
+          const updated = await updateSummary(item.meetingId, access, client);
+          if (updated === "not_found") return await doSync(item.meetingId, access, client);
+          return {
+            status: updated === "updated" ? "updated" : "skipped",
+            meetingId: item.meetingId,
+          };
+        } catch (err) {
+          if (isStorageFullError(err)) throw err;
+          const message = err instanceof Error ? err.message : String(err);
+          return { status: "error", meetingId: item.meetingId, error: message };
+        }
+      };
+
+      const processed: PendingResult[] = [];
+      const skipped: PendingResult[] = [];
+      const errors: PendingResult[] = [];
       const remaining: PendingItem[] = [];
       let storageError: unknown = null;
 
       for (const [index, item] of pending.entries()) {
-        let result: SyncSingleResult;
+        let result: PendingResult;
         try {
-          result = await doSync(item.meetingId, access, client);
+          result = await processItem(item);
         } catch (err) {
           if (!isStorageFullError(err)) throw err;
           // Storage full refuses every later write too: stop, and keep this item and
@@ -329,7 +350,7 @@ export function createWebhookRouter(config: WebhookRoutesConfig) {
           remaining.push(...pending.slice(index));
           break;
         }
-        if (result.status === "created") {
+        if (result.status === "created" || result.status === "updated") {
           processed.push(result);
         } else if (result.status === "skipped") {
           skipped.push(result);
@@ -359,10 +380,16 @@ export function createWebhookRouter(config: WebhookRoutesConfig) {
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
+type PendingKind = "transcript" | "summary";
+
 interface PendingItem {
   meetingId: string;
   receivedAt: string;
+  /** Absent on items queued before intent was recorded; those are transcript syncs. */
+  kind?: PendingKind;
 }
+
+type PendingResult = SyncSingleResult | { status: "updated"; meetingId: string };
 
 async function readPendingQueue(backendKV: BackendKV): Promise<PendingItem[]> {
   const result = await backendKV.get(PENDING_KV_KEY);
@@ -421,19 +448,8 @@ async function updateSummary(
   return "updated";
 }
 
-async function storePending(backendKV: BackendKV, meetingId: string) {
-  const existingResult = await backendKV.get(PENDING_KV_KEY);
-  let pending: Array<{ meetingId: string; receivedAt: string }> = [];
-
-  if (existingResult.ok && existingResult.data.data) {
-    try {
-      pending = JSON.parse(existingResult.data.data);
-      if (!Array.isArray(pending)) pending = [];
-    } catch {
-      pending = [];
-    }
-  }
-
-  pending.push({ meetingId, receivedAt: new Date().toISOString() });
+async function storePending(backendKV: BackendKV, meetingId: string, kind: PendingKind) {
+  const pending = await readPendingQueue(backendKV);
+  pending.push({ meetingId, receivedAt: new Date().toISOString(), kind });
   await backendKV.put(PENDING_KV_KEY, JSON.stringify(pending));
 }

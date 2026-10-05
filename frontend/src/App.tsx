@@ -2926,7 +2926,7 @@ export function App() {
         <StorageFullBanner floating />
         {api && hasBackendDelegation === true && (
           <GlobalSyncIndicator
-            api={api}
+            api={activeConversationApi}
             onViewResults={() => {
               setActivePage("inbox");
               setSelectedConversationId(null);
@@ -3061,7 +3061,7 @@ export function App() {
 
       {showOnboarding && tcw && (
         <SourcesSetup
-          api={api!}
+          api={activeConversationApi}
           tcw={tcw}
           mode="onboarding"
           hasFirefliesKey={hasKey}
@@ -3143,7 +3143,7 @@ export function App() {
 
       {showSourcesSetup && tcw && (
         <SourcesSetup
-          api={api!}
+          api={activeConversationApi}
           tcw={tcw}
           mode="sources"
           hasFirefliesKey={hasKey}
@@ -3317,7 +3317,7 @@ export function App() {
           )}
           {api && hasUsableInbox && !workspaceMutationUnavailable && (
             <SyncControl
-              api={api}
+              api={activeConversationApi}
               backendUrl={BACKEND_URL}
               getAccessToken={() => sessionStoreRef.current.getToken()}
               onSyncComplete={() => setRefreshKey((k) => k + 1)}
@@ -3379,7 +3379,7 @@ export function App() {
 
       {hasUsableInbox && activePage === "connections" && api && (
         <ConnectionsScreen
-          api={api}
+          api={activeConversationApi}
           hasFireflies={firefliesConnected}
           hasGranola={granolaConnected}
           hasSoundcore={soundcoreConnected}
@@ -3442,7 +3442,7 @@ export function App() {
 
       {showAddHub && api && !workspaceMutationUnavailable && (
         <AddTranscriptHub
-          api={api}
+          api={activeConversationApi}
           transcriptionReady={{
             assemblyai:
               hasTranscriptionKeys.assemblyai === true &&
@@ -3473,7 +3473,7 @@ export function App() {
 
       {api && hasBackendDelegation === true && !workspaceMutationUnavailable && (
         <GlobalSyncIndicator
-          api={api}
+          api={activeConversationApi}
           onViewResults={() => {
             setActivePage("inbox");
             setSelectedConversationId(null);

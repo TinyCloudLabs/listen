@@ -35,6 +35,21 @@ export function useStorageFull(): boolean {
   return useSyncExternalStore(subscribeStorageFull, isStorageFull, isStorageFull);
 }
 
+/** Records a finished sync reports as written to storage. */
+export interface SyncSaveCounts {
+  synced?: number;
+  repaired?: number;
+}
+
+/**
+ * Leave read-only once a finished sync confirms it saved something. Starting a
+ * sync job succeeds even while storage is full, and a sync that saved nothing
+ * proves nothing, so neither clears the notice.
+ */
+export function noteSyncSaves(counts: SyncSaveCounts | null | undefined): void {
+  if ((counts?.synced ?? 0) + (counts?.repaired ?? 0) > 0) clearStorageFull();
+}
+
 /**
  * Route a failed write through the read-only state. A storage rejection
  * enters read-only mode and comes back as `StorageFullError`, whose message

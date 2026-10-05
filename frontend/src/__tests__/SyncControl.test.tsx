@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
 import { SyncControl } from "../components/SyncControl";
-import { clearStorageFull, isStorageFull } from "../lib/storageStatus";
+import { clearStorageFull, isStorageFull, markStorageFull } from "../lib/storageStatus";
 import { STORAGE_FULL_SAVE_MESSAGE } from "@listen/core";
 import { ApiRequestError, type ApiClient } from "@listen/client";
 
@@ -780,5 +780,110 @@ describe("SyncControl", () => {
 
     expect(await screen.findByText(STORAGE_FULL_SAVE_MESSAGE)).toBeInTheDocument();
     expect(isStorageFull()).toBe(true);
+  });
+
+  it("leaves read-only once a Soundcore retry saves a note", async () => {
+    const postMock = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new ApiRequestError(
+          402,
+          "storage_quota_exceeded",
+          `API error (402): ${STORAGE_FULL_SAVE_MESSAGE}`,
+        ),
+      )
+      .mockResolvedValueOnce({
+        synced: 1,
+        skipped: 0,
+        skippedNoTranscript: 0,
+        failed: 0,
+        errors: [],
+        conversations: [],
+      });
+    api = mockApi({ post: postMock });
+
+    render(
+      <SyncControl
+        api={api}
+        backendUrl="http://localhost:3001"
+        getAccessToken={getAccessToken}
+        onSyncComplete={onSyncComplete}
+        hasSoundcore={true}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /sync soundcore/i }));
+    expect(await screen.findByText(STORAGE_FULL_SAVE_MESSAGE)).toBeInTheDocument();
+    expect(isStorageFull()).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: /sync soundcore/i }));
+    await waitFor(() => expect(onSyncComplete).toHaveBeenCalledTimes(1));
+    expect(isStorageFull()).toBe(false);
+  });
+
+  it("stays read-only when a Soundcore sync completes without saving anything", async () => {
+    const postMock = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new ApiRequestError(
+          402,
+          "storage_quota_exceeded",
+          `API error (402): ${STORAGE_FULL_SAVE_MESSAGE}`,
+        ),
+      )
+      .mockResolvedValueOnce({
+        synced: 0,
+        skipped: 3,
+        skippedNoTranscript: 0,
+        failed: 0,
+        errors: [],
+        conversations: [],
+      });
+    api = mockApi({ post: postMock });
+
+    render(
+      <SyncControl
+        api={api}
+        backendUrl="http://localhost:3001"
+        getAccessToken={getAccessToken}
+        onSyncComplete={onSyncComplete}
+        hasSoundcore={true}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /sync soundcore/i }));
+    expect(await screen.findByText(STORAGE_FULL_SAVE_MESSAGE)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /sync soundcore/i }));
+    await waitFor(() => expect(onSyncComplete).toHaveBeenCalledTimes(1));
+    expect(isStorageFull()).toBe(true);
+  });
+
+  it("leaves read-only once a watched background job completes with saves", async () => {
+    const getMock = vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/config/webhook-status") {
+        return Promise.resolve({ configured: false, pendingCount: 0, webhookUrl: "" });
+      }
+      if (url === "/api/sync/fireflies/jobs/job-1") {
+        return Promise.resolve(firefliesJob({ status: "completed", synced: 2 }));
+      }
+      return Promise.resolve(null);
+    });
+    api = mockApi({ get: getMock, post: vi.fn().mockResolvedValue(firefliesJob()) });
+    markStorageFull();
+
+    render(
+      <SyncControl
+        api={api}
+        backendUrl="http://localhost:3001"
+        getAccessToken={getAccessToken}
+        onSyncComplete={onSyncComplete}
+        hasFireflies={true}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /sync fireflies/i }));
+    await waitFor(() => expect(onSyncComplete).toHaveBeenCalledTimes(1));
+    expect(isStorageFull()).toBe(false);
   });
 });

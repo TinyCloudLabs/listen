@@ -152,7 +152,7 @@ listen-importer upload --publish --transcripts-only --source voxterm
 listen-importer upload --publish --transcripts-only --source soundcore_sync
 ```
 
-If an upload is refused because TinyCloud storage is full (`STORAGE_QUOTA_EXCEEDED`, `STORAGE_LIMIT_REACHED`, or "Storage quota exceeded" in the error), stop the run instead of moving on to the next recording, and do not retry. Tell the user their TinyCloud storage is full, the remaining recordings were not uploaded, everything already in Listen can still be read, and they can free up space or upgrade at https://account.tinycloud.xyz/billing before rerunning the same upload command.
+If TinyCloud storage is full, `upload` stops at the first rejected write, leaves the unsaved recordings pending, prints how many were left, and exits with status 1. Do not retry. Tell the user their TinyCloud storage is full, the remaining recordings were not uploaded, everything already in Listen can still be read, and they can free up space or upgrade at https://account.tinycloud.xyz/billing before rerunning the same upload command.
 
 ## Useful Commands
 

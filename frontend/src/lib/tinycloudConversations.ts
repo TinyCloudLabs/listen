@@ -616,17 +616,40 @@ async function listConversations(
   return { conversations, total, source_counts };
 }
 
+const DETAIL_COLUMNS =
+  "id, title, source, source_id, source_url, started_at, ended_at, duration_secs, summary, metadata, created_at, updated_at";
+
+/**
+ * Accounts created before the transcript columns existed keep the initial
+ * table until migration 002 runs. When storage is full that migration is
+ * refused, so detail reads fall back to the legacy columns and the transcript
+ * comes from KV.
+ */
+async function queryConversationRows(
+  access: TinyCloudConversationAccess,
+  id: string,
+): Promise<Record<string, unknown>[]> {
+  try {
+    return rowsToObjects(
+      await access.sql.query(
+        `SELECT ${DETAIL_COLUMNS}, transcript_json, transcript_text FROM conversation WHERE id = ?`,
+        [id],
+      ),
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/no such column/i.test(message)) throw error;
+    return rowsToObjects(
+      await access.sql.query(`SELECT ${DETAIL_COLUMNS} FROM conversation WHERE id = ?`, [id]),
+    );
+  }
+}
+
 async function getConversationDetail(
   access: TinyCloudConversationAccess,
   { id }: ConversationDetailPath,
 ): Promise<DetailResponse> {
-  const conversationRows = rowsToObjects(
-    await access.sql.query(
-      `SELECT id, title, source, source_id, source_url, started_at, ended_at, duration_secs, summary, metadata, transcript_json, transcript_text, created_at, updated_at
-         FROM conversation WHERE id = ?`,
-      [id],
-    ),
-  );
+  const conversationRows = await queryConversationRows(access, id);
 
   if (conversationRows.length === 0) {
     throw new Error(`Conversation ${id} not found`);

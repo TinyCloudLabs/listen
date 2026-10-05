@@ -405,24 +405,38 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
       await ensureSchemaForRead(access);
       const sqlDb = conversationSql(access);
 
-      const where: string[] = [];
-      const whereParams: (string | number)[] = [];
-      if (source) {
-        where.push("source = ?");
-        whereParams.push(source);
-      }
-      if (q) {
-        const pattern = `%${q.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
-        where.push(
-          "(title LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\' OR transcript_text LIKE ? ESCAPE '\\')",
-        );
-        whereParams.push(pattern, pattern, pattern);
-      }
-      const whereSql = where.length > 0 ? ` WHERE ${where.join(" AND ")}` : "";
+      const pattern = `%${q.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+      const buildWhere = (searchColumns: string[]) => {
+        const where: string[] = [];
+        const params: (string | number)[] = [];
+        if (source) {
+          where.push("source = ?");
+          params.push(source);
+        }
+        if (q) {
+          where.push(`(${searchColumns.map((col) => `${col} LIKE ? ESCAPE '\\'`).join(" OR ")})`);
+          params.push(...searchColumns.map(() => pattern));
+        }
+        return {
+          whereSql: where.length > 0 ? ` WHERE ${where.join(" AND ")}` : "",
+          whereParams: params,
+        };
+      };
 
-      const countSql = `SELECT COUNT(*) AS total FROM conversation${whereSql}`;
-      const countParams = whereParams;
-      const countResult = await sqlDb.query(countSql, countParams);
+      let { whereSql, whereParams } = buildWhere(["title", "summary", "transcript_text"]);
+      let countResult = await sqlDb.query(
+        `SELECT COUNT(*) AS total FROM conversation${whereSql}`,
+        whereParams,
+      );
+      // Accounts created before migration 002 have no transcript_text until it runs, and a full
+      // account refuses it: search title and summary only.
+      if (q && !countResult.ok && /no such column/i.test(countResult.error.message)) {
+        ({ whereSql, whereParams } = buildWhere(["title", "summary"]));
+        countResult = await sqlDb.query(
+          `SELECT COUNT(*) AS total FROM conversation${whereSql}`,
+          whereParams,
+        );
+      }
       let total = 0;
       if (countResult.ok && countResult.data.rows?.[0]) {
         const countRow = rowToObject(
@@ -647,17 +661,28 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
       // Fetch conversation without transcript payload columns. Some Soundcore transcripts are
       // large enough that selecting them from SQL makes detail loads slow; KV is the primary
       // transcript read path and SQL transcript_json is only a fallback.
-      const convoResult = await timedDetailStep(
+      const detailColumns =
+        "id, title, source, source_id, source_url, started_at, ended_at, duration_secs, summary, metadata, created_at, updated_at";
+      let convoResult = await timedDetailStep(
         requestId,
         "conversation-query",
         sqlDb.query(
-          `SELECT id, title, source, source_id, source_url, started_at, ended_at, duration_secs, summary, metadata, created_at, updated_at,
-                LENGTH(transcript_json) AS transcript_json_length
+          `SELECT ${detailColumns}, LENGTH(transcript_json) AS transcript_json_length
          FROM conversation WHERE id = ?`,
           [id],
         ),
       );
+      // Accounts created before migration 002 lack the transcript columns until it runs, and a
+      // full account refuses it. Read the legacy columns; the transcript comes from KV.
+      if (!convoResult.ok && /no such column/i.test(convoResult.error.message)) {
+        convoResult = await timedDetailStep(
+          requestId,
+          "conversation-query-legacy",
+          sqlDb.query(`SELECT ${detailColumns} FROM conversation WHERE id = ?`, [id]),
+        );
+      }
 
+      // A query failure (e.g. no table yet on a full account) reads as not found.
       if (!convoResult.ok || !convoResult.data.rows?.length) {
         detailLog(requestId, "not-found", { id }, "warn");
         res.status(404).json({ error: "not_found", message: `Conversation ${id} not found` });

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, type FC } from "react";
 import type { ApiClient } from "@listen/client";
 import { StorageFullError } from "@listen/core";
 import { debugFetch, debugLog, startDebugStep } from "../lib/debug";
-import { storageAwareError } from "../lib/storageStatus";
+import { noteSyncSaves, storageAwareError } from "../lib/storageStatus";
 
 const LAST_SYNC_KEY = "lastSyncTimestamp";
 const FIREFLIES_JOB_NOT_FOUND_RETRY_LIMIT = 8;
@@ -414,12 +414,14 @@ export const SyncControl: FC<SyncControlProps> = ({
         return;
       }
 
-      if (activeFirefliesJobRef.current === job.id) {
-        activeFirefliesJobRef.current = null;
-      }
+      // Only a completion watched live confirms storage accepts writes again;
+      // a job that finished before mount says nothing about storage now.
+      const watched = activeFirefliesJobRef.current === job.id;
+      if (watched) activeFirefliesJobRef.current = null;
       finishJobView("fireflies");
 
       if (job.status === "completed") {
+        if (watched) noteSyncSaves(job);
         setResult({
           synced: job.synced,
           repaired: job.repaired,
@@ -472,12 +474,12 @@ export const SyncControl: FC<SyncControlProps> = ({
         return;
       }
 
-      if (activeGranolaJobRef.current === job.id) {
-        activeGranolaJobRef.current = null;
-      }
+      const watched = activeGranolaJobRef.current === job.id;
+      if (watched) activeGranolaJobRef.current = null;
       finishJobView("granola");
 
       if (job.status === "completed") {
+        if (watched) noteSyncSaves(job);
         setResult({
           synced: job.synced,
           repaired: 0,
@@ -532,12 +534,12 @@ export const SyncControl: FC<SyncControlProps> = ({
         return;
       }
 
-      if (activeGoogleMeetJobRef.current === job.id) {
-        activeGoogleMeetJobRef.current = null;
-      }
+      const watched = activeGoogleMeetJobRef.current === job.id;
+      if (watched) activeGoogleMeetJobRef.current = null;
       finishJobView("google-meet");
 
       if (job.status === "completed") {
+        if (watched) noteSyncSaves(job);
         setResult({
           synced: job.synced,
           repaired: 0,
@@ -1062,6 +1064,7 @@ export const SyncControl: FC<SyncControlProps> = ({
                 }
                 break;
               case "complete": {
+                noteSyncSaves(data);
                 setResult({
                   synced: data.synced,
                   repaired: data.repaired ?? 0,
@@ -1159,6 +1162,7 @@ export const SyncControl: FC<SyncControlProps> = ({
 
         if (source === "soundcore") {
           const data = await api.post<SyncResult>("/api/sync/soundcore", {});
+          noteSyncSaves(data);
           setResult(data);
           const ts = new Date().toISOString();
           localStorage.setItem(LAST_SYNC_KEY, ts);
@@ -1225,6 +1229,7 @@ export const SyncControl: FC<SyncControlProps> = ({
 
     try {
       const data = await api.post<SyncResult>("/api/sync/soundcore", {});
+      noteSyncSaves(data);
       setResult(data);
       const ts = new Date().toISOString();
       localStorage.setItem(LAST_SYNC_KEY, ts);
