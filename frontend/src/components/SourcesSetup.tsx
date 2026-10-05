@@ -3,6 +3,7 @@ import type { ApiClient } from "@listen/client";
 import type { TinyCloudWeb } from "@tinycloud/web-sdk";
 import { MAX_TRANSCRIPTION_FILE_BYTES, fileToBase64, formatFileSize } from "../lib/fileEncoding";
 import { sourceNeedsConsent, type DelegationLifecycleState } from "../lib/delegationState";
+import { confirmStorageWritable, noteSyncSaves, storageAwareError } from "../lib/storageStatus";
 
 type SetupMode = "onboarding" | "sources";
 type SetupStep =
@@ -277,7 +278,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
     try {
       await onRecheckBackendStateRef.current();
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       setTestError(message);
       setTranscriptionError(message);
     } finally {
@@ -358,8 +359,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
     setSaving(true);
     setTestError(null);
     try {
-      const putResult = await tcw.secrets.put(FIREFLIES_SECRET_NAME, apiKey.trim());
-      if (!putResult.ok) throw new Error(putResult.error.message);
+      await putSecret(tcw, FIREFLIES_SECRET_NAME, apiKey.trim());
 
       if (await guardUnavailableAction()) return;
       await onEnsureFirefliesBackendAccess();
@@ -373,7 +373,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
         await recheckUnavailableBackend();
         return;
       }
-      setTestError(err instanceof Error ? err.message : String(err));
+      setTestError(errorMessage(err));
       setStep("fireflies-test");
     } finally {
       setSaving(false);
@@ -396,7 +396,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
         await recheckUnavailableBackend();
         return;
       }
-      setTestError(err instanceof Error ? err.message : String(err));
+      setTestError(errorMessage(err));
       setStep("fireflies-test");
     } finally {
       setSaving(false);
@@ -408,8 +408,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
     setSaving(true);
     setTestError(null);
     try {
-      const putResult = await tcw.secrets.put(GRANOLA_SECRET_NAME, granolaApiKey.trim());
-      if (!putResult.ok) throw new Error(putResult.error.message);
+      await putSecret(tcw, GRANOLA_SECRET_NAME, granolaApiKey.trim());
 
       if (await guardUnavailableAction()) return;
       await onEnsureGranolaBackendAccess();
@@ -422,7 +421,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
         await recheckUnavailableBackend();
         return;
       }
-      setTestError(err instanceof Error ? err.message : String(err));
+      setTestError(errorMessage(err));
       setStep("granola-test");
     } finally {
       setSaving(false);
@@ -444,7 +443,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
         await recheckUnavailableBackend();
         return;
       }
-      setTestError(err instanceof Error ? err.message : String(err));
+      setTestError(errorMessage(err));
       setStep("granola-test");
     } finally {
       setSaving(false);
@@ -456,7 +455,8 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
     setSaving(true);
     setTestError(null);
     try {
-      const putResult = await tcw.secrets.put(
+      await putSecret(
+        tcw,
         SOUNDCORE_SESSION_SECRET_NAME,
         JSON.stringify({
           authToken: soundcoreAuthToken.trim(),
@@ -464,7 +464,6 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
           openudid: soundcoreOpenudid.trim(),
         }),
       );
-      if (!putResult.ok) throw new Error(putResult.error.message);
 
       if (await guardUnavailableAction()) return;
       setSoundcoreCredentialsSaved(true);
@@ -476,7 +475,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
         await recheckUnavailableBackend();
         return;
       }
-      setTestError(err instanceof Error ? err.message : String(err));
+      setTestError(errorMessage(err));
       setStep("soundcore-test");
     } finally {
       setSaving(false);
@@ -508,7 +507,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
         await recheckUnavailableBackend();
         return;
       }
-      setTestError(err instanceof Error ? err.message : String(err));
+      setTestError(errorMessage(err));
       setStep("soundcore-test");
     } finally {
       setSaving(false);
@@ -527,6 +526,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
         skippedNoTranscript: number;
         failed: number;
       }>("/api/sync/soundcore", {});
+      noteSyncSaves(result);
       setSoundcoreSyncMessage(
         `Synced ${result.synced} note${result.synced === 1 ? "" : "s"} (${result.skipped} already in Listen, ${result.skippedNoTranscript} without transcripts).`,
       );
@@ -535,7 +535,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
         await recheckUnavailableBackend();
         return;
       }
-      setTestError(err instanceof Error ? err.message : String(err));
+      setTestError(errorMessage(err));
     } finally {
       setSoundcoreSyncing(false);
     }
@@ -547,8 +547,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
     setSaving(true);
     setTranscriptionError(null);
     try {
-      const putResult = await tcw.secrets.put(secretName, transcriptionKey.trim());
-      if (!putResult.ok) throw new Error(putResult.error.message);
+      await putSecret(tcw, secretName, transcriptionKey.trim());
 
       if (await guardUnavailableAction()) return;
       await (onEnsureSecretBackendAccess ?? onEnsureBackendAccess)(secretName);
@@ -561,7 +560,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
         await recheckUnavailableBackend();
         return;
       }
-      setTranscriptionError(err instanceof Error ? err.message : String(err));
+      setTranscriptionError(errorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -582,7 +581,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
         await recheckUnavailableBackend();
         return;
       }
-      setTranscriptionError(err instanceof Error ? err.message : String(err));
+      setTranscriptionError(errorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -662,7 +661,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
         await recheckUnavailableBackend();
         return;
       }
-      setGoogleError(err instanceof Error ? err.message : String(err));
+      setGoogleError(errorMessage(err));
       setConnecting(false);
     }
   };
@@ -697,6 +696,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
         sourceUrl: importSourceUrl.trim(),
         summary: importSummary.trim(),
       });
+      confirmStorageWritable();
       setImportedConversationId(result.conversationId);
       setStep("transcript-success");
     } catch (err) {
@@ -704,7 +704,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
         await recheckUnavailableBackend();
         return;
       }
-      setImportError(err instanceof Error ? err.message : String(err));
+      setImportError(errorMessage(err));
     } finally {
       setImportSaving(false);
     }
@@ -735,6 +735,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
           ? new Date(transcriptionStartedAt).toISOString()
           : undefined,
       });
+      confirmStorageWritable();
       setImportedConversationId(result.conversationId);
       setStep("transcript-success");
     } catch (err) {
@@ -742,7 +743,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
         await recheckUnavailableBackend();
         return;
       }
-      setTranscriptionError(err instanceof Error ? err.message : String(err));
+      setTranscriptionError(errorMessage(err));
     } finally {
       setTranscriptionSaving(false);
     }
@@ -1225,7 +1226,7 @@ export const SourcesSetup: FC<SourcesSetupProps> = ({
                     if (await guardUnavailableAction()) return;
                     setWebhookSaved(true);
                   } catch (err) {
-                    setWebhookError(err instanceof Error ? err.message : String(err));
+                    setWebhookError(errorMessage(err));
                   } finally {
                     setWebhookSaving(false);
                   }
@@ -1968,6 +1969,24 @@ function isMissingSecretError(err: unknown): boolean {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Saves a secret straight to TinyCloud. A storage rejection enters read-only
+ * mode and throws the spec's save copy; a successful save leaves it.
+ */
+async function putSecret(tcw: TinyCloudWeb, name: string, value: string): Promise<void> {
+  const result = await tcw.secrets.put(name, value);
+  if (!result.ok) {
+    const error = storageAwareError(result.error);
+    throw error === result.error ? new Error(result.error.message) : error;
+  }
+  confirmStorageWritable();
+}
+
+function errorMessage(err: unknown): string {
+  const routed = storageAwareError(err);
+  return routed instanceof Error ? routed.message : String(routed);
 }
 
 const FONT = "var(--lst-font)";

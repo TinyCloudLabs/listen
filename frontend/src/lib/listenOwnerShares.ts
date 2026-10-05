@@ -406,10 +406,13 @@ function signerFromTinyCloud(tcw: TinyCloudWeb, ownerDid: string): SignedObjectS
 function readResultData(result: unknown): unknown {
   if (result && typeof result === "object" && "ok" in result) {
     if ((result as { ok?: boolean }).ok === false) {
-      const message = (result as { error?: { message?: unknown } }).error?.message;
+      const error = "error" in result ? result.error : undefined;
+      const message =
+        error && typeof error === "object" && "message" in error ? error.message : undefined;
       throw typedError(
         "transport-failed",
         typeof message === "string" ? message : "TinyCloud write failed",
+        error,
       );
     }
   }

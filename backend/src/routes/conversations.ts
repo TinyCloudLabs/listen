@@ -4,7 +4,8 @@ import { Buffer } from "node:buffer";
 import type { NormalizedConversation } from "../adapters/types.js";
 import { estimateDuration, parseTranscriptText } from "@listen/core";
 import { resolveAppPath } from "../manifest.js";
-import { conversationSql, ensureSchema } from "../schema.js";
+import { conversationSql, ensureSchema, ensureSchemaForRead } from "../schema.js";
+import { sendStorageError, throwIfStorageRejected } from "../storage-errors.js";
 import {
   persistConversation,
   persistTranscriptBlob,
@@ -401,27 +402,41 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
     const q = qRaw.slice(0, 200);
 
     try {
-      await ensureSchema(access);
+      await ensureSchemaForRead(access);
       const sqlDb = conversationSql(access);
 
-      const where: string[] = [];
-      const whereParams: (string | number)[] = [];
-      if (source) {
-        where.push("source = ?");
-        whereParams.push(source);
-      }
-      if (q) {
-        const pattern = `%${q.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
-        where.push(
-          "(title LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\' OR transcript_text LIKE ? ESCAPE '\\')",
-        );
-        whereParams.push(pattern, pattern, pattern);
-      }
-      const whereSql = where.length > 0 ? ` WHERE ${where.join(" AND ")}` : "";
+      const pattern = `%${q.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+      const buildWhere = (searchColumns: string[]) => {
+        const where: string[] = [];
+        const params: (string | number)[] = [];
+        if (source) {
+          where.push("source = ?");
+          params.push(source);
+        }
+        if (q) {
+          where.push(`(${searchColumns.map((col) => `${col} LIKE ? ESCAPE '\\'`).join(" OR ")})`);
+          params.push(...searchColumns.map(() => pattern));
+        }
+        return {
+          whereSql: where.length > 0 ? ` WHERE ${where.join(" AND ")}` : "",
+          whereParams: params,
+        };
+      };
 
-      const countSql = `SELECT COUNT(*) AS total FROM conversation${whereSql}`;
-      const countParams = whereParams;
-      const countResult = await sqlDb.query(countSql, countParams);
+      let { whereSql, whereParams } = buildWhere(["title", "summary", "transcript_text"]);
+      let countResult = await sqlDb.query(
+        `SELECT COUNT(*) AS total FROM conversation${whereSql}`,
+        whereParams,
+      );
+      // Accounts created before migration 002 have no transcript_text until it runs, and a full
+      // account refuses it: search title and summary only.
+      if (q && !countResult.ok && /no such column/i.test(countResult.error.message)) {
+        ({ whereSql, whereParams } = buildWhere(["title", "summary"]));
+        countResult = await sqlDb.query(
+          `SELECT COUNT(*) AS total FROM conversation${whereSql}`,
+          whereParams,
+        );
+      }
       let total = 0;
       if (countResult.ok && countResult.data.rows?.[0]) {
         const countRow = rowToObject(
@@ -462,6 +477,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
       res.json({ conversations, total, source_counts: sourceCounts });
     } catch (err) {
       console.error("[conversations] list failed:", err);
+      if (sendStorageError(res, err)) return;
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: "list_failed", message });
     }
@@ -520,6 +536,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         `UPDATE conversation SET ${sets.join(", ")} WHERE id = ?`,
         [...params, id],
       );
+      throwIfStorageRejected(result);
       if (!result.ok) {
         res.status(500).json({ error: "update_failed", message: "Conversation update failed." });
         return;
@@ -528,6 +545,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
       res.json({ ok: true, id });
     } catch (err) {
       console.error("[conversations] update failed:", err);
+      if (sendStorageError(res, err)) return;
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: "update_failed", message });
     }
@@ -546,6 +564,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         title: normalized.conversation.title,
       });
     } catch (err) {
+      if (sendStorageError(res, err)) return;
       const message = err instanceof Error ? err.message : String(err);
       const status = message.includes("is required") || message.includes("valid date") ? 400 : 500;
       if (status >= 500) console.error("[conversations] import failed:", err);
@@ -590,14 +609,16 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
 
       const uploadId = crypto.randomUUID();
       const mediaKey = `source-media/${uploadId}/${fileName}`;
-      await access.kv.put(
-        resolveAppPath(mediaKey),
-        JSON.stringify({
-          fileName,
-          contentType,
-          contentBase64,
-          uploadedAt: new Date().toISOString(),
-        }),
+      throwIfStorageRejected(
+        await access.kv.put(
+          resolveAppPath(mediaKey),
+          JSON.stringify({
+            fileName,
+            contentType,
+            contentBase64,
+            uploadedAt: new Date().toISOString(),
+          }),
+        ),
       );
 
       const provider =
@@ -612,6 +633,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         provider: providerName,
       });
     } catch (err) {
+      if (sendStorageError(res, err)) return;
       const message = err instanceof Error ? err.message : String(err);
       const status =
         message.includes("must be") ||
@@ -633,23 +655,34 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
     detailLog(requestId, "request", { id });
 
     try {
-      await timedDetailStep(requestId, "schema", ensureSchema(access));
+      await timedDetailStep(requestId, "schema", ensureSchemaForRead(access));
       const sqlDb = conversationSql(access);
 
       // Fetch conversation without transcript payload columns. Some Soundcore transcripts are
       // large enough that selecting them from SQL makes detail loads slow; KV is the primary
       // transcript read path and SQL transcript_json is only a fallback.
-      const convoResult = await timedDetailStep(
+      const detailColumns =
+        "id, title, source, source_id, source_url, started_at, ended_at, duration_secs, summary, metadata, created_at, updated_at";
+      let convoResult = await timedDetailStep(
         requestId,
         "conversation-query",
         sqlDb.query(
-          `SELECT id, title, source, source_id, source_url, started_at, ended_at, duration_secs, summary, metadata, created_at, updated_at,
-                LENGTH(transcript_json) AS transcript_json_length
+          `SELECT ${detailColumns}, LENGTH(transcript_json) AS transcript_json_length
          FROM conversation WHERE id = ?`,
           [id],
         ),
       );
+      // Accounts created before migration 002 lack the transcript columns until it runs, and a
+      // full account refuses it. Read the legacy columns; the transcript comes from KV.
+      if (!convoResult.ok && /no such column/i.test(convoResult.error.message)) {
+        convoResult = await timedDetailStep(
+          requestId,
+          "conversation-query-legacy",
+          sqlDb.query(`SELECT ${detailColumns} FROM conversation WHERE id = ?`, [id]),
+        );
+      }
 
+      // A query failure (e.g. no table yet on a full account) reads as not found.
       if (!convoResult.ok || !convoResult.data.rows?.length) {
         detailLog(requestId, "not-found", { id }, "warn");
         res.status(404).json({ error: "not_found", message: `Conversation ${id} not found` });
@@ -760,6 +793,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
         { ms: Date.now() - started, error: err instanceof Error ? err.message : String(err) },
         "error",
       );
+      if (sendStorageError(res, err)) return;
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: "detail_failed", message });
     }
@@ -825,6 +859,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
       });
     } catch (err) {
       console.error("[conversations] transcript repair failed:", err);
+      if (sendStorageError(res, err)) return;
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: "repair_failed", message });
     }
@@ -836,7 +871,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
     const { id } = req.params;
 
     try {
-      await ensureSchema(access);
+      await ensureSchemaForRead(access);
       const sqlDb = conversationSql(access);
       const convoResult = await sqlDb.query(`SELECT metadata FROM conversation WHERE id = ?`, [id]);
 
@@ -918,6 +953,7 @@ export function createConversationsRouter(config: ConversationsRoutesConfig) {
       res.send(buffer);
     } catch (err) {
       console.error("[conversations] audio failed:", err);
+      if (sendStorageError(res, err)) return;
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: "audio_failed", message });
     }

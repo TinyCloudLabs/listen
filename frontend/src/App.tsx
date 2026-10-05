@@ -38,11 +38,13 @@ import { GlobalSyncIndicator } from "./components/GlobalSyncIndicator";
 import { AddTranscriptHub } from "./components/AddTranscriptHub";
 import { SharedWithMe } from "./components/SharedWithMe";
 import { AppShell, type ShellRoute, type ShellSourceConfig } from "./components/AppShell";
+import { StorageFullBanner } from "./components/StorageFullBanner";
 import { MobileExperience } from "./components/mobile";
 import { useIsMobile } from "./hooks/useIsMobile";
 import { APP_MANIFEST } from "./lib/appManifest";
 import { debugFetch, debugLog, startDebugStep } from "./lib/debug";
 import { purgeListenLocalData } from "./lib/localData";
+import { clearStorageFull, confirmStorageWritable, storageAwareError } from "./lib/storageStatus";
 import { createTinyCloudConversationApi } from "./lib/tinycloudConversations";
 import { readShareTokenFromLocation } from "./lib/listenShareLinks";
 import {
@@ -1863,13 +1865,14 @@ export function App() {
       .then((result) => {
         const count = result.processed?.length ?? 0;
         if (count > 0) {
+          confirmStorageWritable();
           setPendingBanner(
             `Processed ${count} new transcript${count === 1 ? "" : "s"} from webhooks`,
           );
           setRefreshKey((k) => k + 1);
         }
       })
-      .catch((err) => console.error("[pending]", err));
+      .catch((err) => console.error("[pending]", storageAwareError(err)));
   }, [api, hasFirefliesBackendAccess]);
 
   useEffect(() => {
@@ -1877,9 +1880,12 @@ export function App() {
     api
       .post<{ updated: number; still_missing: number }>("/api/sync/backfill-summaries")
       .then((result) => {
-        if (result.updated > 0) setRefreshKey((k) => k + 1);
+        if (result.updated > 0) {
+          confirmStorageWritable();
+          setRefreshKey((k) => k + 1);
+        }
       })
-      .catch((err) => console.error("[backfill]", err));
+      .catch((err) => console.error("[backfill]", storageAwareError(err)));
   }, [api, hasFirefliesBackendAccess]);
 
   useEffect(() => {
@@ -1901,13 +1907,14 @@ export function App() {
       .then((result) => {
         const count = result.processed?.length ?? 0;
         if (count > 0) {
+          confirmStorageWritable();
           setPendingBanner(
             `Processed ${count} Google Meet transcript${count === 1 ? "" : "s"} from webhooks`,
           );
           setRefreshKey((k) => k + 1);
         }
       })
-      .catch((err) => console.error("[gm-pending]", err));
+      .catch((err) => console.error("[gm-pending]", storageAwareError(err)));
   }, [api, hasGoogleMeet]);
 
   // ── Sign In ───────────────────────────────────────────────────────
@@ -2122,6 +2129,7 @@ export function App() {
     setSessionExpired(false);
     setBackendAccessExpired(false);
     setStorageSessionInvalid(false);
+    clearStorageFull();
     setAgentInfo(null);
     setBackendDid(null);
     setCapabilityRequest(null);
@@ -2920,9 +2928,10 @@ export function App() {
           onAddSource={() => openSourcesSetup()}
           onRefresh={() => setRefreshKey((k) => k + 1)}
         />
+        <StorageFullBanner floating />
         {api && hasBackendDelegation === true && (
           <GlobalSyncIndicator
-            api={api}
+            api={activeConversationApi}
             onViewResults={() => {
               setActivePage("inbox");
               setSelectedConversationId(null);
@@ -2995,6 +3004,8 @@ export function App() {
         </div>
       )}
 
+      <StorageFullBanner />
+
       {showWorkspaceLoading && !showOptimisticInbox && <WorkspaceStatusPanel mode="checking" />}
 
       {showBackendOfflineState && (
@@ -3055,7 +3066,7 @@ export function App() {
 
       {showOnboarding && tcw && (
         <SourcesSetup
-          api={api!}
+          api={activeConversationApi}
           tcw={tcw}
           mode="onboarding"
           hasFirefliesKey={hasKey}
@@ -3137,7 +3148,7 @@ export function App() {
 
       {showSourcesSetup && tcw && (
         <SourcesSetup
-          api={api!}
+          api={activeConversationApi}
           tcw={tcw}
           mode="sources"
           hasFirefliesKey={hasKey}
@@ -3311,7 +3322,7 @@ export function App() {
           )}
           {api && hasUsableInbox && !workspaceMutationUnavailable && (
             <SyncControl
-              api={api}
+              api={activeConversationApi}
               backendUrl={BACKEND_URL}
               getAccessToken={() => sessionStoreRef.current.getToken()}
               onSyncComplete={() => setRefreshKey((k) => k + 1)}
@@ -3373,7 +3384,7 @@ export function App() {
 
       {hasUsableInbox && activePage === "connections" && api && (
         <ConnectionsScreen
-          api={api}
+          api={activeConversationApi}
           hasFireflies={firefliesConnected}
           hasGranola={granolaConnected}
           hasSoundcore={soundcoreConnected}
@@ -3436,7 +3447,7 @@ export function App() {
 
       {showAddHub && api && !workspaceMutationUnavailable && (
         <AddTranscriptHub
-          api={api}
+          api={activeConversationApi}
           transcriptionReady={{
             assemblyai:
               hasTranscriptionKeys.assemblyai === true &&
@@ -3467,7 +3478,7 @@ export function App() {
 
       {api && hasBackendDelegation === true && !workspaceMutationUnavailable && (
         <GlobalSyncIndicator
-          api={api}
+          api={activeConversationApi}
           onViewResults={() => {
             setActivePage("inbox");
             setSelectedConversationId(null);

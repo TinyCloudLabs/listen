@@ -1,4 +1,5 @@
 import type { DelegatedAccess } from "@listen/server";
+import { isStorageFullError } from "@listen/core";
 import { normalizeSoundcore } from "../adapters/soundcore.js";
 import { conversationSql, ensureSchema } from "../schema.js";
 import type { SoundcoreClient, SoundcoreNoteSummary } from "./soundcore-client.js";
@@ -134,6 +135,8 @@ export async function syncSoundcoreNotes({
         started_at: normalized.conversation.started_at,
       });
     } catch (err) {
+      // Storage full refuses every later write too: stop at the first rejection.
+      if (isStorageFullError(err)) throw err;
       failed += 1;
       const error = err instanceof Error ? err.message : String(err);
       errors.push(`${summary.note_id}: ${error}`);

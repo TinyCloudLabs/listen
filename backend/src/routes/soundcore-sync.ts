@@ -7,6 +7,7 @@ import {
 } from "../services/soundcore-client.js";
 import { readSoundcoreCredentialsResult } from "../services/soundcore-secret.js";
 import { syncSoundcoreNotes } from "../services/soundcore-sync.js";
+import { sendStorageError } from "../storage-errors.js";
 
 interface SoundcoreSyncRoutesConfig {
   authMiddleware: RequestHandler;
@@ -86,6 +87,10 @@ export function createSoundcoreSyncRouter(config: SoundcoreSyncRoutesConfig) {
           message:
             "Soundcore rejected the stored credentials. Capture fresh headers and try again.",
         });
+        return;
+      }
+      if (sendStorageError(res, err)) {
+        console.warn(`[soundcore-sync:${requestId}] stopped: TinyCloud storage is full`);
         return;
       }
 

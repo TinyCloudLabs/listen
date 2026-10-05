@@ -15,6 +15,9 @@ import {
   restoreTinyCloudWeb,
   verifySession,
 } from "@listen/client";
+import { clearStorageFull, isStorageFull, markStorageFull } from "../lib/storageStatus";
+
+afterEach(() => clearStorageFull());
 
 // ── Mocks ────────────────────────────────────────────────────────────
 
@@ -1598,6 +1601,57 @@ describe("App manual sign-in processing", () => {
     });
   });
 
+  it("leaves read-only once queued webhook transcripts are saved", async () => {
+    markStorageFull();
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/api/workspace-state") return Promise.resolve(workspaceState());
+      if (url === "/api/config/fireflies-key/exists") return Promise.resolve({ exists: true });
+      if (url === "/api/config/google-meet/connected") return Promise.resolve({ connected: false });
+      if (url === "/api/webhooks/fireflies/pending") {
+        return Promise.resolve({
+          processed: [{ status: "created", meetingId: "m1", conversationId: "c1" }],
+          skipped: [],
+          errors: [],
+        });
+      }
+      if (url.startsWith("/api/conversations")) {
+        return Promise.resolve({ conversations: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
+
+    await renderAndSignIn();
+
+    await screen.findByText(/processed 1 new transcript from webhooks/i);
+    expect(isStorageFull()).toBe(false);
+  });
+
+  it("leaves read-only once the summary backfill saves summaries", async () => {
+    markStorageFull();
+    mockPost.mockResolvedValue({ updated: 2, still_missing: 0 });
+
+    await renderAndSignIn();
+
+    await waitFor(() => expect(mockPost).toHaveBeenCalledWith("/api/sync/backfill-summaries"));
+    await waitFor(() => expect(isStorageFull()).toBe(false));
+  });
+
+  it("stays read-only when pending processing and backfill save nothing", async () => {
+    markStorageFull();
+
+    await renderAndSignIn();
+
+    await waitFor(() => {
+      expect(mockGet).toHaveBeenCalledWith("/api/webhooks/fireflies/pending");
+      expect(mockPost).toHaveBeenCalledWith("/api/sync/backfill-summaries");
+    });
+    // Let both responses' handlers run before asserting nothing cleared the state.
+    const settled = Promise.withResolvers<void>();
+    setTimeout(settled.resolve, 0);
+    await settled.promise;
+    expect(isStorageFull()).toBe(true);
+  });
+
   it("checks workspace state after manual sign-in", async () => {
     await renderAndSignIn();
 
@@ -2829,6 +2883,18 @@ describe("Google Meet webhook check", () => {
         screen.getByText(/processed 2 google meet transcripts from webhooks/i),
       ).toBeInTheDocument();
     });
+  });
+
+  it("leaves read-only once queued Google Meet transcripts are saved", async () => {
+    markStorageFull();
+    mockGet.mockImplementation(
+      gmMockGet({ "google-meet/pending": { processed: [{ id: 1 }], skipped: [], errors: [] } }),
+    );
+
+    await renderAndSignIn();
+
+    await screen.findByText(/processed 1 google meet transcript from webhooks/i);
+    expect(isStorageFull()).toBe(false);
   });
 
   it("does not disconnect Google Meet when confirmation is cancelled", async () => {

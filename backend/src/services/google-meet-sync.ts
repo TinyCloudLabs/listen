@@ -1,4 +1,5 @@
 import type { DelegatedAccess } from "@listen/server";
+import { isStorageFullError } from "@listen/core";
 import type { GoogleMeetClient, ConferenceRecord } from "./google-meet-client.js";
 import { normalizeGoogleMeet } from "../adapters/google-meet.js";
 import { persistConversation } from "./persist-conversation.js";
@@ -65,6 +66,8 @@ export async function syncSingleConference(
       startedAt: normalized.conversation.started_at ?? undefined,
     };
   } catch (err) {
+    // Storage full refuses every later write too; callers stop their loops on it.
+    if (isStorageFullError(err)) throw err;
     const message = err instanceof Error ? err.message : String(err);
     return { status: "error", conferenceRecordName, error: message };
   }

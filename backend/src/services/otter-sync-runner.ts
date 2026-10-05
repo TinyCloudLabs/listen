@@ -1,4 +1,5 @@
 import type { DelegatedAccess } from "@listen/server";
+import { isStorageFullError } from "@listen/core";
 import { conversationSql, ensureSchema } from "../schema.js";
 import { OtterClient } from "./otter-client.js";
 import type { OtterSpeech } from "./otter-client.js";
@@ -91,6 +92,8 @@ export async function runOtterSync(
         summary.errors.push(`${sp.otid}: ${result.error}`);
       }
     } catch (err) {
+      // Storage full refuses every later write too: stop at the first rejection.
+      if (isStorageFullError(err)) throw err;
       summary.failed += 1;
       summary.errors.push(`${sp.otid}: ${err instanceof Error ? err.message : String(err)}`);
     }

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
 import type { DelegatedAccess } from "@listen/server";
+import { isStorageFullError, storageErrorCode } from "@listen/core";
 import { verifyPubSubToken } from "../services/pubsub-verify.js";
 import { GoogleMeetClient } from "../services/google-meet-client.js";
 import type { ConferenceRecord, FullConference } from "../services/google-meet-client.js";
@@ -8,6 +9,7 @@ import { normalizeGoogleMeet } from "../adapters/google-meet.js";
 import { persistConversation } from "../services/persist-conversation.js";
 import { conversationSql, ensureSchema } from "../schema.js";
 import { resolveAppPath } from "../manifest.js";
+import { sendStorageError } from "../storage-errors.js";
 import { GoogleAuthRevokedError } from "../services/google-auth.js";
 import type { SyncSingleResult } from "../services/google-meet-sync.js";
 import { checkAndRenewSubscription as defaultCheckAndRenew } from "../services/pubsub-manager.js";
@@ -242,6 +244,8 @@ async function defaultSyncConference(
       startedAt: normalized.conversation.started_at ?? undefined,
     };
   } catch (err) {
+    // Storage full refuses every later write too; the pending loop stops on it.
+    if (isStorageFullError(err)) throw err;
     const message = err instanceof Error ? err.message : String(err);
     return { status: "error", conferenceRecordName, error: message };
   }
@@ -420,6 +424,17 @@ export function createGoogleMeetPushRouter(config: GoogleMeetPushConfig) {
         return;
       }
 
+      const storageCode = storageErrorCode(err);
+      if (storageCode) {
+        // Not this conference's fault: keep it queued until storage frees up.
+        console.log(
+          `[google-meet-webhook] storage full — queuing conferenceRecordName=${conferenceRecordName}`,
+        );
+        await storePending(backendKV, conferenceRecordName);
+        res.json({ status: "pending", reason: storageCode.toLowerCase() });
+        return;
+      }
+
       const errorMessage = err instanceof Error ? err.message : String(err);
       console.error(
         `[google-meet-webhook] error processing conferenceRecordName=${conferenceRecordName}:`,
@@ -466,7 +481,12 @@ export function createGoogleMeetPushRouter(config: GoogleMeetPushConfig) {
       }
 
       // 3. Create client
-      await ensureSchema(access);
+      try {
+        await ensureSchema(access);
+      } catch (err) {
+        if (sendStorageError(res, err)) return;
+        throw err;
+      }
       const onTokenRefresh = async (newToken: string) => {
         const updated = { ...tokens, access_token: newToken };
         await writeGoogleTokens(access, updated);
@@ -478,9 +498,20 @@ export function createGoogleMeetPushRouter(config: GoogleMeetPushConfig) {
       const skipped: SyncSingleResult[] = [];
       const errors: SyncSingleResult[] = [];
       const remaining: PendingItem[] = [];
+      let storageError: unknown = null;
 
-      for (const item of pending) {
-        const result = await syncConference(item.conferenceRecordName, access, client);
+      for (const [index, item] of pending.entries()) {
+        let result: SyncSingleResult;
+        try {
+          result = await syncConference(item.conferenceRecordName, access, client);
+        } catch (err) {
+          if (!isStorageFullError(err)) throw err;
+          // Storage full refuses every later write too: stop, and keep this item and
+          // every unprocessed one queued so they sync once storage frees up.
+          storageError = err;
+          remaining.push(...pending.slice(index));
+          break;
+        }
         if (result.status === "created") {
           processed.push(result);
         } else if (result.status === "skipped") {
@@ -492,9 +523,10 @@ export function createGoogleMeetPushRouter(config: GoogleMeetPushConfig) {
         }
       }
 
-      // 5. Update queue — only failed items remain
+      // 5. Update queue — only failed and unprocessed items remain
       await backendKV.put(PENDING_KV_KEY, JSON.stringify(remaining));
 
+      if (storageError && sendStorageError(res, storageError)) return;
       res.json({ processed, skipped, errors });
     });
 

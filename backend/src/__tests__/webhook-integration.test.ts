@@ -122,10 +122,12 @@ function createMockKV() {
 function createMockSQL() {
   const calls: Array<{ method: string; sql: string; params?: any[] }> = [];
   const insertedRows: Array<{ table: string; values: any[] }> = [];
+  const state = { storageFull: false };
 
   return {
     _calls: calls,
     _insertedRows: insertedRows,
+    _state: state,
     query: async (sql: string, params?: any[]) => {
       calls.push({ method: "query", sql, params });
 
@@ -144,6 +146,20 @@ function createMockSQL() {
         };
       }
 
+      // Summary update lookup: [id, metadata] of the matching conversation
+      if (sql.includes("SELECT id, metadata FROM conversation")) {
+        const match = insertedRows.find(
+          (r) => r.table === "conversation" && r.values[3] === params?.[0],
+        );
+        return {
+          ok: true,
+          data: {
+            rows: match ? [[match.values[0], match.values[9]]] : [],
+            columns: ["id", "metadata"],
+          },
+        };
+      }
+
       // Schema verify SELECT
       if (sql.includes("SELECT 1 FROM conversation")) {
         return { ok: true, data: { rows: [[1]], columns: ["1"] } };
@@ -156,6 +172,18 @@ function createMockSQL() {
 
       if (sql.trim().startsWith("CREATE")) {
         return { ok: true };
+      }
+
+      // SDK shape of a node 402: storage is full, every growing write is refused.
+      if (state.storageFull) {
+        return {
+          ok: false,
+          error: {
+            code: "NETWORK_ERROR",
+            message:
+              "SQL execute failed: 402 - Storage quota exceeded. Used: 100 bytes, Limit: 100 bytes",
+          },
+        };
       }
 
       if (sql.includes("INSERT INTO conversation")) {
@@ -388,6 +416,92 @@ describe("Webhook Integration Tests", () => {
         (r) => r.table === "conversation",
       );
       expect(conversationInserts).toHaveLength(2);
+    });
+  });
+
+  // ── 3b. Storage-full summary event → summary re-applied on drain ──
+
+  describe("storage-full summary event → summary update retried from the queue", () => {
+    it("keeps summary intent queued and re-runs the summary UPDATE once storage frees up", async () => {
+      // A conversation already exists; Fireflies now has its summary.
+      mockAccess.sql._insertedRows.push({
+        table: "conversation",
+        values: [
+          "summary-conv-id",
+          "Summarized Meeting",
+          "fireflies",
+          "sum-1",
+          "https://app.fireflies.ai/view/sum-1",
+          "2026-01-01T00:00:00Z",
+          "2026-01-01T00:30:00Z",
+          1800,
+          null,
+          "{}",
+          "2026-01-01T00:00:00Z",
+          "2026-01-01T00:00:00Z",
+        ],
+      });
+      transcriptStore.set(
+        "sum-1",
+        mockFirefliesTranscript("sum-1", {
+          summary: {
+            keywords: ["launch"],
+            action_items: [],
+            overview: "Fresh summary from Fireflies",
+            shorthand_bullet: "",
+            meeting_type: "standup",
+          },
+        }),
+      );
+      // A legacy item queued before intent was recorded: still a transcript sync.
+      transcriptStore.set("legacy-1", mockFirefliesTranscript("legacy-1"));
+      backendKV._data.set(
+        PENDING_KV_KEY,
+        JSON.stringify([{ meetingId: "legacy-1", receivedAt: "2026-01-01T00:00:00Z" }]),
+      );
+
+      // Storage refuses the summary UPDATE: acked and queued with its intent.
+      mockAccess.sql._state.storageFull = true;
+      const posted = await postWebhook({ meeting_id: "sum-1", event: "meeting.summarized" });
+      expect(posted.status).toBe(200);
+      expect((await posted.json()).status).toBe("pending");
+      expect(JSON.parse(backendKV._data.get(PENDING_KV_KEY)!)).toMatchObject([
+        { meetingId: "legacy-1" },
+        { meetingId: "sum-1", kind: "summary" },
+      ]);
+
+      // Draining while storage is still full stops and keeps every item, intent intact.
+      const stillFull = await getPending();
+      expect(stillFull.status).toBe(402);
+      const keptQueue = JSON.parse(backendKV._data.get(PENDING_KV_KEY)!);
+      expect(keptQueue).toHaveLength(2);
+      expect(keptQueue[0].kind).toBeUndefined();
+      expect(keptQueue[1]).toMatchObject({ meetingId: "sum-1", kind: "summary" });
+
+      // Storage freed: the legacy item syncs its transcript, the summary is applied.
+      mockAccess.sql._state.storageFull = false;
+      const callsBefore = mockAccess.sql._calls.length;
+      const drained = await getPending();
+      expect(drained.status).toBe(200);
+      const json = await drained.json();
+      expect(json.processed).toEqual([
+        expect.objectContaining({ status: "created", meetingId: "legacy-1" }),
+        { status: "updated", meetingId: "sum-1" },
+      ]);
+      expect(json.errors).toHaveLength(0);
+
+      const summaryUpdates = mockAccess.sql._calls
+        .slice(callsBefore)
+        .filter((c) => c.method === "execute" && c.sql.includes("UPDATE conversation SET summary"));
+      expect(summaryUpdates).toHaveLength(1);
+      expect(summaryUpdates[0].params?.[0]).toBe("Fresh summary from Fireflies");
+      expect(summaryUpdates[0].params?.[3]).toBe("summary-conv-id");
+      expect(
+        mockAccess.sql._insertedRows.some(
+          (r) => r.table === "conversation" && r.values[3] === "legacy-1",
+        ),
+      ).toBe(true);
+      expect(JSON.parse(backendKV._data.get(PENDING_KV_KEY)!)).toEqual([]);
     });
   });
 

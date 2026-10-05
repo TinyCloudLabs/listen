@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { STORAGE_FULL_SAVE_MESSAGE } from "@listen/core";
 import express from "express";
 import type { Server } from "http";
 import type { Request, Response, NextFunction } from "express";
@@ -35,6 +36,7 @@ function createMockSQL() {
   let missingRows: Array<{ id: string; source_id: string }> = [];
   /** Metadata stored per conversation id */
   const metadataByConvId = new Map<string, string>();
+  let storageFull = false;
 
   return {
     _calls: calls,
@@ -43,6 +45,10 @@ function createMockSQL() {
     },
     _setMetadata(convId: string, metadata: string) {
       metadataByConvId.set(convId, metadata);
+    },
+    /** Refuses every UPDATE the way SDK 2.8.0 reports a node 402. */
+    _rejectUpdatesForStorage() {
+      storageFull = true;
     },
     query: async (sql: string, params?: any[]) => {
       calls.push({ method: "query", sql, params });
@@ -83,6 +89,17 @@ function createMockSQL() {
 
       if (sql.trim().startsWith("CREATE")) {
         return { ok: true };
+      }
+
+      if (storageFull && sql.trim().startsWith("UPDATE")) {
+        return {
+          ok: false,
+          error: {
+            code: "NETWORK_ERROR",
+            message:
+              "SQL execute failed: 402 - Storage quota exceeded. Used: 155744 bytes, Limit: 0 bytes",
+          },
+        };
       }
 
       if (sql.trim().startsWith("UPDATE") || sql.trim().startsWith("INSERT")) {
@@ -240,6 +257,31 @@ describe("Backfill Summaries — POST /api/sync/backfill-summaries", () => {
     const body = await res.json();
     expect(body.updated).toBe(0);
     expect(body.still_missing).toBe(0);
+  });
+
+  it("stops at the first storage rejection and answers with the storage-full copy", async () => {
+    mockKV._data.set(KV_KEY, "test-api-key");
+    mockSQL._setMissingRows([
+      { id: "conv-1", source_id: "ff-1" },
+      { id: "conv-2", source_id: "ff-2" },
+    ]);
+    clientFactory.setGetResult("ff-1", createMockFullTranscript({ id: "ff-1" }));
+    clientFactory.setGetResult("ff-2", createMockFullTranscript({ id: "ff-2" }));
+    mockSQL._rejectUpdatesForStorage();
+
+    const res = await fetch(`http://localhost:${port}/api/sync/backfill-summaries`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+
+    expect(res.status).toBe(402);
+    expect(await res.json()).toEqual({
+      error: "storage_quota_exceeded",
+      code: "STORAGE_QUOTA_EXCEEDED",
+      message: STORAGE_FULL_SAVE_MESSAGE,
+    });
+    // Storage refused conv-1's update, so ff-2 is never re-fetched.
+    expect(clientFactory.getGetCalls()).toEqual(["ff-1"]);
   });
 
   // ── Updates summary when now available ────────────────────────────

@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
+import { act, render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
 import { SyncControl } from "../components/SyncControl";
-import type { ApiClient } from "@listen/client";
+import {
+  clearStorageFull,
+  confirmStorageWritable,
+  isStorageFull,
+  markStorageFull,
+} from "../lib/storageStatus";
+import { STORAGE_FULL_SAVE_MESSAGE } from "@listen/core";
+import { ApiRequestError, type ApiClient } from "@listen/client";
 
 function mockApi(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
@@ -88,6 +95,7 @@ describe("SyncControl", () => {
     cleanup();
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    clearStorageFull();
   });
 
   it("renders Sync Fireflies and Reset buttons when hasFireflies is true", () => {
@@ -718,5 +726,206 @@ describe("SyncControl", () => {
     });
 
     expect(getMock).not.toHaveBeenCalledWith("/api/webhooks/google-meet/status");
+  });
+
+  it("shows the storage-full copy when the backend rejects a sync with 402", async () => {
+    const postMock = vi
+      .fn()
+      .mockRejectedValue(
+        new ApiRequestError(
+          402,
+          "storage_quota_exceeded",
+          `API error (402): ${STORAGE_FULL_SAVE_MESSAGE}`,
+        ),
+      );
+    api = mockApi({ post: postMock });
+
+    render(
+      <SyncControl
+        api={api}
+        backendUrl="http://localhost:3001"
+        getAccessToken={getAccessToken}
+        onSyncComplete={onSyncComplete}
+        hasSoundcore={true}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /sync soundcore/i }));
+
+    expect(await screen.findByText(STORAGE_FULL_SAVE_MESSAGE)).toBeInTheDocument();
+    expect(screen.queryByText(/API error \(402\)/)).not.toBeInTheDocument();
+    expect(isStorageFull()).toBe(true);
+  });
+
+  it("enters read-only mode when a background sync job stops on full storage", async () => {
+    const getMock = vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/config/webhook-status") {
+        return Promise.resolve({ configured: false, pendingCount: 0, webhookUrl: "" });
+      }
+      if (url === "/api/sync/fireflies/jobs/job-1") {
+        return Promise.resolve(
+          firefliesJob({ status: "failed", synced: 3, message: STORAGE_FULL_SAVE_MESSAGE }),
+        );
+      }
+      return Promise.resolve(null);
+    });
+    api = mockApi({ get: getMock, post: vi.fn().mockResolvedValue(firefliesJob()) });
+
+    render(
+      <SyncControl
+        api={api}
+        backendUrl="http://localhost:3001"
+        getAccessToken={getAccessToken}
+        onSyncComplete={onSyncComplete}
+        hasFireflies={true}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /sync fireflies/i }));
+
+    expect(await screen.findByText(STORAGE_FULL_SAVE_MESSAGE)).toBeInTheDocument();
+    expect(isStorageFull()).toBe(true);
+  });
+
+  it("leaves read-only once a Soundcore retry saves a note", async () => {
+    const postMock = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new ApiRequestError(
+          402,
+          "storage_quota_exceeded",
+          `API error (402): ${STORAGE_FULL_SAVE_MESSAGE}`,
+        ),
+      )
+      .mockResolvedValueOnce({
+        synced: 1,
+        skipped: 0,
+        skippedNoTranscript: 0,
+        failed: 0,
+        errors: [],
+        conversations: [],
+      });
+    api = mockApi({ post: postMock });
+
+    render(
+      <SyncControl
+        api={api}
+        backendUrl="http://localhost:3001"
+        getAccessToken={getAccessToken}
+        onSyncComplete={onSyncComplete}
+        hasSoundcore={true}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /sync soundcore/i }));
+    expect(await screen.findByText(STORAGE_FULL_SAVE_MESSAGE)).toBeInTheDocument();
+    expect(isStorageFull()).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: /sync soundcore/i }));
+    await waitFor(() => expect(onSyncComplete).toHaveBeenCalledTimes(1));
+    expect(isStorageFull()).toBe(false);
+  });
+
+  it("stays read-only when a Soundcore sync completes without saving anything", async () => {
+    const postMock = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new ApiRequestError(
+          402,
+          "storage_quota_exceeded",
+          `API error (402): ${STORAGE_FULL_SAVE_MESSAGE}`,
+        ),
+      )
+      .mockResolvedValueOnce({
+        synced: 0,
+        skipped: 3,
+        skippedNoTranscript: 0,
+        failed: 0,
+        errors: [],
+        conversations: [],
+      });
+    api = mockApi({ post: postMock });
+
+    render(
+      <SyncControl
+        api={api}
+        backendUrl="http://localhost:3001"
+        getAccessToken={getAccessToken}
+        onSyncComplete={onSyncComplete}
+        hasSoundcore={true}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /sync soundcore/i }));
+    expect(await screen.findByText(STORAGE_FULL_SAVE_MESSAGE)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /sync soundcore/i }));
+    await waitFor(() => expect(onSyncComplete).toHaveBeenCalledTimes(1));
+    expect(isStorageFull()).toBe(true);
+  });
+
+  it("leaves read-only once a watched background job completes with saves", async () => {
+    const getMock = vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/config/webhook-status") {
+        return Promise.resolve({ configured: false, pendingCount: 0, webhookUrl: "" });
+      }
+      if (url === "/api/sync/fireflies/jobs/job-1") {
+        return Promise.resolve(firefliesJob({ status: "completed", synced: 2 }));
+      }
+      return Promise.resolve(null);
+    });
+    api = mockApi({ get: getMock, post: vi.fn().mockResolvedValue(firefliesJob()) });
+    markStorageFull();
+
+    render(
+      <SyncControl
+        api={api}
+        backendUrl="http://localhost:3001"
+        getAccessToken={getAccessToken}
+        onSyncComplete={onSyncComplete}
+        hasFireflies={true}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /sync fireflies/i }));
+    await waitFor(() => expect(onSyncComplete).toHaveBeenCalledTimes(1));
+    expect(isStorageFull()).toBe(false);
+  });
+
+  it("does not re-enter read-only when a remount reloads a failure a later save superseded", async () => {
+    const staleFailure = firefliesJob({
+      status: "failed",
+      message: STORAGE_FULL_SAVE_MESSAGE,
+      completedAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+    const getMock = vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/config/webhook-status") {
+        return Promise.resolve({ configured: false, pendingCount: 0, webhookUrl: "" });
+      }
+      if (url === "/api/sync/fireflies/jobs/current") return Promise.resolve(staleFailure);
+      return Promise.resolve(null);
+    });
+    api = mockApi({ get: getMock });
+    const props = {
+      api,
+      backendUrl: "http://localhost:3001",
+      getAccessToken,
+      onSyncComplete,
+      hasFireflies: true,
+    };
+
+    const first = render(<SyncControl {...props} />);
+    await waitFor(() => expect(isStorageFull()).toBe(true));
+
+    // A save succeeds after the job failed; then the inbox remounts.
+    act(() => confirmStorageWritable());
+    first.unmount();
+    getMock.mockClear();
+    render(<SyncControl {...props} />);
+    await waitFor(() => expect(getMock).toHaveBeenCalledWith("/api/sync/fireflies/jobs/current"));
+    await act(async () => {});
+
+    expect(isStorageFull()).toBe(false);
+    expect(screen.queryByText(STORAGE_FULL_SAVE_MESSAGE)).not.toBeInTheDocument();
   });
 });

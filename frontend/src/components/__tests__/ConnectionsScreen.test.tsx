@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ConnectionsScreen } from "../ConnectionsScreen";
+import { clearStorageFull, isStorageFull, markStorageFull } from "../../lib/storageStatus";
 
 const api = {
   get: vi.fn(),
@@ -28,6 +29,7 @@ describe("ConnectionsScreen", () => {
   afterEach(() => {
     vi.clearAllMocks();
     cleanup();
+    clearStorageFull();
   });
 
   it("shows Google Meet as unavailable instead of hiding it", () => {
@@ -163,4 +165,29 @@ describe("ConnectionsScreen", () => {
     expect(await screen.findByText(/migrated 2 transcripts/i)).toBeInTheDocument();
     expect(onRefresh).toHaveBeenCalled();
   });
+
+  it.each([
+    { migrated: 2, stillFull: false },
+    { migrated: 0, stillFull: true },
+  ])(
+    "leaves read-only only when the migration saved transcripts (migrated $migrated)",
+    async ({ migrated, stillFull }) => {
+      markStorageFull();
+      api.post.mockResolvedValueOnce({
+        scanned: 3,
+        migrated,
+        skipped: 3 - migrated,
+        missing: 0,
+        failed: 0,
+      });
+      renderConnections();
+
+      fireEvent.click(screen.getByRole("button", { name: /migrate transcripts/i }));
+
+      expect(
+        await screen.findByText(new RegExp(`migrated ${migrated} transcripts`, "i")),
+      ).toBeInTheDocument();
+      expect(isStorageFull()).toBe(stillFull);
+    },
+  );
 });

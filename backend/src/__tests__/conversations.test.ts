@@ -3,6 +3,8 @@ import express from "express";
 import type { Server } from "http";
 import type { Request, Response, NextFunction } from "express";
 import { Buffer } from "node:buffer";
+import { Database, type SQLQueryBindings } from "bun:sqlite";
+import { SCHEMA_STATEMENTS, STORAGE_FULL_SAVE_MESSAGE } from "@listen/core";
 import { createConversationsRouter } from "../routes/conversations.js";
 
 // ── Mock KV Store (matches real SDK: returns Result objects) ─────────
@@ -45,7 +47,19 @@ interface MockSQLConfig {
   sourceCounts?: Record<string, unknown>[];
   participantRows?: Record<string, unknown>[];
   detailRow?: Record<string, unknown>;
+  /** Every write is refused the way SDK 2.8.0 reports a node 402. */
+  storageFull?: boolean;
+  /** Read-first schema probes fail, so ensureSchema has to migrate. */
+  schemaOutdated?: boolean;
 }
+
+const SQL_STORAGE_REJECTION = {
+  ok: false,
+  error: {
+    code: "NETWORK_ERROR",
+    message: "SQL execute failed: 402 - Storage quota exceeded. Used: 155744 bytes, Limit: 0 bytes",
+  },
+};
 
 function toArrayRows(objects: Record<string, unknown>[]): { rows: unknown[][]; columns: string[] } {
   if (objects.length === 0) return { rows: [], columns: [] };
@@ -59,6 +73,10 @@ function createMockSQL(config: MockSQLConfig = {}) {
 
   const query = async (sql: string, params?: any[]) => {
     calls.push({ method: "query", sql, params });
+
+    if (config.schemaOutdated && sql.includes("LIMIT 0")) {
+      return { ok: false, error: { message: "no such column: transcript_json" } };
+    }
 
     // List conversations (has participant_count subquery) — check before COUNT
     if (sql.includes("participant_count") && sql.includes("ORDER BY")) {
@@ -105,6 +123,8 @@ function createMockSQL(config: MockSQLConfig = {}) {
 
   const execute = async (sql: string, params?: any[]) => {
     calls.push({ method: "execute", sql, params });
+
+    if (config.storageFull) return SQL_STORAGE_REJECTION;
 
     // Schema CREATE statements
     if (sql.trim().startsWith("CREATE")) {
@@ -341,7 +361,7 @@ describe("Conversations Routes — GET /api/conversations", () => {
     expect(body.total).toBe(0);
   });
 
-  it("calls ensureSchema before querying", async () => {
+  it("lists conversations without writing when the schema is current", async () => {
     mockKV = createMockKV();
     mockSQL = createMockSQL({ conversationRows: [], totalCount: 0 });
     const app = createApp(mockKV, mockSQL);
@@ -349,19 +369,33 @@ describe("Conversations Routes — GET /api/conversations", () => {
 
     await fetch(`http://localhost:${port}/api/conversations`);
 
-    // ensureSchema now applies SQL migrations before route queries.
-    const firstCall = mockSQL._calls[0];
-    expect(firstCall.method).toBe("execute");
-    expect(firstCall.sql).toContain("CREATE TABLE IF NOT EXISTS conversation");
-
-    const columnCheckIndex = mockSQL._calls.findIndex((call) =>
-      call.sql.includes("SELECT transcript_json, transcript_text FROM conversation"),
-    );
+    // Read-first schema probes run before the list query, and nothing is written.
+    const probeIndex = mockSQL._calls.findIndex((call) => call.sql.includes("LIMIT 0"));
     const listQueryIndex = mockSQL._calls.findIndex(
       (call) => call.sql.includes("participant_count") && call.sql.includes("ORDER BY"),
     );
-    expect(columnCheckIndex).toBeGreaterThan(-1);
-    expect(listQueryIndex).toBeGreaterThan(columnCheckIndex);
+    expect(probeIndex).toBeGreaterThan(-1);
+    expect(listQueryIndex).toBeGreaterThan(probeIndex);
+    expect(mockSQL._calls.filter((call) => call.method === "execute")).toEqual([]);
+  });
+
+  it("still lists conversations when storage is full and migrating is refused", async () => {
+    mockKV = createMockKV();
+    mockSQL = createMockSQL({
+      conversationRows: [{ id: "c1", title: "Kept", source: "fireflies", participant_count: 0 }],
+      totalCount: 1,
+      storageFull: true,
+      schemaOutdated: true,
+    });
+    const app = createApp(mockKV, mockSQL);
+    ({ server, port } = await startServer(app));
+
+    const res = await fetch(`http://localhost:${port}/api/conversations`);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.total).toBe(1);
+    expect(body.conversations[0].id).toBe("c1");
   });
 });
 
@@ -1051,6 +1085,28 @@ describe("Conversations Routes — POST /api/conversations/import", () => {
     const body = await res.json();
     expect(body.error).toBe("import_failed");
   });
+
+  it("answers a refused save with the typed storage error and spec copy", async () => {
+    mockKV = createMockKV();
+    mockSQL = createMockSQL({ storageFull: true });
+    const app = createApp(mockKV, mockSQL);
+    ({ server, port } = await startServer(app));
+
+    const res = await fetch(`http://localhost:${port}/api/conversations/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Manual call", transcriptText: "[00:00] Sam: Hello" }),
+    });
+
+    expect(res.status).toBe(402);
+    expect(await res.json()).toEqual({
+      error: "storage_quota_exceeded",
+      code: "STORAGE_QUOTA_EXCEEDED",
+      message: STORAGE_FULL_SAVE_MESSAGE,
+    });
+    // The refused conversation row stops the save before the transcript mirror.
+    expect(mockKV._data.size).toBe(0);
+  });
 });
 
 // ── Tests — POST /api/conversations/transcribe ─────────────────────
@@ -1342,5 +1398,84 @@ describe("Conversations Routes — PUT /api/conversations/:id", () => {
       body: JSON.stringify({}),
     });
     expect(noFields.status).toBe(400);
+  });
+});
+
+// ── Tests — outdated schema on a full account ─────────────────────────
+
+/**
+ * Real SQLite holding only the initial schema (before migration 002 added the
+ * transcript columns). Storage is full, so every write — including the column
+ * migration — is refused; reads run for real.
+ */
+function createLegacySqlite() {
+  const db = new Database(":memory:");
+  for (const statement of SCHEMA_STATEMENTS) db.run(statement);
+  db.run(
+    `INSERT INTO conversation (id, title, source, started_at, summary, metadata, created_at, updated_at)
+     VALUES ('conv-1', 'Sprint Planning', 'fireflies', '2026-03-20T10:00:00Z', 'Team goals', '{}',
+             '2026-03-20T12:00:00Z', '2026-03-20T12:00:00Z')`,
+  );
+  return {
+    query: async (sql: string, params: SQLQueryBindings[] = []) => {
+      try {
+        const statement = db.prepare(sql);
+        return {
+          ok: true,
+          data: { columns: statement.columnNames, rows: statement.values(...params) },
+        };
+      } catch (error) {
+        return { ok: false, error: { code: "SQL_ERROR", message: (error as Error).message } };
+      }
+    },
+    execute: async () => SQL_STORAGE_REJECTION,
+  };
+}
+
+describe("Conversations Routes — outdated schema while storage is full", () => {
+  let server: Server;
+  let port: number;
+
+  afterEach(async () => {
+    await closeServer(server);
+  });
+
+  async function start() {
+    const mockKV = createMockKV();
+    mockKV._data.set(
+      "xyz.tinycloud.listen/transcript/conv-1",
+      JSON.stringify([{ speakerName: "Alice", text: "Hello", startTime: 0, endTime: 1 }]),
+    );
+    // createApp only needs query/execute; the call log of the mock is unused here.
+    const sql = createLegacySqlite() as unknown as ReturnType<typeof createMockSQL>;
+    ({ server, port } = await startServer(createApp(mockKV, sql)));
+  }
+
+  it("serves detail from the legacy columns with the KV transcript", async () => {
+    await start();
+
+    const res = await fetch(`http://localhost:${port}/api/conversations/conv-1`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.conversation.title).toBe("Sprint Planning");
+    expect(body.transcript[0].text).toBe("Hello");
+    expect(body.transcript_status.available).toBe(true);
+
+    const missing = await fetch(`http://localhost:${port}/api/conversations/conv-2`);
+    expect(missing.status).toBe(404);
+  });
+
+  it("searches title and summary when transcript_text is missing", async () => {
+    await start();
+
+    const hit = await fetch(`http://localhost:${port}/api/conversations?q=goals`);
+    expect(hit.status).toBe(200);
+    const body = await hit.json();
+    expect(body.total).toBe(1);
+    expect(body.conversations.map((c: { id: string }) => c.id)).toEqual(["conv-1"]);
+
+    const miss = await (await fetch(`http://localhost:${port}/api/conversations?q=absent`)).json();
+    expect(miss.total).toBe(0);
+    expect(miss.conversations).toEqual([]);
   });
 });

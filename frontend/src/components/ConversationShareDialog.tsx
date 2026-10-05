@@ -9,6 +9,7 @@ import {
   needsLegacyTranscriptKvGrant,
   type ShareableConversationDetail,
 } from "../lib/listenShareLinks";
+import { confirmStorageWritable, storageAwareError } from "../lib/storageStatus";
 
 interface ConversationShareDialogProps {
   api: ApiClient;
@@ -95,10 +96,12 @@ export const ConversationShareDialog: FC<ConversationShareDialogProps> = ({
         includeAudio: includeAudio && audioAvailable,
         durationDays,
       });
+      confirmStorageWritable();
       setLink(result.link);
       await copyText(result.link);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const routed = storageAwareError(err);
+      setError(routed instanceof Error ? routed.message : String(routed));
     } finally {
       setCreating(false);
     }

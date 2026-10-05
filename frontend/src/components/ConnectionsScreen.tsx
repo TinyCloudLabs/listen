@@ -1,6 +1,12 @@
 import { useState, type FC } from "react";
 import type { ApiClient } from "@listen/client";
 import { useIsMobile } from "../hooks/useIsMobile";
+import {
+  confirmStorageWritable,
+  noteSyncSaves,
+  storageAwareError,
+  type SyncSaveCounts,
+} from "../lib/storageStatus";
 
 interface ConnectionsScreenProps {
   api: ApiClient;
@@ -50,6 +56,12 @@ interface MigrationResult {
   skipped: number;
   missing: number;
   failed: number;
+}
+
+/** A storage rejection enters read-only mode and reads as the spec's save copy. */
+function errorMessage(err: unknown): string {
+  const routed = storageAwareError(err);
+  return routed instanceof Error ? routed.message : String(routed);
 }
 
 export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
@@ -176,9 +188,11 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
       } else if (source === "granola") {
         await api.post("/api/sync/granola/jobs", { mode: "incremental" });
       } else if (source === "soundcore") {
-        await api.post("/api/sync/soundcore", {});
+        // Soundcore and Google Meet sync inline and report what they saved;
+        // Fireflies and Granola only start a background job here.
+        noteSyncSaves(await api.post<SyncSaveCounts>("/api/sync/soundcore", {}));
       } else if (source === "google-meet") {
-        await api.post("/api/sync/google-meet");
+        noteSyncSaves(await api.post<SyncSaveCounts>("/api/sync/google-meet"));
       }
       setMessage(
         source === "fireflies"
@@ -187,7 +201,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
       );
       onRefresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBusySource(null);
     }
@@ -205,16 +219,16 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
           } else if (source.id === "granola") {
             await api.post("/api/sync/granola/jobs", { mode: "incremental" });
           } else if (source.id === "soundcore") {
-            await api.post("/api/sync/soundcore", {});
+            noteSyncSaves(await api.post<SyncSaveCounts>("/api/sync/soundcore", {}));
           } else if (source.id === "google-meet") {
-            await api.post("/api/sync/google-meet");
+            noteSyncSaves(await api.post<SyncSaveCounts>("/api/sync/google-meet"));
           }
         }
       }
       setMessage("Connected sources synced");
       onRefresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBusySource(null);
     }
@@ -226,12 +240,13 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
     setMessage(null);
     try {
       const result = await api.post<MigrationResult>("/api/config/migrate-transcripts", {});
+      if (result.migrated > 0) confirmStorageWritable();
       setMessage(
         `Migrated ${result.migrated} transcript${result.migrated === 1 ? "" : "s"} (${result.skipped} current, ${result.missing} missing legacy KV).`,
       );
       onRefresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBusySource(null);
     }
@@ -320,7 +335,7 @@ export const ConnectionsScreen: FC<ConnectionsScreenProps> = ({
                           setMessage(`${source.name} setup finished`);
                           onRefresh();
                         })
-                        .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+                        .catch((err) => setError(errorMessage(err)))
                         .finally(() => setBusySource(null));
                     }}
                     disabled={actionsDisabled || busySource !== null}

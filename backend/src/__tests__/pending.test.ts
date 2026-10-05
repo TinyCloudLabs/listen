@@ -1,8 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
+import { STORAGE_FULL_SAVE_MESSAGE } from "@listen/core";
 import express from "express";
 import type { Server } from "http";
 import type { Request, Response, NextFunction } from "express";
+import type { DelegatedAccess } from "@listen/server";
 import { createWebhookRouter } from "../routes/webhooks.js";
+import type { FullTranscript } from "../services/fireflies-client.js";
 
 // ── Constants ───────────────────────────────────────────────────────
 
@@ -83,6 +86,51 @@ function pendingItems(...meetingIds: string[]) {
     meetingId: id,
     receivedAt: "2026-01-01T00:00:00Z",
   }));
+}
+
+const STORAGE_FULL_SQL_ERROR = {
+  code: "NETWORK_ERROR",
+  message: "SQL execute failed: 402 - Storage quota exceeded. Used: 155744 bytes, Limit: 0 bytes",
+};
+
+function firefliesTranscript(id: string): FullTranscript {
+  return {
+    id,
+    title: `Meeting ${id}`,
+    date: 1711000000000,
+    duration: 60,
+    organizer_email: "test@example.com",
+    transcript_url: `https://app.fireflies.ai/view/${id}`,
+    speakers: [{ id: "s1", name: "Alice" }],
+    meeting_attendees: [{ displayName: "Alice", email: "alice@example.com" }],
+    sentences: [
+      {
+        index: 0,
+        speaker_id: "s1",
+        speaker_name: "Alice",
+        text: "Hello",
+        raw_text: "Hello",
+        start_time: 0,
+        end_time: 1,
+        ai_filters: {
+          task: false,
+          pricing: false,
+          metric: false,
+          question: false,
+          date_and_time: false,
+          sentiment: "neutral",
+        },
+      },
+    ],
+    summary: {
+      keywords: [],
+      action_items: [],
+      overview: "Overview",
+      shorthand_bullet: "",
+      meeting_type: "team_meeting",
+    },
+    audio_url: `https://audio.example.com/${id}.mp3`,
+  };
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -278,6 +326,58 @@ describe("GET /api/webhooks/fireflies/pending", () => {
     const remaining = JSON.parse(backendKV._data.get(PENDING_KV_KEY)!);
     expect(remaining).toHaveLength(1);
     expect(remaining[0].meetingId).toBe("m2");
+  });
+
+  it("stops at the first storage rejection and keeps that item and later ones queued", async () => {
+    await closeServer(server);
+    const fetched: string[] = [];
+    const storageFullAccess = {
+      ...mockAccess,
+      sql: {
+        query: async () => ({ ok: true, data: { rows: [], columns: [] } }),
+        // Storage refuses m2's insert the way SDK 2.8.0 reports a node 402.
+        execute: async (sql: string, params: unknown[] = []) =>
+          sql.startsWith("INSERT INTO conversation") && params.includes("m2")
+            ? { ok: false, error: STORAGE_FULL_SQL_ERROR }
+            : { ok: true, data: { changes: 1 } },
+      },
+    };
+    const app = express();
+    app.use(
+      "/api/webhooks",
+      createWebhookRouter({
+        backendKV,
+        tryGetDelegatedAccess: async () => null,
+        authMiddleware: mockAuthMiddleware,
+        delegationMiddleware: (req: Request, _res: Response, next: NextFunction) => {
+          // Test double covers only the kv/secrets/sql calls this route makes.
+          req.delegatedAccess = storageFullAccess as unknown as DelegatedAccess;
+          next();
+        },
+        createClient: () => ({
+          getTranscript: async (id: string) => {
+            fetched.push(id);
+            return firefliesTranscript(id);
+          },
+        }),
+      }),
+    );
+    ({ server, port } = await startServer(app));
+
+    backendKV._data.set(PENDING_KV_KEY, JSON.stringify(pendingItems("m1", "m2", "m3")));
+
+    const res = await getPending();
+
+    expect(res.status).toBe(402);
+    expect(await res.json()).toEqual({
+      error: "storage_quota_exceeded",
+      code: "STORAGE_QUOTA_EXCEEDED",
+      message: STORAGE_FULL_SAVE_MESSAGE,
+    });
+    // m3 is never attempted; m2 and m3 stay queued for when storage frees up.
+    expect(fetched).toEqual(["m1", "m2"]);
+    const remaining = JSON.parse(backendKV._data.get(PENDING_KV_KEY)!);
+    expect(remaining.map((item: { meetingId: string }) => item.meetingId)).toEqual(["m2", "m3"]);
   });
 
   // ── Missing API key ──────────────────────────────────────────────

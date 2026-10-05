@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApiClient } from "@listen/client";
+import { storageErrorCode, storageSaveMessage } from "@listen/core";
+import { isSupersededStorageFailure, markStorageFull, noteSyncSaves } from "../lib/storageStatus";
 
 // Ambient, app-wide sync status. Sync jobs run server-side and persist in KV,
 // but their progress was previously visible only while the Connections page
@@ -15,9 +17,12 @@ interface SyncJobLite {
   current?: number;
   total?: number;
   synced: number;
+  repaired?: number;
   skipped?: number;
   failed: number;
   message?: string;
+  completedAt?: string;
+  updatedAt?: string;
 }
 
 interface SyncSourceConfig {
@@ -101,17 +106,30 @@ export function GlobalSyncIndicator({ api, onViewResults }: GlobalSyncIndicatorP
           return;
         }
 
-        // Terminal. Notify only if we saw this job active earlier.
-        if (lastStatus !== undefined && isActiveStatus(lastStatus)) {
-          setNotice({
-            sourceKey: source.key,
-            label: source.label,
-            status: job.status as CompletionNotice["status"],
-            synced: job.synced ?? 0,
-            skipped: job.skipped ?? 0,
-            failed: job.failed ?? 0,
-            message: job.message,
-          });
+        if (lastStatus !== job.status) {
+          const watched = lastStatus !== undefined && isActiveStatus(lastStatus);
+          // A storage stop puts the app in read-only mode even when the job
+          // failed before mount, unless a later save already superseded it;
+          // a completion confirms saves only when watched.
+          const storageCode =
+            job.status === "failed" && !isSupersededStorageFailure(job, watched)
+              ? storageErrorCode(job)
+              : null;
+          if (storageCode) markStorageFull();
+          else if (watched && job.status === "completed") noteSyncSaves(job);
+
+          // Notify only for transitions we watched.
+          if (watched) {
+            setNotice({
+              sourceKey: source.key,
+              label: source.label,
+              status: job.status as CompletionNotice["status"],
+              synced: job.synced ?? 0,
+              skipped: job.skipped ?? 0,
+              failed: job.failed ?? 0,
+              message: storageCode ? storageSaveMessage(storageCode) : job.message,
+            });
+          }
         }
         seenJobsRef.current.set(jobKey, job.status);
       }),
@@ -193,7 +211,9 @@ export function GlobalSyncIndicator({ api, onViewResults }: GlobalSyncIndicatorP
             </button>
           </div>
           <div style={g.detail}>
-            {notice.synced} synced · {notice.skipped} skipped · {notice.failed} failed
+            {notice.status === "failed" && notice.message
+              ? notice.message
+              : `${notice.synced} synced · ${notice.skipped} skipped · ${notice.failed} failed`}
           </div>
           {onViewResults && notice.status === "completed" && notice.synced > 0 && (
             <button

@@ -311,10 +311,17 @@ paths:
       summary: Process pending webhook items
       description: |
         Processes all queued meetingIds from webhooks received while delegation
-        was expired. Requires active delegation and Fireflies API key.
+        was expired, the API key was missing, or storage was full. Requires
+        active delegation and Fireflies API key.
+
+        Transcript items run a transcript sync. Summary items (queued from
+        `meeting.summarized`) re-apply the summary to the existing conversation,
+        or run a full sync if it does not exist yet; an applied summary is
+        reported in `processed` with status `updated`.
 
         Successfully processed and deduplicated items are removed from the queue.
-        Failed items are retained for retry.
+        Failed items are retained for retry. When storage is full, processing
+        stops and the current and remaining items stay queued.
       tags: [Webhooks]
       responses:
         "200":
@@ -673,7 +680,7 @@ components:
       properties:
         status:
           type: string
-          enum: [created, skipped, error]
+          enum: [created, updated, skipped, error]
         meetingId:
           type: string
         conversationId:

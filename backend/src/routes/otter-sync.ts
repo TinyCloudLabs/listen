@@ -1,5 +1,6 @@
 import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
+import { storageErrorCode, storageSaveMessage } from "@listen/core";
 import { OtterApiError, OtterClient } from "../services/otter-client.js";
 import type { OtterCookie } from "../services/otter-secret.js";
 import { readOtterCookieResult } from "../services/otter-secret.js";
@@ -59,7 +60,10 @@ export function createOtterSyncRouter(config: OtterSyncRoutesConfig) {
       });
       send("complete", summary);
     } catch (err) {
-      if (err instanceof OtterApiError && err.status === 429) {
+      const storageCode = storageErrorCode(err);
+      if (storageCode) {
+        send("error", { code: storageCode, message: storageSaveMessage(storageCode) });
+      } else if (err instanceof OtterApiError && err.status === 429) {
         send("error", { code: "otter_rate_limited", message: "Otter rate-limited the sync." });
       } else {
         // generic — logs are public, don't echo upstream request details

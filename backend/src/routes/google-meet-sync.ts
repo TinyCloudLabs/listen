@@ -2,12 +2,14 @@ import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
 import type { DelegatedAccess } from "@listen/server";
 import { randomUUID } from "node:crypto";
+import { storageErrorCode, storageSaveMessage } from "@listen/core";
 import { GoogleMeetClient } from "../services/google-meet-client.js";
 import type { ConferenceRecord } from "../services/google-meet-client.js";
 import { GoogleAuthRevokedError } from "../services/google-auth.js";
 import { conversationSql, ensureSchema } from "../schema.js";
 import { syncSingleConference } from "../services/google-meet-sync.js";
 import { resolveAppPath } from "../manifest.js";
+import { sendStorageError } from "../storage-errors.js";
 import {
   deleteGoogleTokens,
   GoogleTokenReadError,
@@ -261,6 +263,7 @@ async function syncGoogleMeetConferences({
     if (knownIds.has(conference.name)) {
       skippedExisting++;
     } else {
+      // Throws on a storage rejection, ending the loop before the next item or delay.
       const result = await syncSingleConference(conference, access, client);
 
       if (result.status === "created") {
@@ -399,7 +402,13 @@ function runGoogleMeetJob({
         message: "Sync complete.",
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      // Items saved before a storage rejection keep their counts from the last progress update.
+      const storageCode = storageErrorCode(err);
+      const message = storageCode
+        ? storageSaveMessage(storageCode)
+        : err instanceof Error
+          ? err.message
+          : String(err);
       if (err instanceof GoogleAuthRevokedError) {
         await deleteGoogleTokens(access);
       }
@@ -765,6 +774,7 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
         return;
       }
       console.error("[sync] google-meet sync failed:", err);
+      if (sendStorageError(res, err)) return;
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: "sync_failed", message: `Sync failed: ${message}` });
     }
@@ -873,6 +883,7 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
       // 5. Done
       sendEvent("complete", result);
     } catch (err) {
+      const storageCode = storageErrorCode(err);
       if (err instanceof GoogleAuthRevokedError) {
         sendEvent("error", {
           code: "google_auth_revoked",
@@ -883,6 +894,8 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
           code: "google_tokens_unavailable",
           message: err.message,
         });
+      } else if (storageCode) {
+        sendEvent("error", { code: storageCode, message: storageSaveMessage(storageCode) });
       } else {
         const message = err instanceof Error ? err.message : String(err);
         console.error("[sync] SSE google-meet sync failed:", err);
@@ -907,6 +920,7 @@ export function createGoogleMeetSyncRouter(config: GoogleMeetSyncRoutesConfig) {
       res.json({ ok: true, message: "All Google Meet conversations cleared." });
     } catch (err) {
       console.error("[sync] google-meet purge failed:", err);
+      if (sendStorageError(res, err)) return;
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: "purge_failed", message });
     }

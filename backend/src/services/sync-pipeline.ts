@@ -1,4 +1,5 @@
 import type { DelegatedAccess } from "@listen/server";
+import { isStorageFullError } from "@listen/core";
 import type { FirefliesClient, FullTranscript } from "./fireflies-client.js";
 import { normalizeFireflies } from "../adapters/fireflies.js";
 import { persistConversation } from "./persist-conversation.js";
@@ -37,6 +38,8 @@ export async function persistFullTranscript(
       startedAt: normalized.conversation.started_at ?? undefined,
     };
   } catch (err) {
+    // Storage full refuses every later write too; callers stop their loops on it.
+    if (isStorageFullError(err)) throw err;
     const message = err instanceof Error ? err.message : String(err);
     return { status: "error", meetingId: transcript.id, error: message };
   }
@@ -78,6 +81,7 @@ export async function syncSingleTranscript(
     // 3. Normalize + persist
     return persistFullTranscript(fullTranscript, access);
   } catch (err) {
+    if (isStorageFullError(err)) throw err;
     const message = err instanceof Error ? err.message : String(err);
     return { status: "error", meetingId, error: message };
   }

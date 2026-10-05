@@ -279,8 +279,12 @@ function snapshotForDetail(
 function readResultData(result: unknown): unknown {
   if (result && typeof result === "object" && "ok" in result) {
     if ((result as { ok?: boolean }).ok === false) {
-      const message = (result as { error?: { message?: unknown } }).error?.message;
-      throw new Error(typeof message === "string" ? message : "TinyCloud request failed");
+      const error = "error" in result ? result.error : undefined;
+      const message =
+        error && typeof error === "object" && "message" in error ? error.message : undefined;
+      throw new Error(typeof message === "string" ? message : "TinyCloud request failed", {
+        cause: error,
+      });
     }
     return (result as { data?: unknown }).data;
   }

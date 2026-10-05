@@ -1,5 +1,6 @@
 import { Router } from "express";
 import type { Request, Response, RequestHandler } from "express";
+import { isStorageFullError } from "@listen/core";
 import {
   FIREFLIES_SECRET_NAME,
   GRANOLA_SECRET_NAME,
@@ -19,6 +20,7 @@ import {
   readGoogleTokens,
 } from "../services/google-tokens.js";
 import { readSourceSecretResult, type SourceSecretReader } from "../services/source-secret.js";
+import { sendStorageError } from "../storage-errors.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -431,6 +433,8 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
           await updateConversationTranscriptFields(access, String(id), rawTranscript);
           migrated++;
         } catch (err) {
+          // Storage full refuses every later update too: stop at the first rejection.
+          if (isStorageFullError(err)) throw err;
           failed++;
           console.error(`[config] failed to migrate transcript ${String(id)}:`, err);
         }
@@ -446,6 +450,7 @@ export function createConfigRouter(config: ConfigRoutesConfig) {
       });
     } catch (err) {
       console.error("[config] transcript migration failed:", err);
+      if (sendStorageError(res, err)) return;
       res.status(500).json({
         error: "migration_failed",
         message: err instanceof Error ? err.message : "Failed to migrate transcripts",

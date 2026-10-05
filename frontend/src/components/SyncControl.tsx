@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef, type FC } from "react";
 import type { ApiClient } from "@listen/client";
+import { StorageFullError } from "@listen/core";
 import { debugFetch, debugLog, startDebugStep } from "../lib/debug";
+import { isSupersededStorageFailure, noteSyncSaves, storageAwareError } from "../lib/storageStatus";
 
 const LAST_SYNC_KEY = "lastSyncTimestamp";
 const FIREFLIES_JOB_NOT_FOUND_RETRY_LIMIT = 8;
@@ -44,6 +46,8 @@ interface FirefliesSyncJob {
   status: FirefliesSyncJobStatus;
   mode: "incremental" | "full";
   message?: string;
+  completedAt?: string;
+  updatedAt?: string;
   batch?: number;
   totalListed?: number;
   current?: number;
@@ -70,6 +74,8 @@ interface GoogleMeetSyncJob {
   status: GoogleMeetSyncJobStatus;
   mode: "incremental" | "full";
   message?: string;
+  completedAt?: string;
+  updatedAt?: string;
   checked: number;
   totalListed?: number;
   current?: number;
@@ -91,6 +97,8 @@ interface GranolaSyncJob {
   status: GranolaSyncJobStatus;
   mode: "incremental" | "full";
   message?: string;
+  completedAt?: string;
+  updatedAt?: string;
   batch?: number;
   totalListed?: number;
   current?: number;
@@ -223,6 +231,16 @@ function isFirefliesJobNotFoundError(err: unknown): boolean {
     err.message.includes("API error (404)") &&
     err.message.includes("Sync job not found")
   );
+}
+
+/**
+ * Display text for a sync failure. A storage rejection enters read-only mode
+ * and reads as the spec's save copy instead of raw node or HTTP text.
+ */
+function errorMessage(error: unknown, fallback = String(error)): string {
+  const routed = storageAwareError(error);
+  if (routed instanceof StorageFullError) return routed.message;
+  return error instanceof Error ? error.message : fallback;
 }
 
 function progressFromFirefliesJob(job: FirefliesSyncJob): SyncProgress {
@@ -402,12 +420,14 @@ export const SyncControl: FC<SyncControlProps> = ({
         return;
       }
 
-      if (activeFirefliesJobRef.current === job.id) {
-        activeFirefliesJobRef.current = null;
-      }
+      // Only a completion watched live confirms storage accepts writes again;
+      // a job that finished before mount says nothing about storage now.
+      const watched = activeFirefliesJobRef.current === job.id;
+      if (watched) activeFirefliesJobRef.current = null;
       finishJobView("fireflies");
 
       if (job.status === "completed") {
+        if (watched) noteSyncSaves(job);
         setResult({
           synced: job.synced,
           repaired: job.repaired,
@@ -431,8 +451,9 @@ export const SyncControl: FC<SyncControlProps> = ({
           failed: job.failed,
           errors: job.errors,
         });
-      } else if (job.status === "failed") {
-        setError(job.message ?? "Fireflies sync failed.");
+      } else if (job.status === "failed" && !isSupersededStorageFailure(job, watched)) {
+        // A storage stop that a later save superseded says nothing about storage now.
+        setError(errorMessage(job.message ?? "Fireflies sync failed."));
       }
     },
     [finishJobView, onSyncComplete],
@@ -460,12 +481,12 @@ export const SyncControl: FC<SyncControlProps> = ({
         return;
       }
 
-      if (activeGranolaJobRef.current === job.id) {
-        activeGranolaJobRef.current = null;
-      }
+      const watched = activeGranolaJobRef.current === job.id;
+      if (watched) activeGranolaJobRef.current = null;
       finishJobView("granola");
 
       if (job.status === "completed") {
+        if (watched) noteSyncSaves(job);
         setResult({
           synced: job.synced,
           repaired: 0,
@@ -489,8 +510,8 @@ export const SyncControl: FC<SyncControlProps> = ({
           failed: job.failed,
           errors: job.errors,
         });
-      } else if (job.status === "failed") {
-        setError(job.message ?? "Granola sync failed.");
+      } else if (job.status === "failed" && !isSupersededStorageFailure(job, watched)) {
+        setError(errorMessage(job.message ?? "Granola sync failed."));
       }
     },
     [finishJobView, onSyncComplete],
@@ -520,12 +541,12 @@ export const SyncControl: FC<SyncControlProps> = ({
         return;
       }
 
-      if (activeGoogleMeetJobRef.current === job.id) {
-        activeGoogleMeetJobRef.current = null;
-      }
+      const watched = activeGoogleMeetJobRef.current === job.id;
+      if (watched) activeGoogleMeetJobRef.current = null;
       finishJobView("google-meet");
 
       if (job.status === "completed") {
+        if (watched) noteSyncSaves(job);
         setResult({
           synced: job.synced,
           repaired: 0,
@@ -553,8 +574,8 @@ export const SyncControl: FC<SyncControlProps> = ({
           failed: job.failed,
           errors: job.errors,
         });
-      } else if (job.status === "failed") {
-        setError(job.message ?? "Google Meet sync failed.");
+      } else if (job.status === "failed" && !isSupersededStorageFailure(job, watched)) {
+        setError(errorMessage(job.message ?? "Google Meet sync failed."));
       }
     },
     [finishJobView, onSyncComplete],
@@ -617,7 +638,7 @@ export const SyncControl: FC<SyncControlProps> = ({
           setSyncing(false);
           setSyncSource(null);
           setProgress(null);
-          setError(err instanceof Error ? err.message : String(err));
+          setError(errorMessage(err));
         } finally {
           inFlight = false;
         }
@@ -667,7 +688,7 @@ export const SyncControl: FC<SyncControlProps> = ({
           setSyncing(false);
           setSyncSource(null);
           setProgress(null);
-          setError(err instanceof Error ? err.message : String(err));
+          setError(errorMessage(err));
         } finally {
           inFlight = false;
         }
@@ -717,7 +738,7 @@ export const SyncControl: FC<SyncControlProps> = ({
           setSyncing(false);
           setSyncSource(null);
           setProgress(null);
-          setError(err instanceof Error ? err.message : String(err));
+          setError(errorMessage(err));
         } finally {
           inFlight = false;
         }
@@ -886,7 +907,7 @@ export const SyncControl: FC<SyncControlProps> = ({
         step.complete({ jobId: job.id, status: job.status, mode: job.mode });
       } catch (err) {
         step.fail(err);
-        setError(err instanceof Error ? err.message : String(err));
+        setError(errorMessage(err));
         setProgress(null);
         setSyncing(false);
         setSyncSource(null);
@@ -916,7 +937,7 @@ export const SyncControl: FC<SyncControlProps> = ({
         step.complete({ jobId: job.id, status: job.status, mode: job.mode });
       } catch (err) {
         step.fail(err);
-        setError(err instanceof Error ? err.message : String(err));
+        setError(errorMessage(err));
         setProgress(null);
         setSyncing(false);
         setSyncSource(null);
@@ -946,7 +967,7 @@ export const SyncControl: FC<SyncControlProps> = ({
         step.complete({ jobId: job.id, status: job.status, mode: job.mode });
       } catch (err) {
         step.fail(err);
-        setError(err instanceof Error ? err.message : String(err));
+        setError(errorMessage(err));
         setProgress(null);
         setSyncing(false);
         setSyncSource(null);
@@ -987,7 +1008,11 @@ export const SyncControl: FC<SyncControlProps> = ({
         );
 
         if (!response.ok || !response.body) {
-          throw new Error(`Stream failed: ${response.status} ${response.statusText}`);
+          // Keep the backend's error body: a 402/413 carries the storage code.
+          const body: unknown = await response.json().catch(() => null);
+          throw new Error(`Stream failed: ${response.status} ${response.statusText}`, {
+            cause: body,
+          });
         }
         debugLog(`sync.${source}.stream`, "response-opened", { status: response.status });
 
@@ -1046,6 +1071,7 @@ export const SyncControl: FC<SyncControlProps> = ({
                 }
                 break;
               case "complete": {
+                noteSyncSaves(data);
                 setResult({
                   synced: data.synced,
                   repaired: data.repaired ?? 0,
@@ -1067,7 +1093,7 @@ export const SyncControl: FC<SyncControlProps> = ({
                 break;
               }
               case "error":
-                setError(data.message);
+                setError(errorMessage(data, data.message));
                 setProgress(null);
                 step.complete({ streamError: data.message });
                 break;
@@ -1077,7 +1103,7 @@ export const SyncControl: FC<SyncControlProps> = ({
       } catch (err) {
         if ((err as Error).name !== "AbortError") {
           step.fail(err);
-          setError(err instanceof Error ? err.message : String(err));
+          setError(errorMessage(err));
         } else {
           step.complete({ aborted: true });
         }
@@ -1143,6 +1169,7 @@ export const SyncControl: FC<SyncControlProps> = ({
 
         if (source === "soundcore") {
           const data = await api.post<SyncResult>("/api/sync/soundcore", {});
+          noteSyncSaves(data);
           setResult(data);
           const ts = new Date().toISOString();
           localStorage.setItem(LAST_SYNC_KEY, ts);
@@ -1166,7 +1193,7 @@ export const SyncControl: FC<SyncControlProps> = ({
     );
     const failed = starts.flatMap((result, index) => {
       if (result.status === "fulfilled") return [];
-      const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
+      const reason = errorMessage(result.reason);
       return [`${sources[index]}: ${reason}`];
     });
 
@@ -1209,13 +1236,14 @@ export const SyncControl: FC<SyncControlProps> = ({
 
     try {
       const data = await api.post<SyncResult>("/api/sync/soundcore", {});
+      noteSyncSaves(data);
       setResult(data);
       const ts = new Date().toISOString();
       localStorage.setItem(LAST_SYNC_KEY, ts);
       setLastSync(ts);
       onSyncComplete();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setSyncing(false);
       setSyncSource(null);
@@ -1233,7 +1261,7 @@ export const SyncControl: FC<SyncControlProps> = ({
       debugLog("sync.fireflies.full-resync", "clear-failed", {
         error: err instanceof Error ? err.message : String(err),
       });
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
       setSyncing(false);
       return;
     }
@@ -1256,7 +1284,7 @@ export const SyncControl: FC<SyncControlProps> = ({
           })
           .catch((err) => {
             step.fail(err);
-            setError(err instanceof Error ? err.message : String(err));
+            setError(errorMessage(err));
           }),
       );
     }
@@ -1273,7 +1301,7 @@ export const SyncControl: FC<SyncControlProps> = ({
           })
           .catch((err) => {
             step.fail(err);
-            setError(err instanceof Error ? err.message : String(err));
+            setError(errorMessage(err));
           }),
       );
     }
@@ -1290,7 +1318,7 @@ export const SyncControl: FC<SyncControlProps> = ({
           })
           .catch((err) => {
             step.fail(err);
-            setError(err instanceof Error ? err.message : String(err));
+            setError(errorMessage(err));
           }),
       );
     }

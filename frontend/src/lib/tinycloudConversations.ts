@@ -5,8 +5,12 @@ import {
   SCHEMA_STATEMENTS,
   COLUMN_MIGRATION_STATEMENTS,
   COLUMN_MIGRATION_ALREADY_APPLIED_STATEMENTS,
+  StorageFullError,
+  conversationSchemaIsCurrent,
+  isStorageFullError,
 } from "@listen/core";
 import { normalizeAppRelativeKvKey, resolveAppKvPath, resolveAppSqlPath } from "./appManifest";
+import { confirmStorageWritable, isStorageFull, storageAwareError } from "./storageStatus";
 
 export const DATABASE_NAME = resolveAppSqlPath("conversations");
 const DEFAULT_LIMIT = 20;
@@ -235,30 +239,49 @@ function thrownSeedErrorMessage(error: unknown): string {
  */
 const schemaSeeded = new WeakMap<object, Promise<void>>();
 
+/** TinyCloudWeb instances whose seeding was refused because storage is full. */
+const storageBlocked = new WeakSet<object>();
+
 /**
  * Ensure the conversations schema exists before the first direct-TinyCloud
- * read. Hybrid seeding: the backend is the primary seeder (it owns the
- * canonical `ensureSchema` path), and the browser session seeds directly as a
- * fallback when the backend is unavailable or its call fails. Runs at most once
- * per TinyCloudWeb instance; a failed pass is not memoized so a later read can
- * retry.
+ * read. Read-first: a read-only probe settles the common case without any
+ * write, so a full TinyCloud account can still open Listen. Only when the
+ * probe shows the schema missing or outdated does seeding run: the backend is
+ * the primary seeder (it owns the canonical `ensureSchema` path), and the
+ * browser session seeds directly as a fallback when the backend is unavailable
+ * or its call fails. Runs at most once per TinyCloudWeb instance. A failed
+ * pass is not memoized so a later read can retry, except a storage rejection,
+ * which is not retried while the read-only state lasts.
  */
 export function ensureSchema(api: ApiClient | null, tcw: TinyCloudWeb): Promise<void> {
   const existing = schemaSeeded.get(tcw);
-  if (existing) return existing;
+  if (existing && !(storageBlocked.has(tcw) && !isStorageFull())) return existing;
+  storageBlocked.delete(tcw);
 
-  const pending = seedSchemaViaBackendThenFallback(api, tcw).catch((error) => {
-    // Allow a later read to retry rather than pinning a permanent failure.
-    schemaSeeded.delete(tcw);
+  const pending = ensureSchemaReadFirst(api, tcw).catch((error) => {
+    if (error instanceof StorageFullError) {
+      storageBlocked.add(tcw);
+    } else {
+      // Allow a later read to retry rather than pinning a permanent failure.
+      schemaSeeded.delete(tcw);
+    }
     throw error;
   });
   schemaSeeded.set(tcw, pending);
   return pending;
 }
 
+async function ensureSchemaReadFirst(api: ApiClient | null, tcw: TinyCloudWeb): Promise<void> {
+  const sqlDb = conversationSql(tcw);
+  if (await conversationSchemaIsCurrent((sql) => sqlDb.query(sql))) return;
+  await seedSchemaViaBackendThenFallback(api, tcw);
+}
+
 /**
  * Try the backend seeder first, then fall back to seeding via the browser
- * session. Only throws if BOTH fail, surfacing both failures.
+ * session. Only throws if BOTH fail, surfacing both failures. A storage
+ * rejection is final: it is never retried through the other seeder and comes
+ * back as `StorageFullError` with the spec copy.
  */
 async function seedSchemaViaBackendThenFallback(
   api: ApiClient | null,
@@ -270,6 +293,7 @@ async function seedSchemaViaBackendThenFallback(
       await api.post("/api/schema/ensure");
       return;
     } catch (error) {
+      if (isStorageFullError(error)) throw storageAwareError(error);
       backendError = thrownSeedErrorMessage(error);
     }
   } else {
@@ -279,9 +303,11 @@ async function seedSchemaViaBackendThenFallback(
   try {
     await seedSchema(tcw);
   } catch (fallbackError) {
+    if (isStorageFullError(fallbackError)) throw storageAwareError(fallbackError);
     throw new Error(
       `Failed to seed conversations schema. Backend seeder: ${backendError}. ` +
         `Browser fallback: ${thrownSeedErrorMessage(fallbackError)}`,
+      { cause: fallbackError },
     );
   }
 }
@@ -295,7 +321,9 @@ async function seedSchema(tcw: TinyCloudWeb): Promise<void> {
     })
     .catch((error) => ({ ok: false as const, error: { message: thrownSeedErrorMessage(error) } }));
   if (!created.ok) {
-    throw new Error(`Failed to initialize conversations schema: ${seedErrorMessage(created)}`);
+    throw new Error(`Failed to initialize conversations schema: ${seedErrorMessage(created)}`, {
+      cause: created.error,
+    });
   }
 
   const columnCheck = (await sqlDb.query(
@@ -315,7 +343,9 @@ async function seedSchema(tcw: TinyCloudWeb): Promise<void> {
     })
     .catch((error) => ({ ok: false as const, error: { message: thrownSeedErrorMessage(error) } }));
   if (!updated.ok) {
-    throw new Error(`Failed to update conversations schema: ${seedErrorMessage(updated)}`);
+    throw new Error(`Failed to update conversations schema: ${seedErrorMessage(updated)}`, {
+      cause: updated.error,
+    });
   }
 }
 
@@ -586,17 +616,40 @@ async function listConversations(
   return { conversations, total, source_counts };
 }
 
+const DETAIL_COLUMNS =
+  "id, title, source, source_id, source_url, started_at, ended_at, duration_secs, summary, metadata, created_at, updated_at";
+
+/**
+ * Accounts created before the transcript columns existed keep the initial
+ * table until migration 002 runs. When storage is full that migration is
+ * refused, so detail reads fall back to the legacy columns and the transcript
+ * comes from KV.
+ */
+async function queryConversationRows(
+  access: TinyCloudConversationAccess,
+  id: string,
+): Promise<Record<string, unknown>[]> {
+  try {
+    return rowsToObjects(
+      await access.sql.query(
+        `SELECT ${DETAIL_COLUMNS}, transcript_json, transcript_text FROM conversation WHERE id = ?`,
+        [id],
+      ),
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/no such column/i.test(message)) throw error;
+    return rowsToObjects(
+      await access.sql.query(`SELECT ${DETAIL_COLUMNS} FROM conversation WHERE id = ?`, [id]),
+    );
+  }
+}
+
 async function getConversationDetail(
   access: TinyCloudConversationAccess,
   { id }: ConversationDetailPath,
 ): Promise<DetailResponse> {
-  const conversationRows = rowsToObjects(
-    await access.sql.query(
-      `SELECT id, title, source, source_id, source_url, started_at, ended_at, duration_secs, summary, metadata, transcript_json, transcript_text, created_at, updated_at
-         FROM conversation WHERE id = ?`,
-      [id],
-    ),
-  );
+  const conversationRows = await queryConversationRows(access, id);
 
   if (conversationRows.length === 0) {
     throw new Error(`Conversation ${id} not found`);
@@ -644,11 +697,40 @@ async function getFromTinyCloud(
   const access = tinycloudAccess(tcw);
   if (!access) throw new Error("TinyCloud conversation access is not available");
 
-  await ensureSchema(api, tcw!);
+  // A storage rejection while seeding must not block reads: serve whatever the
+  // existing tables hold. The read-only state is already set by then.
+  let schemaRejected = false;
+  try {
+    await ensureSchema(api, tcw!);
+  } catch (error) {
+    if (!(error instanceof StorageFullError)) throw error;
+    schemaRejected = true;
+  }
 
-  return listPath
-    ? listConversations(access, listPath)
-    : getConversationDetail(access, detailPath!);
+  if (!listPath) return getConversationDetail(access, detailPath!);
+  try {
+    return await listConversations(access, listPath);
+  } catch (error) {
+    // Seeding was refused and the tables do not exist yet: nothing to read.
+    if (schemaRejected) return { conversations: [], total: 0, source_counts: [] };
+    throw error;
+  }
+}
+
+/**
+ * Run a backend write. A storage rejection enters the read-only state and
+ * rethrows as `StorageFullError` (spec copy). Only a successful conversation
+ * save clears it: other mutations, such as starting a sync job, succeed
+ * without storing anything and must not hide the notice.
+ */
+async function storageAwareWrite<T>(path: string, write: Promise<T>): Promise<T> {
+  try {
+    const result = await write;
+    if (path.startsWith("/api/conversations")) confirmStorageWritable();
+    return result;
+  } catch (error) {
+    throw storageAwareError(error);
+  }
 }
 
 export function createTinyCloudConversationApi(
@@ -670,13 +752,13 @@ export function createTinyCloudConversationApi(
       return requireApi().get<T>(path);
     },
     post<T>(path: string, body?: unknown): Promise<T> {
-      return requireApi().post<T>(path, body);
+      return storageAwareWrite(path, requireApi().post<T>(path, body));
     },
     put<T>(path: string, body?: unknown): Promise<T> {
-      return requireApi().put<T>(path, body);
+      return storageAwareWrite(path, requireApi().put<T>(path, body));
     },
     del<T>(path: string): Promise<T> {
-      return requireApi().del<T>(path);
+      return storageAwareWrite(path, requireApi().del<T>(path));
     },
   };
 }
