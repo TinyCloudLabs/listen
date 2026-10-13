@@ -316,6 +316,7 @@ jobs:
             if [ "$STATUS" = "running" ]; then
               echo "CVM is running."
               if [ -n "$APP_ID" ] && [ -n "$GATEWAY_BASE_DOMAIN" ]; then
+                # TC-1012: used only by the post-deploy closure check below.
                 RAW_API_URL="https://${APP_ID}-3001.${GATEWAY_BASE_DOMAIN}"
                 echo "PHALA_RAW_API_URL=$RAW_API_URL" >> "$GITHUB_ENV"
               fi
@@ -326,7 +327,7 @@ jobs:
                 echo "- Status: \`running\`"
                 echo "- Last update: \`$UPDATED_AT\`"
                 if [ -n "${RAW_API_URL:-}" ]; then
-                  echo "- Raw gateway API: ${RAW_API_URL}"
+                  echo "- Raw gateway port (must stay closed, TC-1012): ${RAW_API_URL}"
                 fi
               } >> "$GITHUB_STEP_SUMMARY"
               exit 0
@@ -390,18 +391,10 @@ jobs:
           HEALTH_URL="${PRODUCTION_API_URL%/}/healthz"
           INFO_URL="${PRODUCTION_API_URL%/}/api/server-info"
           if ! probe_url "healthz" "$HEALTH_URL"; then
-            if [ -n "${PHALA_RAW_API_URL:-}" ]; then
-              echo "::notice title=Raw Phala gateway diagnostic::Custom domain failed; probing ${PHALA_RAW_API_URL}/api/server-info"
-              probe_url "raw gateway server-info" "${PHALA_RAW_API_URL%/}/api/server-info" || true
-            fi
             exit 1
           fi
 
           if ! probe_url "server-info" "$INFO_URL"; then
-            if [ -n "${PHALA_RAW_API_URL:-}" ]; then
-              echo "::notice title=Raw Phala gateway diagnostic::Custom domain failed; probing ${PHALA_RAW_API_URL}/api/server-info"
-              probe_url "raw gateway server-info" "${PHALA_RAW_API_URL%/}/api/server-info" || true
-            fi
             exit 1
           fi
 
@@ -412,6 +405,41 @@ jobs:
             echo "- ${HEALTH_URL}: passed"
             echo "- ${INFO_URL}: passed"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify raw gateway app port is closed (TC-1012)
+        run: |
+          # TC-1012: the Phala gateway must not serve the app port; only the ingress may.
+          # A closed port makes the gateway accept TLS and then close the stream (curl
+          # exit 52/56, no HTTP status). Any HTTP status means the port is published.
+          # Other curl errors (DNS, connect, TLS, timeout) prove nothing: retry.
+          if [ -z "${PHALA_RAW_API_URL:-}" ]; then
+            echo "::error::TC-1012: app_id/gateway domain unknown; cannot verify the app port is closed"
+            exit 1
+          fi
+          raw_url="${PHALA_RAW_API_URL%/}/healthz"
+          closed=0
+          rc=0
+          for attempt in $(seq 1 10); do
+            rc=0
+            code=$(curl -sS -m 15 -o /dev/null -w '%{http_code}' "$raw_url" 2>/tmp/tc1012-curl.err) || rc=$?
+            if [ "$code" != "000" ]; then
+              echo "::error::TC-1012: $raw_url answered HTTP $code; the app port is published on the Phala gateway"
+              exit 1
+            fi
+            if [ "$rc" = 52 ] || [ "$rc" = 56 ]; then
+              closed=$((closed + 1))
+              [ "$closed" -ge 3 ] && break
+            else
+              echo "TC-1012 probe inconclusive (curl exit $rc): $(cat /tmp/tc1012-curl.err)"
+              closed=0
+            fi
+            sleep 5
+          done
+          if [ "$closed" -lt 3 ]; then
+            echo "::error::TC-1012: could not confirm $raw_url is closed (last curl exit $rc)"
+            exit 1
+          fi
+          echo "TC-1012: $raw_url is closed on the gateway (curl exit $rc, $closed consecutive)"
 
   phala-status:
     runs-on: ubuntu-latest
