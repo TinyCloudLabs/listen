@@ -2,8 +2,9 @@ services:
   listen-backend:
     image: ${LISTEN_BACKEND_IMAGE:-ghcr.io/tinycloudlabs/listen-backend:latest}
     platform: linux/amd64
-    ports:
-      - "3001:3001"
+    # TC-1012: no published port. A published port is served by the Phala
+    # gateway at <app_id>-3001.<gateway>, bypassing dstack-ingress. The ingress
+    # reaches the backend over the compose network (listen-backend:3001).
     environment:
       NODE_ENV: production
       PORT: "3001"
