@@ -151,9 +151,9 @@ bun run deploy:backend:phala
 ```
 
 The backend exposes an unauthenticated health endpoint at `https://api.listen.tinycloud.xyz/healthz`.
-Manual and automated Phala deploys verify both `/healthz` and `/api/server-info`
-after the CVM reports `running`, so TLS, ingress, and backend boot failures fail
-the deploy instead of appearing as a successful rollout.
+Manual Phala deploys verify both `/healthz` and `/api/server-info` after the
+CVM reports `running`, so TLS, ingress, and backend boot failures fail the
+deploy instead of appearing as a successful rollout.
 
 Configuration still needed outside the repo:
 
@@ -164,11 +164,11 @@ Configuration still needed outside the repo:
 - `CLOUDFLARE_API_TOKEN` and `CERTBOT_EMAIL` in `.env.prod`; the Phala ingress uses those if it must bootstrap or renew certificates. Existing certificates are reused without rewriting DNS records.
 - Phala backend deploys use `https://tee.node.tinycloud.xyz` as `TINYCLOUD_HOST` so backend-to-node traffic stays on the direct TEE endpoint instead of the Cloudflare-proxied node endpoint.
 - Pushed amd64 backend and ingress images. The default targets are `ghcr.io/tinycloudlabs/listen-backend:latest` and `ghcr.io/tinycloudlabs/listen-backend:ingress-latest`; set `LISTEN_BACKEND_IMAGE` or `LISTEN_INGRESS_IMAGE` to deploy a specific tag.
-- For automated backend deploys, set GitHub Actions secret `PHALA_CLOUD_API_KEY`. The workflow runs on backend/deployment-relevant `main` changes or manual dispatch, pushes to GHCR with `GITHUB_TOKEN` and `packages: write`, and publishes a `listen-backend - phala` commit status. The `ghcr.io/tinycloudlabs/listen-backend` package must grant this repository Actions write access and must be readable by Phala.
+- The automated backend deploy workflow was removed under TC-1126.
 - OpenKey OAuth redirect/origin allowlist entries for production and local URLs.
 - Production `.env` values for `BACKEND_PRIVATE_KEY`, `FRONTEND_URL`, and optional Google credentials.
 
-Pull request previews for same-repository branches deploy a Railway backend and a Cloudflare Pages preview frontend. See [docs/pr-preview-deployments.md](docs/pr-preview-deployments.md) for required GitHub secrets/vars, production-data caveats, and cleanup behavior.
+Automatic pull request preview deployment and cleanup are disabled; the remaining workflow is manual-dispatch-only. See [docs/pr-preview-deployments.md](docs/pr-preview-deployments.md) for its historical setup details.
 
 ## Checks
 

@@ -1,6 +1,8 @@
 # PR Preview Deployments
 
-TC-1367 adds a same-repository pull request preview path for Listen:
+The former same-repository pull request preview path was introduced under TC-1367.
+
+> Retired: automatic pull request preview deployment and cleanup are disabled under TC-1126. The remaining workflow is manual-dispatch-only; the setup below documents the former automated path.
 
 1. Create or reuse a Railway environment named `pr-<number>`.
 2. Deploy the backend service to Railway from the PR source.

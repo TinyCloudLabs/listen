@@ -1,9 +1,8 @@
+# Disabled: listen retired (TC-1126)
 name: PR Preview Cleanup
 
 on:
-  pull_request:
-    branches: [main]
-    types: [closed]
+  workflow_dispatch:
 
 concurrency:
   group: listen-preview-pr-${{ github.event.pull_request.number }}
